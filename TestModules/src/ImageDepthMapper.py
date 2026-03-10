@@ -20,7 +20,8 @@ class ImageDepthMapper:
         
         self.depth_pipeline = pipeline(
             task="depth-estimation",
-            model="LiheYoung/depth-anything-small-hf"
+            #model="LiheYoung/depth-anything-small-hf"
+            model ="depth-anything/Depth-Anything-V2-Small-hf"
         )
         self._initialized = True
     

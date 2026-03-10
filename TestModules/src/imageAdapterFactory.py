@@ -2,6 +2,7 @@ from pathlib import Path
 from typing import Union
 import numpy as np
 from PIL import Image
+from PIL.Image import Image as PILImage
 
 
 class ImageAdapterFactory:
@@ -14,23 +15,26 @@ class ImageAdapterFactory:
             cls._instance = super(ImageAdapterFactory, cls).__new__(cls)
         return cls._instance
     
-    def create_image(self, path: Union[str, Path]) -> np.ndarray:
+    def create_image(self, source: Union[str, Path, PILImage]) -> np.ndarray:
         """
-        Load and convert image from path to format acceptable by LamaInpainterFacade and SamFacade
+        Load and convert image from a file path or PIL Image to a numpy array
+        acceptable by LamaInpainterFacade and SamFacade.
         
         Args:
-            path: Path to the image file
-            
+            source: Either a filesystem path to the image file or a
+                ``PIL.Image.Image`` instance.
+        
         Returns:
             np.ndarray: Image as numpy array in RGB format
         """
-        image_path = Path(path)
-        
-        if not image_path.exists():
-            raise FileNotFoundError(f"Image not found: {image_path}")
-        
-        # Load image with PIL
-        image = Image.open(image_path)
+        # If a PIL image was supplied directly, skip file handling
+        if isinstance(source, PILImage):
+            image = source
+        else:
+            image_path = Path(source)
+            if not image_path.exists():
+                raise FileNotFoundError(f"Image not found: {image_path}")
+            image = Image.open(image_path)
         
         # Convert to RGB if necessary
         if image.mode != 'RGB':

@@ -1,7 +1,7 @@
+import os
 import cv2
 import numpy as np
 from objectRemover import ObjectRemover
-
 
 class GuiTestClicker:
     """Simple GUI helper to pick a point in an image and trigger object removal.
@@ -66,11 +66,9 @@ class GuiTestClicker:
 
 def main():
     """Manual runner for quick testing."""
-    import os
     clicker = GuiTestClicker()
     default_image = os.path.join(os.path.dirname(__file__), "..", "inputs", "test.jpg")
     clicker.run(default_image)
-
 
 if __name__ == "__main__":
     main()

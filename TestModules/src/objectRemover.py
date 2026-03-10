@@ -43,13 +43,29 @@ class ObjectRemover:
         expanded_mask = cv2.dilate(mask, kernel, iterations=1)
         return expanded_mask
 
-    def remove_object(self, image_path, click_x, click_y, depth_output_path: str | None = None):
+    def remove_object(self, image_path, click_x, click_y, depth_output_flag: bool | None = None):
         # core removal implementation expects explicit parameters
         image = cv2.imread(image_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         
-        depth_map = self.depth.get_depth_map(image_path, output_path=depth_output_path)
-        # optionally save the retrieved depth map
+        # if the caller requested a depth map save, compute a canonical
+        # path inside "depthMaps" using the current model name.
+        output_path = None
+        if depth_output_flag:
+            # location requested by user: outputs/depthMaps under workspace
+            depth_dir = os.path.join(BASE_DIR, "..", "outputs", "depthMaps")
+            
+            # 1. מוודא שהתיקייה קיימת, ואם לא - יוצר אותה אוטומטית!
+            os.makedirs(depth_dir, exist_ok=True)
+            
+            # use model name from the ImageDepthMapper instance for filename
+            model_name = getattr(self.depth, "model", None) or "unknown_model"
+            
+            # 2. מנקה את הלוכסנים מהשם כדי למנוע שגיאות של נתיבים במערכת ההפעלה
+            safe_model_name = model_name.replace("/", "_").replace("\\", "_")
+            
+            output_path = os.path.join(depth_dir, f"{safe_model_name}.png")
+        depth_map = self.depth.get_depth_map(image_path, output_path=output_path)
         depth_map_adapter = self.image_adapter.create_image(depth_map)
         best_mask = self.sam.get_mask_at_point(depth_map_adapter, (click_x, click_y))
         print("segmentation finished")
@@ -108,7 +124,7 @@ class ObjectRemover:
             raise ValueError("coordinates have not been set")
 
         x, y = self.coordinates.tolist()
-        self.remove_object(self.image_path, x, y, depth_output_path=depth_save_path)
+        self.remove_object(self.image_path, x, y, depth_output_flag=True)
 
 
 def main():

@@ -1,6 +1,7 @@
 import os
 import cv2
 import numpy as np
+from ImageDepthMapper import ImageDepthMapper
 from objectRemover import ObjectRemover
 
 class GuiTestClicker:
@@ -67,6 +68,7 @@ class GuiTestClicker:
 def main():
     """Manual runner for quick testing."""
     clicker = GuiTestClicker()
+    ImageDepthMapper().model = "LiheYoung/depth-anything-small-hf"  # ensure we're using the expected model
     default_image = os.path.join(os.path.dirname(__file__), "..", "inputs", "test.jpg")
     clicker.run(default_image)
 

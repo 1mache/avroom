@@ -8,13 +8,16 @@ from LamaInpainter import LamaFacade
 from SamFacadeSingleton import SamFacadeSingleton
 from imageAdapterFactory import ImageAdapterFactory
 
-CHECKPOINT_PATH = os.path.join("..", "checkpoints", "sam_vit_b_01ec64.pth")
-IMAGE_PATH = os.path.join("..", "inputs", "test.jpg")
-DEPTH_MAP_PATH = os.path.join("..", "inputs", "testDepthMap.png")
-OUTPUT_PATH = os.path.join("..", "outputs", "result_removal.png")
-MASK_OUTPUT_PATH = os.path.join("..", "outputs", "result_mask_separation.jpg")
-MASK_OUTPUT_PATH_ORIGIN = os.path.join("..", "outputs", "result_mask_separation_origin.jpg")
-RESULT_INVERTED_MASK = os.path.join("..", "outputs", "result_inverted_mask.jpg")
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+CHECKPOINT_PATH = os.path.join(BASE_DIR, "..", "checkpoints", "sam_vit_b_01ec64.pth")
+IMAGE_PATH = os.path.join(BASE_DIR, "..", "inputs", "test.jpg")
+DEPTH_MAP_PATH = os.path.join(BASE_DIR, "..", "inputs", "testDepthMap.png")
+OUTPUT_PATH = os.path.join(BASE_DIR, "..", "outputs", "result_removal.png")
+MASK_OUTPUT_PATH = os.path.join(BASE_DIR, "..", "outputs", "result_mask_separation.jpg")
+MASK_OUTPUT_PATH_ORIGIN = os.path.join(BASE_DIR, "..", "outputs", "result_mask_separation_origin.jpg")
+RESULT_INVERTED_MASK = os.path.join(BASE_DIR, "..", "outputs", "result_inverted_mask.jpg")
 
 
 class ObjectRemover:

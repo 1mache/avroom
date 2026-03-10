@@ -1,3 +1,4 @@
+import os
 import torch
 from segment_anything import sam_model_registry, SamPredictor
 from typing import Optional, List, Tuple
@@ -16,12 +17,19 @@ class SamFacadeSingleton:
 
     def _initialize(self):
         """Initialize the SAM model and load checkpoint."""
-        checkpoint_path = r"..\checkpoints\sam_vit_b_01ec64.pth"
+        # 1. מציאת הנתיב המוחלט של התיקייה הנוכחית (src)
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        
+        # 2. הרכבת הנתיב המדויק לתיקיית checkpoints
+        checkpoint_path = os.path.join(BASE_DIR, "..", "checkpoints", "sam_vit_b_01ec64.pth")
+        
         device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"Loading SAM model on {device}...")
         
         sam = sam_model_registry["vit_b"](checkpoint=checkpoint_path)
         sam.to(device=device)
         self._predictor = SamPredictor(sam)
+        print("SAM model loaded successfully!")
 
     def get_mask_at_point(self, image: np.ndarray, point: Tuple[int, int]) -> np.ndarray:
         """

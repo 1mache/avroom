@@ -18,12 +18,29 @@ class ImageDepthMapper:
         if self._initialized:
             return
         
+        self._model_name = "LiheYoung/depth-anything-small-hf"
+        self._create_pipeline()
+        self._initialized = True
+
+    # internal helper used when the model name changes
+    def _create_pipeline(self) -> None:
+        """(Re)build the underlying HuggingFace pipeline using ``self._model_name``."""
         self.depth_pipeline = pipeline(
             task="depth-estimation",
-            #model="LiheYoung/depth-anything-small-hf"
-            model ="depth-anything/Depth-Anything-V2-Small-hf"
+            model=self._model_name
         )
-        self._initialized = True
+
+    @property
+    def model(self) -> str:
+        """The name of the HF model used by the depth pipeline."""
+        return self._model_name
+
+    @model.setter
+    def model(self, new_model: str) -> None:
+        """Change the model and rebuild the pipeline if different."""
+        if new_model != self._model_name:
+            self._model_name = new_model
+            self._create_pipeline()
     
     def get_depth_map(
         self,

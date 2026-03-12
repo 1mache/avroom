@@ -1,144 +1,116 @@
 import os
 import cv2
+import logging
 import numpy as np
 from PIL import Image
 
-from ImageDepthMapper import ImageDepthMapper
-from LamaInpainter import LamaFacade
+# Configure logging
+logger = logging.getLogger(__name__)
+
+# Standard local imports 
 from SamFacadeSingleton import SamFacadeSingleton
-from imageAdapterFactory import ImageAdapterFactory
-
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-CHECKPOINT_PATH = os.path.join(BASE_DIR, "..", "checkpoints", "sam_vit_b_01ec64.pth")
-IMAGE_PATH = os.path.join(BASE_DIR, "..", "inputs", "test.jpg")
-DEPTH_MAP_PATH = os.path.join(BASE_DIR, "..", "inputs", "testDepthMap.png")
-OUTPUT_PATH = os.path.join(BASE_DIR, "..", "outputs", "result_removal.png")
-MASK_OUTPUT_PATH = os.path.join(BASE_DIR, "..", "outputs", "result_mask_separation.jpg")
-MASK_OUTPUT_PATH_ORIGIN = os.path.join(BASE_DIR, "..", "outputs", "result_mask_separation_origin.jpg")
-RESULT_INVERTED_MASK = os.path.join(BASE_DIR, "..", "outputs", "result_inverted_mask.jpg")
-
+from LamaInpainter import LamaInpainter
+from OptimizedDepthFacade import OptimizedDepthFacade
+from SamImageAdapter import SamImageAdapter
 
 class ObjectRemover:
     def __init__(self):
+        # AI Engines
         self.sam = SamFacadeSingleton()
-        self.lama = LamaFacade()
-        self.depth = ImageDepthMapper()
-        self.image_adapter = ImageAdapterFactory()
-
-        # fields that can be set externally for testing or reuse
-        self.image_path: str | None = None
-        # store coordinates as a numpy array [x, y]
-        self.coordinates: np.ndarray | None = None
-
-    def expand_mask(self, mask, pixels_to_expand=3):
-        mask = np.array(mask)
-        if mask.max() <= 1:
-            mask = (mask * 255).astype(np.uint8)
-        else:
-            mask = mask.astype(np.uint8)
-        k_size = int((2 * pixels_to_expand) + 1)
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k_size, k_size))
-        expanded_mask = cv2.dilate(mask, kernel, iterations=1)
-        return expanded_mask
-
-    def remove_object(self, image_path, click_x, click_y, depth_output_flag: bool | None = None):
-        # core removal implementation expects explicit parameters
-        image = cv2.imread(image_path)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        self.inpainter = LamaInpainter()
         
-        # if the caller requested a depth map save, compute a canonical
-        # path inside "depthMaps" using the current model name.
-        output_path = None
-        if depth_output_flag:
-            # location requested by user: outputs/depthMaps under workspace
-            depth_dir = os.path.join(BASE_DIR, "..", "outputs", "depthMaps")
-            
-            # 1. מוודא שהתיקייה קיימת, ואם לא - יוצר אותה אוטומטית!
-            os.makedirs(depth_dir, exist_ok=True)
-            
-            # use model name from the ImageDepthMapper instance for filename
-            model_name = getattr(self.depth, "model", None) or "unknown_model"
-            
-            # 2. מנקה את הלוכסנים מהשם כדי למנוע שגיאות של נתיבים במערכת ההפעלה
-            safe_model_name = model_name.replace("/", "_").replace("\\", "_")
-            
-            output_path = os.path.join(depth_dir, f"{safe_model_name}.png")
-        depth_map = self.depth.get_depth_map(image_path, output_path=output_path)
-        depth_map_adapter = self.image_adapter.create_image(depth_map)
-        best_mask = self.sam.get_mask_at_point(depth_map_adapter, (click_x, click_y))
-        print("segmentation finished")
+        # Architecture Components 
+        self.depth_facade = OptimizedDepthFacade(threshold=100)
+        self.sam_adapter = SamImageAdapter()
         
-        self.saveMask(best_mask, MASK_OUTPUT_PATH_ORIGIN)
-        best_mask = self.expand_mask(best_mask, 30)
-        self.saveMask(best_mask, MASK_OUTPUT_PATH)
-        
-        inverted_mask = cv2.bitwise_not(best_mask)
-        self.saveMask(inverted_mask, RESULT_INVERTED_MASK)
-        
-        print("--- Step 3: Inpainting (LaMa) ---")
-        print("about to start inpainting")
-        
-        result = self.lama.inpaint(image, best_mask)
-        print("inpainting finished")
-        result_image = Image.fromarray(result)
-        result_image.save(OUTPUT_PATH)
+        self.image_path = None
+        self.point = None
+        logger.info("ObjectRemover initialized")
 
-    def saveMask(self, mask, path):
-        print("saving mask")
-        mask = np.array(mask, copy=False)
-        if mask.max() <= 1:
-            mask = (mask * 255).astype(np.uint8)
-        else:
-            mask = mask.astype(np.uint8)
-        cv2.imwrite(path, mask)
-
-    # --- convenience setters / test helpers ---
-
-    def set_image(self, image_path: str) -> None:
-        """Store image path for later operations."""
+    def set_image(self, image_path: str):
         self.image_path = image_path
+        logger.debug(f"Image path set to: {image_path}")
 
-    def set_point(self, x: float, y: float) -> None:
-        """Set the click/coordinates used for segmentation.
+    def set_point(self, x: int, y: int):
+        self.point = (x, y)
+        logger.debug(f"Click point set to: ({x}, {y})")
 
-        Coordinates are stored as a NumPy array for convenience.
-        """
-        # convert to float/numeric type in case callers pass ints
-        self.coordinates = np.array([x, y], dtype=float)
+    def remove_object(self, image_path: str, x: int, y: int, depth_output_flag=False):
+        logger.info(f"Starting object removal - Image: {image_path}, Point: ({x}, {y})")
+        
+        image = cv2.imread(image_path)
+        if image is None:
+            logger.error(f"Could not load image: {image_path}")
+            raise FileNotFoundError(f"Could not load image: {image_path}")
 
-    def removeObjectTest(self, depth_save_path: str | None = None) -> None:
-        """Wrapper that calls :meth:`remove_object` using the stored fields.
+        # 1. Depth Facade - Compute the smooth near/far optimized depth map
+        logger.info("Step 1: Computing optimized depth map...")
+        optimized_depth = self.depth_facade.get_optimized_depth_map(image)
+        self._save_intermediate("optimized_depth", optimized_depth)
 
-        This is useful for simple scripted tests or external callers that
-        configure the object remover via its setters.
+        if depth_output_flag:
+            self._save_depth_debug(optimized_depth)
 
-        Args:
-            depth_save_path: if provided, the depth map returned by the
-                sampler will be written to this file before segmentation.
-        """
-        if self.image_path is None:
-            raise ValueError("image_path has not been set")
-        if self.coordinates is None or self.coordinates.size != 2:
-            raise ValueError("coordinates have not been set")
+        # 2. Adapter with Cache - Prepare the depth map for SAM (3 channels)
+        logger.info("Step 2: Adapting data...")
+        adapted_for_sam = self.sam_adapter.get_adapted_image(
+            raw_data=optimized_depth,
+            image_id=image_path,
+            point=(x, y)
+        )
+        self._save_intermediate("adapted_for_sam", adapted_for_sam)
 
-        x, y = self.coordinates.tolist()
-        self.remove_object(self.image_path, x, y, depth_output_flag=True)
+        # 3. SAM Mask 
+        logger.info(f"Step 3: Computing SAM mask at ({x}, {y}) on pure depth map...")
+        print(f"[ObjectRemover] Requesting mask from SAM at ({x}, {y})...")
+        
+        # BACK TO BASICS: We feed SAM the smooth depth map (adapted_for_sam).
+        # This prevents SAM from getting confused by fabric creases, shadows, and textures.
+        mask = self.sam.get_mask_at_point(adapted_for_sam, x, y) 
+        self._save_intermediate("mask", mask, is_mask=True)
 
+        # 4. Inpaint 
+        logger.info("Step 4: Inpainting image...")
+        # We pass the original colorful image to LaMa, along with the mask generated from depth
+        result_image = self.inpainter.inpaint(image, mask)
+        
+        self._save_result(result_image)
+        logger.info("Object removal completed successfully")
 
-def main():
-    object_remover = ObjectRemover()
-    
-    # example usage of the original interface
-    # ObjectRemover().remove_object(IMAGE_PATH, DEPTH_MAP_PATH, 910, 801)
+    def removeObjectTest(self):
+        logger.info("removeObjectTest called")
+        if self.image_path and self.point:
+            self.remove_object(self.image_path, self.point[0], self.point[1], depth_output_flag=True)
+        else:
+            logger.warning("removeObjectTest called but image_path or point not set")
+            print("[Error] Image path or point not set.")
 
-    # example usage of the new setters and test helper
-    object_remover.set_image(IMAGE_PATH)
-    object_remover.set_point(910, 801)
-    # if you want to see the intermediate depth map, pass a path
-    object_remover.removeObjectTest(depth_save_path=os.path.join(BASE_DIR, "..", "outputs", "debug_depth.png"))
+    def _save_intermediate(self, function_name: str, data: np.ndarray, is_mask: bool = False):
+        output_dir = os.path.join(os.path.dirname(__file__), "..", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        
+        save_data = data.copy()
+        if is_mask:
+            if save_data.dtype == bool or save_data.max() <= 1.0:
+                save_data = (save_data * 255).astype(np.uint8)
+            else:
+                save_data = save_data.astype(np.uint8)
+        
+        out_path = os.path.join(output_dir, f"{function_name}.png")
+        cv2.imwrite(out_path, save_data)
+        logger.debug(f"Saved intermediate result: {function_name} to {out_path}")
+        print(f"[ObjectRemover] Saved {function_name} to {out_path}")
 
+    def _save_depth_debug(self, depth_map: np.ndarray):
+        output_dir = os.path.join(os.path.dirname(__file__), "..", "outputs", "depthMaps")
+        os.makedirs(output_dir, exist_ok=True)
+        out_path = os.path.join(output_dir, "optimized_hybrid_depth.png")
+        cv2.imwrite(out_path, depth_map)
+        logger.debug(f"Saved debug depth map to {out_path}")
 
-if __name__ == "__main__":
-    main()
+    def _save_result(self, result: np.ndarray):
+        output_dir = os.path.join(os.path.dirname(__file__), "..", "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        out_path = os.path.join(output_dir, "final_removed_object.png")
+        cv2.imwrite(out_path, result)
+        logger.info(f"Final result saved to {out_path}")

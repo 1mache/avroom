@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 # Standard local imports 
 from SamFacadeSingleton import SamFacadeSingleton
-from LamaInpainter import LamaInpainter
+from StableDiffusionInpainter import StableDiffusionInpainter
 from OptimizedDepthFacade import OptimizedDepthFacade
 from SamImageAdapter import SamImageAdapter
 
@@ -17,7 +17,7 @@ class ObjectRemover:
     def __init__(self):
         # AI Engines
         self.sam = SamFacadeSingleton()
-        self.inpainter = LamaInpainter()
+        self.inpainter = StableDiffusionInpainter()
         
         # Architecture Components 
         self.depth_facade = OptimizedDepthFacade(threshold=100)
@@ -66,7 +66,7 @@ class ObjectRemover:
         
         # BACK TO BASICS: We feed SAM the smooth depth map (adapted_for_sam).
         # This prevents SAM from getting confused by fabric creases, shadows, and textures.
-        mask = self.sam.get_mask_at_point(adapted_for_sam, x, y) 
+        mask = self.sam.get_mask_at_point(adapted_for_sam, x, y, expand_pixels=30) 
         self._save_intermediate("mask", mask, is_mask=True)
 
         # 4. Inpaint 

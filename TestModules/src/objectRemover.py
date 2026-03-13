@@ -9,15 +9,16 @@ logger = logging.getLogger(__name__)
 
 # Standard local imports 
 from SamFacadeSingleton import SamFacadeSingleton
-from StableDiffusionInpainter import StableDiffusionInpainter
 from OptimizedDepthFacade import OptimizedDepthFacade
+from interfaces import IInpainter
 from SamImageAdapter import SamImageAdapter
+from HybridInpainter import HybridInpainter
 
 class ObjectRemover:
     def __init__(self):
         # AI Engines
         self.sam = SamFacadeSingleton()
-        self.inpainter = StableDiffusionInpainter()
+        self.inpainter: IInpainter = HybridInpainter()
         
         # Architecture Components 
         self.depth_facade = OptimizedDepthFacade(threshold=100)
@@ -43,7 +44,7 @@ class ObjectRemover:
             logger.error(f"Could not load image: {image_path}")
             raise FileNotFoundError(f"Could not load image: {image_path}")
 
-        # 1. Depth Facade - Compute the smooth near/far optimized depth map
+        # 1. Depth Facade
         logger.info("Step 1: Computing optimized depth map...")
         optimized_depth = self.depth_facade.get_optimized_depth_map(image)
         self._save_intermediate("optimized_depth", optimized_depth)
@@ -51,7 +52,7 @@ class ObjectRemover:
         if depth_output_flag:
             self._save_depth_debug(optimized_depth)
 
-        # 2. Adapter with Cache - Prepare the depth map for SAM (3 channels)
+        # 2. Adapter with Cache
         logger.info("Step 2: Adapting data...")
         adapted_for_sam = self.sam_adapter.get_adapted_image(
             raw_data=optimized_depth,
@@ -64,14 +65,13 @@ class ObjectRemover:
         logger.info(f"Step 3: Computing SAM mask at ({x}, {y}) on pure depth map...")
         print(f"[ObjectRemover] Requesting mask from SAM at ({x}, {y})...")
         
-        # BACK TO BASICS: We feed SAM the smooth depth map (adapted_for_sam).
-        # This prevents SAM from getting confused by fabric creases, shadows, and textures.
-        mask = self.sam.get_mask_at_point(adapted_for_sam, x, y, expand_pixels=30) 
+        mask = self.sam.get_mask_at_point(adapted_for_sam, x, y) 
         self._save_intermediate("mask", mask, is_mask=True)
 
         # 4. Inpaint 
-        logger.info("Step 4: Inpainting image...")
-        # We pass the original colorful image to LaMa, along with the mask generated from depth
+        logger.info("Step 4: Inpainting image using the isolated pipeline...")
+        # The Controller delegates the inpainting task to the interface.
+        # It is completely blind to the fact that two models are running sequentially.
         result_image = self.inpainter.inpaint(image, mask)
         
         self._save_result(result_image)

@@ -4,10 +4,11 @@ import logging
 from PIL import Image
 import cv2
 from diffusers import StableDiffusionInpaintPipeline
+from interfaces import IInpainter
 
 logger = logging.getLogger(__name__)
 
-class StableDiffusionInpainter:
+class StableDiffusionInpainter(IInpainter):
     """
     Inpainting engine using Stable Diffusion.
     Provides photo-realistic generation for removed objects.
@@ -35,8 +36,8 @@ class StableDiffusionInpainter:
         logger.info("Stable Diffusion Inpainting model loaded successfully.")
 
     def inpaint(self, image: np.ndarray, mask: np.ndarray, 
-                # שינוי 1: תיאור מדויק רק של הטקסטורה הרצויה
-                prompt: str = None) -> np.ndarray:
+                prompt: str = None, 
+                strength: float = 0.35) -> np.ndarray:
         """
         Inpaints the masked area using generative AI.
         """
@@ -59,14 +60,13 @@ class StableDiffusionInpainter:
         logger.info(f"Running inference with prompt: '{prompt}'")
         
         result = self.pipe(
-            prompt=prompt, # כאן תיקנתי באג קטן שהיה בקוד שלך (קראת ל-self.SD_prompt במקום ל-prompt שנכנס)
+            prompt=prompt, 
             negative_prompt=self.SD_negative_prompt,
             image=pil_image_resized,
             mask_image=pil_mask_resized,
             num_inference_steps=20,
             guidance_scale=8.5,
-            # הוספנו את פרמטר הכוח! 1.0 אומר - התעלם לגמרי מהפיקסלים המקוריים שמתחת למסכה
-            strength=1.0 
+            strength=strength # שימוש בפרמטר שנכנס
         ).images[0]
         
         result = result.resize(original_size, Image.LANCZOS)

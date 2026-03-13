@@ -2,11 +2,12 @@ import numpy as np
 import logging
 from PIL import Image
 from simple_lama_inpainting import SimpleLama
+from interfaces import IInpainter
 
 # Configure logging
 logger = logging.getLogger(__name__)
 
-class LamaInpainter:
+class LamaInpainter(IInpainter):
     """Singleton facade for LaMa inpainting operations."""
     _instance = None
 

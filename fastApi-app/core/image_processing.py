@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import io
+import logging
 from pathlib import Path
 
+from PIL import Image, ImageDraw, UnidentifiedImageError
+
 from schemas.image import ImageProcessingOptions
+
+
+logger = logging.getLogger(__name__)
 
 
 def process_image(input_bytes: bytes, options: ImageProcessingOptions) -> bytes:
@@ -31,13 +38,12 @@ def process_image(input_bytes: bytes, options: ImageProcessingOptions) -> bytes:
 
 
 def get_image_path(image_id: str, base_dir: Path) -> Path:
-    """Build the filesystem path for a stored image.
+    """Resolve filesystem path for a stored image regardless of extension."""
 
-    The concrete file extension can be adjusted later. For the outline we assume
-    PNG output, which is a common choice for segmentation results.
-    """
-
-    return base_dir / f"{image_id}.png"
+    candidates = sorted(base_dir.glob(f"{image_id}.*"))
+    if not candidates:
+        raise FileNotFoundError(f"No stored image found for image_id='{image_id}' in {base_dir}")
+    return candidates[0]
 
 
 def load_image_bytes(image_id: str, base_dir: Path) -> bytes:
@@ -99,7 +105,42 @@ def process_click_on_image(
     the pure segmentation logic defined in `segment_at_click`.
     """
 
+    image_path = get_image_path(image_id=image_id, base_dir=base_dir)
     image_bytes = load_image_bytes(image_id=image_id, base_dir=base_dir)
+
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as source_image:
+            width, height = source_image.size
+            in_bounds = 0 <= x < width and 0 <= y < height
+
+            if not in_bounds:
+                logger.warning(
+                    "Click out of bounds for image_id='%s': x=%d y=%d image_width=%d image_height=%d",
+                    image_id,
+                    x,
+                    y,
+                    width,
+                    height,
+                )
+
+            debug_image = source_image.convert("RGB")
+            if in_bounds:
+                draw = ImageDraw.Draw(debug_image)
+                radius = 6
+                draw.ellipse(
+                    (x - radius, y - radius, x + radius, y + radius),
+                    fill="red",
+                    outline="white",
+                    width=2,
+                )
+
+            tmp_dir = base_dir / "tmp"
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            debug_image_path = tmp_dir / f"{image_id}_debug{image_path.suffix}"
+            debug_image.save(debug_image_path)
+    except UnidentifiedImageError:
+        logger.exception("Unable to open image bytes for image_id='%s'", image_id)
+
     background_bytes, cutout_bytes, image_format = segment_at_click(
         image_bytes=image_bytes,
         x=x,

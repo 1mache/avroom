@@ -1,4 +1,3 @@
-# src/routing/boundary_variance_strategy.py
 import cv2
 import numpy as np
 import logging
@@ -22,9 +21,10 @@ class BoundaryVarianceRoutingStrategy(ISegmentationRoutingStrategy):
         pixel_depth = raw_depth[y, x, 0] if len(raw_depth.shape) == 3 else raw_depth[y, x]
         depth_ratio = float(pixel_depth) / 255.0
 
-        # 1. Probe the object using SAM
+        # 1. Probe the object using SAM 
+        # (use_broad_mask MUST be False here to avoid grabbing background objects)
         logger.info(f"Fetching probe mask at ({x}, {y}) for Boundary Analysis...")
-        probe_mask = self.sam.get_mask_at_point(adapted_depth, x, y, expand_pixels=0, use_broad_mask=True)
+        probe_mask = self.sam.get_mask_at_point(adapted_depth, x, y, expand_pixels=0, use_broad_mask=False)
         
         mask_uint8 = probe_mask.astype(np.uint8)
         
@@ -50,11 +50,14 @@ class BoundaryVarianceRoutingStrategy(ISegmentationRoutingStrategy):
         
         is_3d_object = boundary_variance > self.boundary_var_thresh
 
+        # ==========================================
+        # CRITICAL FIX: Routing Context Configuration
+        # ==========================================
         context = {
-            'input_image': adapted_depth if is_3d_object else rgb_image,
-            'sd_strength': 0.85 if is_3d_object else 0.50,
-            'use_broad_mask': is_3d_object,
-            'expand_pixels': int(30 + (depth_ratio * 60)) if is_3d_object else int(10 + (depth_ratio * 20))
+            'input_image': adapted_depth, # חזרנו למפת העומק שעבדה לך מצוין!
+            'sd_strength': 0.65,          # כוח מרוסן לאינפיינטינג
+            'use_broad_mask': False,      # מבקשים מ-SAM מסכה מדויקת של הפוף בלבד
+            'expand_pixels': int(30 + (depth_ratio * 60)) # מנפחים לפי המרחק (והשומר ראש יגן על השולחן)
         }
 
         logger.info(f"[ROUTER] Decision: {'3D Object' if is_3d_object else 'Flat Surface'} | Output: {context}")

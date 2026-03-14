@@ -72,7 +72,7 @@ class SamFacadeSingleton:
 
         # 5. Dynamic Expansion
         if expand_pixels > 0:
-            # הנה התיקון: אנחנו קוראים למחלקה שלך, ומעבירים 'pixels=' כמו שהיא מצפה לקבל!
+          
             best_mask = self.mask_refiner.dilate_mask(best_mask, pixels=expand_pixels)
             
         return best_mask

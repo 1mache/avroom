@@ -47,7 +47,7 @@ class HybridInpainter(IInpainter):
         
         # 2. Inject an adaptive prompt suitable for textures instead of flat walls
         if 'prompt' not in sd_kwargs:
-            sd_kwargs['prompt'] = "seamless continuation of the surrounding textures, photorealistic interior design, extremely high detail"
+            sd_kwargs['prompt'] = "empty floor, empty background, seamless continuation of the surrounding textures, nothing inside, no objects, photorealistic"
 
         # Execute Stable Diffusion with dynamic parameters
         final_result = self.sd.inpaint(lama_result, mask, **sd_kwargs)

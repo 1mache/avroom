@@ -22,10 +22,37 @@ class ImageProcessingOptions(BaseModel):
     ] = False
 
 
+class ImageUploadResponse(BaseModel):
+    """Response returned after successfully uploading and storing an image.
+
+    The `image_id` is what the frontend will use when calling the click endpoint
+    to reference this uploaded image.
+    """
+
+    image_id: Annotated[
+        str,
+        Field(description="Server-generated identifier for the stored image."),
+    ]
+    original_filename: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Original filename sent by the client, if available.",
+        ),
+    ]
+    stored_path: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Absolute or relative filesystem path where the image is stored (for debugging).",
+        ),
+    ]
+
+
 class ClickRequest(BaseModel):
     """Request payload for a user's click on an image.
 
-    - `image_id` is a forward-compatible placeholder for when images are persisted.
+    - `image_id` identifies which previously uploaded image the click refers to.
     - `x` and `y` are pixel coordinates with origin at the top-left of the image.
     """
 
@@ -46,15 +73,27 @@ class ClickRequest(BaseModel):
         Field(description="Optional processing options associated with the click action."),
     ] = None
 
+class ClickResultResponse(BaseModel):
+    """Segmentation result returned from a click on an image.
 
-class ClickResponse(BaseModel):
-    """Response payload acknowledging a click request.
-
-    For the MVP this is just an echo/ack. Later, this can include a job id,
-    derived metadata, or a URL to the processed output once storage exists.
+    Both `background_b64` and `cutout_b64` contain base64-encoded image data
+    that the frontend can render directly as data URLs.
     """
 
-    image_id: Annotated[str, Field(description="Echo of the image identifier.")]
-    x: Annotated[int, Field(description="Echo of X coordinate (pixels).")]
-    y: Annotated[int, Field(description="Echo of Y coordinate (pixels).")]
+    image_id: Annotated[
+        str,
+        Field(description="Identifier of the image that was segmented."),
+    ]
+    background_b64: Annotated[
+        str,
+        Field(description="Base64-encoded background image (without the clicked object)."),
+    ]
+    cutout_b64: Annotated[
+        str,
+        Field(description="Base64-encoded cutout image containing the clicked object."),
+    ]
+    format: Annotated[
+        str,
+        Field(description="Image format used for both returned images (e.g. 'png')."),
+    ]
 

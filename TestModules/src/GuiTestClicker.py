@@ -1,7 +1,7 @@
 import os
 import cv2
 import logging
-from ObjectRemover import ObjectRemover
+from core.objectRemover import ObjectRemover
 
 # Configure logging
 logger = logging.getLogger(__name__)

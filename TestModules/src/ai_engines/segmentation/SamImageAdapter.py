@@ -1,7 +1,7 @@
 import cv2
 import logging
 import numpy as np
-from interfaces import IImageAdapter
+from core.interfaces import IImageAdapter
 
 # Configure logging
 logger = logging.getLogger(__name__)

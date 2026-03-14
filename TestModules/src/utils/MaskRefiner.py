@@ -13,12 +13,18 @@ class MaskRefiner:
     def dilate_mask(self, mask: np.ndarray, pixels: int = 8) -> np.ndarray:
         """
         Expands the mask by a given number of pixels using dilation.
+        Uses a circular/elliptical kernel for smooth, organic expansion.
         """
         if pixels <= 0:
             return mask
             
-        # Create a kernel (structuring element) for dilation
-        kernel = np.ones((pixels, pixels), np.uint8)
+        # Ensure kernel size is an odd number for perfect symmetry
+        kernel_size = int(pixels)
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+            
+        # Create a circular (ellipse) kernel instead of a square one!
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
         
         # Convert boolean mask to uint8 for OpenCV
         mask_uint8 = mask.astype(np.uint8)

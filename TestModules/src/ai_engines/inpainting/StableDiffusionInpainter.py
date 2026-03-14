@@ -4,7 +4,7 @@ import logging
 from PIL import Image
 import cv2
 from diffusers import StableDiffusionInpaintPipeline
-from interfaces import IInpainter
+from core.interfaces import IInpainter
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +30,7 @@ class StableDiffusionInpainter(IInpainter):
         if self.device == "cuda":
             self.pipe.enable_attention_slicing()
 
-        self.SD_prompt = "seamless plain flat background texture, photorealistic background, empty space"
+        self.SD_prompt = "empty floor, empty background, seamless continuation of the surrounding textures, nothing inside, no objects, photorealistic"
         self.SD_negative_prompt = "table, furniture, object, pouf, shadow, 3d, person, animal, cat, dog, clutter, artifact, pedestal, box"
             
         logger.info("Stable Diffusion Inpainting model loaded successfully.")

@@ -32,3 +32,9 @@ class IInpainter(ABC):
             np.ndarray: The resulting inpainted image in BGR format.
         """
         pass
+
+
+class ISegmentationRoutingStrategy(ABC):
+    @abstractmethod
+    def choose_input(self, rgb_image: np.ndarray, raw_depth: np.ndarray, adapted_depth: np.ndarray, x: int, y: int) -> np.ndarray:
+        pass

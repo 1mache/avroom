@@ -7,7 +7,7 @@ import time
 # Define paths and imports
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.abspath(os.path.join(BASE_DIR, '..')))
-from src.ImageDepthMapper import ImageDepthMapper
+from TestModules.src.ai_engines.depth.ImageDepthMapper import ImageDepthMapper
 
 # Moved function to global scope to prevent Pickle error on Windows
 def run_model_task(model_name, image_path, out_path):

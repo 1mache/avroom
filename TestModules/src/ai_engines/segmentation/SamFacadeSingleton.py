@@ -5,7 +5,7 @@ import numpy as np
 from segment_anything import sam_model_registry, SamPredictor
 
 # הייבוא החדש של המחלקה שיצרנו
-from MaskRefiner import MaskRefiner
+from utils.MaskRefiner import MaskRefiner
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,8 @@ class SamFacadeSingleton:
             
             # --- הגדרת נתיב המודל ---
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            checkpoint_path = os.path.join(current_dir, "..", "checkpoints", "sam_vit_b_01ec64.pth")
+            checkpoint_path = os.path.abspath(
+            os.path.join(current_dir, "..", "..", "..", "checkpoints", "sam_vit_b_01ec64.pth"))
             model_type = "vit_b"
             
             try:
@@ -47,28 +48,31 @@ class SamFacadeSingleton:
                 logger.error(f"Error loading SAM model: {e}")
                 raise
 
-    def get_mask_at_point(self, image: np.ndarray, x: int, y: int, expand_pixels: int = 8) -> np.ndarray:
-        """
-        Generates a mask for a specific pixel and refines it via the composed MaskRefiner.
-        """
-        logger.debug(f"Getting SAM mask at point ({x}, {y})")
-        
+    # ADDED 'use_broad_mask' parameter defaulting to False
+    def get_mask_at_point(self, image: np.ndarray, x: int, y: int, expand_pixels: int = 30, use_broad_mask: bool = False) -> np.ndarray:
+        # 1. Feed the image to SAM
         self._predictor.set_image(image)
         
+        # 2. Format the coordinates for SAM (This is what got deleted!)
         input_point = np.array([[x, y]])
-        input_label = np.array([1])
+        input_label = np.array([1]) # 1 indicates a foreground point
         
-        # AI Prediction
+        # 3. Predict masks
         masks, scores, logits = self._predictor.predict(
             point_coords=input_point,
             point_labels=input_label,
-            multimask_output=False,
+            multimask_output=True,
         )
         
-        raw_mask = masks[0]
+        # 4. Context-Aware Routing: SAM now actually listens to our Router!
+        if use_broad_mask and len(masks) > 1:
+            best_mask = masks[1]  # The broad mask (good for 3D objects like poufs)
+        else:
+            best_mask = masks[0]  # The tight mask (good for flat TVs and Windows)
 
-        # Post-Processing via Composition
-        refined_mask = self.mask_refiner.dilate_mask(raw_mask, pixels=expand_pixels)
+        # 5. Dynamic Expansion
+        if expand_pixels > 0:
+            # הנה התיקון: אנחנו קוראים למחלקה שלך, ומעבירים 'pixels=' כמו שהיא מצפה לקבל!
+            best_mask = self.mask_refiner.dilate_mask(best_mask, pixels=expand_pixels)
             
-        logger.debug("SAM mask generated and refined successfully")
-        return refined_mask
+        return best_mask

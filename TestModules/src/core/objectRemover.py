@@ -4,6 +4,7 @@ import logging
 import numpy as np
 from PIL import Image
 from utils.DebugImageSaver import DebugImageSaver
+from utils.MaskRefiner import MaskRefiner
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -15,6 +16,7 @@ from core.interfaces import IInpainter
 from ai_engines.segmentation.SamImageAdapter import SamImageAdapter
 from ai_engines.inpainting.HybridInpainter import HybridInpainter
 from routing.boundary_variance_strategy import BoundaryVarianceRoutingStrategy
+from routing.gradient_variance_routing_strategy import GradientVarianceRoutingStrategy
 
 class ObjectRemover:
     def __init__(self):
@@ -26,6 +28,7 @@ class ObjectRemover:
         self.depth_facade = OptimizedDepthFacade(threshold=100)
         self.sam_adapter = SamImageAdapter()
         self.router = BoundaryVarianceRoutingStrategy(sam_facade=self.sam)
+        self.mask_refiner = MaskRefiner(depth_tolerance=20)
 
         self.image_saver = DebugImageSaver()
         
@@ -74,13 +77,27 @@ class ObjectRemover:
             x=x, y=y
         )
         
-        print(f"[ObjectRemover] Requesting mask from SAM at ({x}, {y})...")
-        mask = self.sam.get_mask_at_point(
+        # --- שלב 1: מבקשים מ-SAM מסכה צמודה והדוקה (0 הרחבה) ---
+        logger.info(f"Requesting TIGHT mask from SAM at ({x}, {y})...")
+        tight_mask = self.sam.get_mask_at_point(
             run_context['input_image'], 
             x, y, 
-            expand_pixels=run_context['expand_pixels'],
+            expand_pixels=0,  # <-- זה הקסם! אנחנו אוסרים על SAM לנפח
             use_broad_mask=run_context['use_broad_mask'] 
         )
+        self.image_saver.save("tight_mask", tight_mask)
+
+        # --- שלב 2: ניפוח וחיתוך חכם מבוסס עומק ---
+        logger.info("Refining mask using Aggressive Depth-Guided Clipping...")
+        mask = self.mask_refiner.expand_and_clip(
+            original_mask=tight_mask, 
+            depth_map=optimized_depth, 
+            expand_pixels=run_context['expand_pixels'],
+            click_x=x,   # התוספת החדשה: שולחים את נקודת העוגן לרפיינר
+            click_y=y
+        )
+        
+        # שמירת המסכה המדויקת לדיבוג
         self.image_saver.save("mask", mask)
 
         # ==========================================

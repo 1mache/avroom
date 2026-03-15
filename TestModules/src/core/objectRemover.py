@@ -28,7 +28,7 @@ class ObjectRemover:
         self.depth_facade = OptimizedDepthFacade(threshold=100)
         self.sam_adapter = SamImageAdapter()
         self.router = BoundaryVarianceRoutingStrategy(sam_facade=self.sam)
-        self.mask_refiner = MaskRefiner(depth_tolerance=20)
+        self.mask_refiner = MaskRefiner(depth_tolerance=10)
 
         self.image_saver = DebugImageSaver()
         
@@ -82,19 +82,26 @@ class ObjectRemover:
         tight_mask = self.sam.get_mask_at_point(
             run_context['input_image'], 
             x, y, 
-            expand_pixels=0,  # <-- זה הקסם! אנחנו אוסרים על SAM לנפח
+            expand_pixels=run_context.get('expand_pixels', 14),
             use_broad_mask=run_context['use_broad_mask'] 
         )
         self.image_saver.save("tight_mask", tight_mask)
 
-        # --- שלב 2: ניפוח וחיתוך חכם מבוסס עומק ---
-        logger.info("Refining mask using Aggressive Depth-Guided Clipping...")
-        mask = self.mask_refiner.expand_and_clip(
-            original_mask=tight_mask, 
-            depth_map=optimized_depth, 
-            expand_pixels=run_context['expand_pixels'],
-            click_x=x,   # התוספת החדשה: שולחים את נקודת העוגן לרפיינר
-            click_y=y
+        # ==========================================
+        # DEBUG: Generate Whitened Overlay for TIGHT Mask (pre-refinement)
+        # ==========================================
+        logger.info("Generating debug tight mask overlay (Whitened Image, pre-refinement)...")
+        tight_overlay = image.copy()
+        tight_bool_mask = tight_mask > 0 if tight_mask.dtype != bool else tight_mask
+        tight_overlay[tight_bool_mask] = [255, 255, 255]
+        self.image_saver.save("debug_tight_mask_overlay", tight_overlay)
+        # ==========================================
+
+        # --- שלב 2: ניפוח מסכה פשוט ואחיד (2–3 פיקסלים לכל הכיוונים) ---
+        logger.info("Refining mask using simple uniform dilation (~3px expansion)...")
+        mask = self.mask_refiner.expand_mask_uniform(
+            original_mask=tight_mask,
+            radius=3
         )
         
         # שמירת המסכה המדויקת לדיבוג

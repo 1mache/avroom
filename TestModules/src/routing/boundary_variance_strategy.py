@@ -51,13 +51,24 @@ class BoundaryVarianceRoutingStrategy(ISegmentationRoutingStrategy):
         is_3d_object = boundary_variance > self.boundary_var_thresh
 
         # ==========================================
-        # CRITICAL FIX: Routing Context Configuration
+        # Routing Context Configuration (tuned for tighter masks)
         # ==========================================
+        if is_3d_object:
+            # 3D objects: slightly larger but still controlled band
+            base_expand = 10
+            extra_expand = int(depth_ratio * 10)  # up to +10px
+        else:
+            # Flat objects: very tight band
+            base_expand = 4
+            extra_expand = int(depth_ratio * 6)   # up to +6px
+
+        expand_pixels = base_expand + extra_expand
+
         context = {
             'input_image': adapted_depth, # חזרנו למפת העומק שעבדה לך מצוין!
-            'sd_strength': 0.65,          # כוח מרוסן לאינפיינטינג
+            'sd_strength': 0.35,       # keep low to avoid SD hallucinating; sharpening is done in post
             'use_broad_mask': False,      # מבקשים מ-SAM מסכה מדויקת של הפוף בלבד
-            'expand_pixels': int(30 + (depth_ratio * 60)) # מנפחים לפי המרחק (והשומר ראש יגן על השולחן)
+            'expand_pixels': expand_pixels
         }
 
         logger.info(f"[ROUTER] Decision: {'3D Object' if is_3d_object else 'Flat Surface'} | Output: {context}")

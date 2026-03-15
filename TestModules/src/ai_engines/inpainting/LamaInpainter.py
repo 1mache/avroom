@@ -1,5 +1,6 @@
 import numpy as np
 import logging
+import cv2
 from PIL import Image
 from simple_lama_inpainting import SimpleLama
 from core.interfaces import IInpainter
@@ -28,9 +29,27 @@ class LamaInpainter(IInpainter):
         logger.info("Starting inpainting process...")
         print("Starting inpainting process...")
         
-        # 1. המרה מ-NumPy ל-PIL Image
-        # ההנחה היא שהתמונה כבר בפורמט RGB (אם עשית cvtColor לפני כן)
-        image_pil = Image.fromarray(image)
+        # 0. So LaMa is not conditioned on the removed object's pixels (avoids ghost where it obstructed another object),
+        #    fill the mask region with the mean color of the mask boundary only. Mask size and shape are unchanged.
+        mask_uint = (mask * 255).astype(np.uint8) if mask.max() <= 1 else mask.astype(np.uint8)
+        mask_bool = mask_uint > 127
+        if mask_bool.any():
+            kernel = np.ones((3, 3), np.uint8)
+            boundary = (cv2.dilate(mask_uint, kernel) > 0) & (~mask_bool)
+            if boundary.any():
+                if len(image.shape) == 3:
+                    fill = np.round(image[boundary].mean(axis=0)).astype(image.dtype)
+                else:
+                    fill = np.round(image[boundary].mean()).astype(image.dtype)
+                image = image.copy()
+                image[mask_bool] = fill
+        
+        # 1. Convert BGR (cv2) to RGB for SimpleLama, then to PIL
+        if len(image.shape) == 3 and image.shape[2] == 3:
+            image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        else:
+            image_rgb = image
+        image_pil = Image.fromarray(image_rgb)
         
         # וידוא שהמסכה בטווח הנכון (0-255) והמרה למצב Grayscale ('L')
         if mask.max() <= 1.0:
@@ -43,7 +62,13 @@ class LamaInpainter(IInpainter):
         result_pil = self.lama(image_pil, mask_pil)
         logger.info("LaMa inpainting completed successfully")
         
-        # 3. המרה חזרה ל-NumPy כדי שיתאים לשאר הקוד שלך
-        result_np = np.array(result_pil)
-        
+        # 3. Convert result back to BGR so pipeline (SD, saving) stays cv2-compatible
+        result_rgb = np.array(result_pil)
+        if result_rgb.dtype == np.float32 or result_rgb.dtype == np.float64:
+            if result_rgb.max() <= 1.0:
+                result_rgb = (np.clip(result_rgb, 0, 1) * 255).astype(np.uint8)
+        if len(result_rgb.shape) == 3 and result_rgb.shape[2] == 3:
+            result_np = cv2.cvtColor(result_rgb, cv2.COLOR_RGB2BGR)
+        else:
+            result_np = result_rgb
         return result_np

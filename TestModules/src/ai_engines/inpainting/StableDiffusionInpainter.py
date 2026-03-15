@@ -30,8 +30,9 @@ class StableDiffusionInpainter(IInpainter):
         if self.device == "cuda":
             self.pipe.enable_attention_slicing()
 
-        self.SD_prompt = "empty floor, empty background, seamless continuation of the surrounding textures, nothing inside, no objects, photorealistic"
-        self.SD_negative_prompt = "table, furniture, object, pouf, shadow, 3d, person, animal, cat, dog, clutter, artifact, pedestal, box"
+        # Minimal prompt — empty space only (good-run wording; "sharp/detailed" can encourage structure/objects)
+        self.SD_prompt = "seamless plain flat background texture, photorealistic background, empty space"
+        self.SD_negative_prompt = "furniture, table, couch, chair, sofa, ottoman, pouf, stool, vase, plant, object, item, thing, decor, shadow, 3d, person, animal, clutter, artifact, pedestal, box, blurry, smeared, ghost"
             
         logger.info("Stable Diffusion Inpainting model loaded successfully.")
 
@@ -46,12 +47,14 @@ class StableDiffusionInpainter(IInpainter):
         img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(img_rgb)
         
-        mask_uint8 = (mask * 255).astype(np.uint8)
-        pil_mask = Image.fromarray(mask_uint8).convert("L")
+        # Keep mask strictly binary so SD gets a hard edge (avoids smeared corners at boundary)
+        mask_uint8 = (mask * 255).astype(np.uint8) if mask.max() <= 1 else mask.astype(np.uint8)
+        mask_binary = ((mask_uint8 > 127).astype(np.uint8) * 255)
+        pil_mask = Image.fromarray(mask_binary).convert("L")
         
         original_size = pil_image.size
         pil_image_resized = pil_image.resize((512, 512))
-        pil_mask_resized = pil_mask.resize((512, 512))
+        pil_mask_resized = pil_mask.resize((512, 512), Image.NEAREST)
 
         if prompt is None:
             prompt = self.SD_prompt
@@ -64,9 +67,9 @@ class StableDiffusionInpainter(IInpainter):
             negative_prompt=self.SD_negative_prompt,
             image=pil_image_resized,
             mask_image=pil_mask_resized,
-            num_inference_steps=20,
-            guidance_scale=8.5,
-            strength=strength # שימוש בפרמטר שנכנס
+            num_inference_steps=30,
+            guidance_scale=10.0,
+            strength=strength
         ).images[0]
         
         result = result.resize(original_size, Image.LANCZOS)

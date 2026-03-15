@@ -3,6 +3,7 @@ import torch
 import logging
 import numpy as np
 from segment_anything import sam_model_registry, SamPredictor
+from utils.DebugImageSaver import DebugImageSaver
 
 # הייבוא החדש של המחלקה שיצרנו
 from utils.MaskRefiner import MaskRefiner
@@ -64,15 +65,16 @@ class SamFacadeSingleton:
             multimask_output=True,
         )
         
-        # 4. Context-Aware Routing: SAM now actually listens to our Router!
-        if use_broad_mask and len(masks) > 1:
-            best_mask = masks[1]  # The broad mask (good for 3D objects like poufs)
-        else:
-            best_mask = masks[0]  # The tight mask (good for flat TVs and Windows)
+        image_saver = DebugImageSaver()
+        for i, mask in enumerate(masks):
+            image_saver.save(f"mask_{i}.png", mask)
+
+        best_mask = masks[2]  # The tight mask (good for flat TVs and Windows)
 
         # 5. Dynamic Expansion
         if expand_pixels > 0:
           
             best_mask = self.mask_refiner.dilate_mask(best_mask, pixels=expand_pixels)
-            
+            image_saver.save("dilated_mask.png", best_mask)
+        image_saver.save("best_mask.png", best_mask)
         return best_mask

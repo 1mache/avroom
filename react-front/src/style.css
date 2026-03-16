@@ -89,7 +89,8 @@ body {
 }
 
 .upload-frame {
-  height: 320px;
+  min-height: 320px;
+  max-height: 80vh;
 }
 
 .result-frame {
@@ -120,18 +121,18 @@ body {
   max-height: 100%;
   border-radius: 8px;
   object-fit: contain;
+  margin: auto;
+  display: block;
 }
 
 .image-container {
   position: relative;
-  flex: 1;
   border-radius: 8px;
   overflow: hidden;
-  border: 1px solid var(--border);
-  background-color: #000;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  margin: 0 auto;
 }
 
 .click-dot {

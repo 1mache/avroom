@@ -5,7 +5,7 @@ export interface UploadFrameProps {
   imageSrc?: string | null;
   clickPosition?: { x: number; y: number } | null;
   onFileSelected: (file: File) => void;
-  onImageClick: (position: { x: number; y: number }) => void;
+  onImageClick: (displayPos: { x: number; y: number }, naturalPos: { x: number; y: number }) => void;
   disabled?: boolean;
 }
 
@@ -17,6 +17,7 @@ export const UploadFrame: React.FC<UploadFrameProps> = ({
   disabled,
 }) => {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
 
   const handleFileInputChange: React.ChangeEventHandler<HTMLInputElement> = (event) => {
     const file = event.target.files?.[0];
@@ -43,7 +44,22 @@ export const UploadFrame: React.FC<UploadFrameProps> = ({
     const rect = event.currentTarget.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    onImageClick({ x, y });
+    
+    const img = imageRef.current;
+    if (img) {
+      const imgRect = img.getBoundingClientRect();
+      const clickXOnImg = event.clientX - imgRect.left;
+      const clickYOnImg = event.clientY - imgRect.top;
+      
+      const naturalPos = {
+        x: Math.round((clickXOnImg / imgRect.width) * img.naturalWidth),
+        y: Math.round((clickYOnImg / imgRect.height) * img.naturalHeight),
+      };
+      
+      onImageClick({ x, y }, naturalPos);
+    } else {
+      onImageClick({ x, y }, { x, y });
+    }
   };
 
   const dotStyle: React.CSSProperties | undefined =
@@ -67,7 +83,7 @@ export const UploadFrame: React.FC<UploadFrameProps> = ({
 
       {imageSrc ? (
         <div className="image-container" onClick={handleContainerClick}>
-          <img src={imageSrc} alt="Uploaded" className="frame-image" />
+          <img ref={imageRef} src={imageSrc} alt="Uploaded" className="frame-image" />
           {dotStyle ? <div className="click-dot" style={dotStyle} /> : null}
         </div>
       ) : (

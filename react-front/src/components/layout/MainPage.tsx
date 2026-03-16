@@ -16,6 +16,7 @@ export const MainPage: React.FC = () => {
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
   const [imageId, setImageId] = useState<string | null>(null);
   const [clickPosition, setClickPosition] = useState<ClickPosition | null>(null);
+  const [naturalClickPos, setNaturalClickPos] = useState<ClickPosition | null>(null);
   const [backgroundSrc, setBackgroundSrc] = useState<string | null>(null);
   const [cutoutSrc, setCutoutSrc] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -34,6 +35,7 @@ export const MainPage: React.FC = () => {
     setUploadedFile(file);
     setImageId(null);
     setClickPosition(null);
+    setNaturalClickPos(null);
     setBackgroundSrc(null);
     setCutoutSrc(null);
     setError(null);
@@ -46,6 +48,11 @@ export const MainPage: React.FC = () => {
 
       return objectUrl;
     });
+  }, []);
+
+  const handleImageClick = useCallback((displayPos: ClickPosition, naturalPos: ClickPosition) => {
+    setClickPosition(displayPos);
+    setNaturalClickPos(naturalPos);
   }, []);
 
   const handleUpload = useCallback(async () => {
@@ -75,15 +82,15 @@ export const MainPage: React.FC = () => {
       return;
     }
 
-    if (!clickPosition) {
+    if (!naturalClickPos) {
       setError("Please click on the image to select a point of interest.");
       return;
     }
 
     const payload: ClickRequest = {
       image_id: imageId,
-      x: Math.round(clickPosition.x),
-      y: Math.round(clickPosition.y),
+      x: naturalClickPos.x,
+      y: naturalClickPos.y,
     };
 
     setIsProcessing(true);
@@ -101,7 +108,7 @@ export const MainPage: React.FC = () => {
     } finally {
       setIsProcessing(false);
     }
-  }, [clickPosition, imageId]);
+  }, [naturalClickPos, imageId]);
 
   const isBusy = isUploading || isProcessing;
 
@@ -120,7 +127,7 @@ export const MainPage: React.FC = () => {
             imageSrc={uploadedImageUrl}
             clickPosition={clickPosition}
             onFileSelected={handleFileSelected}
-            onImageClick={setClickPosition}
+            onImageClick={handleImageClick}
             disabled={isBusy}
           />
         </section>

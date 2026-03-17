@@ -69,7 +69,7 @@ class SamFacadeSingleton:
         for i, mask in enumerate(masks):
             image_saver.save(f"mask_{i}.png", mask)
 
-        best_mask = masks[2]  # The tight mask (good for flat TVs and Windows)
+        best_mask = masks[1]  # The tight mask (good for flat TVs and Windows)
 
         # 5. Dynamic Expansion
         if expand_pixels > 0:
@@ -78,3 +78,5 @@ class SamFacadeSingleton:
             image_saver.save("dilated_mask.png", best_mask)
         image_saver.save("best_mask.png", best_mask)
         return best_mask
+
+        

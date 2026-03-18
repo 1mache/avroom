@@ -5,6 +5,7 @@ import numpy as np
 from PIL import Image
 from utils.DebugImageSaver import DebugImageSaver
 from utils.MaskRefiner import MaskRefiner
+from utils.MaskOverlapRGBAComposer import MaskOverlapRGBAComposer
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -44,13 +45,27 @@ class ObjectRemover:
         self.point = (x, y)
         logger.debug(f"Click point set to: ({x}, {y})")
 
-    def remove_object(self, image_path: str, x: int, y: int, depth_output_flag=False):
+    def remove_object(
+        self,
+        image_path: str,
+        x: int,
+        y: int,
+        depth_output_flag: bool = False,
+        image_bytes: bytes | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         logger.info(f"Starting object removal - Image: {image_path}, Point: ({x}, {y})")
-        
-        image = cv2.imread(image_path)
-        if image is None:
-            logger.error(f"Could not load image: {image_path}")
-            raise FileNotFoundError(f"Could not load image: {image_path}")
+        if image_bytes is not None:
+            # Decode uploaded image bytes into an OpenCV BGR array.
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if image is None:
+                logger.error("Could not decode image bytes for inpaint pipeline")
+                raise ValueError("Could not decode image bytes into an image array")
+        else:
+            image = cv2.imread(image_path)
+            if image is None:
+                logger.error(f"Could not load image: {image_path}")
+                raise FileNotFoundError(f"Could not load image: {image_path}")
 
         # 1. Depth Facade
         logger.info("Step 1: Computing optimized depth map...")
@@ -132,12 +147,31 @@ class ObjectRemover:
         self.image_saver.save("final_removed_object", result_image)
         logger.info("Object removal completed successfully")
 
-    def removeObjectTest(self):
+        # Return:
+        # 1) final_removed_object: inpainted result (BGR uint8)
+        # 2) original image with only mask-overlapping pixels visible (BGRA, alpha=0 elsewhere)
+        if mask is None:
+            raise ValueError("Internal error: mask is None after mask refinement.")
+
+        original_bg_ra = MaskOverlapRGBAComposer.compose_original_overlap_bgra(
+            original_bgr=image,
+            mask=mask,
+        )
+
+        return result_image, original_bg_ra
+
+    def removeObjectTest(self) -> tuple[np.ndarray, np.ndarray] | None:
         logger.info("removeObjectTest called")
         if self.image_path and self.point:
-            self.remove_object(self.image_path, self.point[0], self.point[1], depth_output_flag=True)
+            return self.remove_object(
+                self.image_path,
+                self.point[0],
+                self.point[1],
+                depth_output_flag=True,
+            )
         else:
             logger.warning("removeObjectTest called but image_path or point not set")
             print("[Error] Image path or point not set.")
+            return None
 
     

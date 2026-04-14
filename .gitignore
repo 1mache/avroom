@@ -2,9 +2,7 @@
 TestModules/venv/
 venv/
 
-# AI Models and Weights
-TestModules/checkpoints/
-*.pth
+
 
 # Data and Images
 TestModules/inputs/

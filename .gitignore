@@ -1,5 +1,6 @@
 #Environments
 TestModules/venv/
+.venv/
 venv/
 
 # AI Models and Weights

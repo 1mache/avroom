@@ -2,6 +2,14 @@ from __future__ import annotations
 
 import io
 import logging
+
+import sys
+import tempfile
+import types
+import uuid
+
+import cv2
+
 from pathlib import Path
 
 from PIL import Image, ImageDraw, UnidentifiedImageError
@@ -56,12 +64,6 @@ def segment_at_click(
     # ObjectRemover expects an `image_path`, so we persist the incoming bytes as a
     # temporary PNG file first. Then we encode the two numpy-array returns back
     # into PNG bytes so the API can base64 them.
-    import sys
-    import tempfile
-    import types
-    import uuid
-
-    import cv2
 
     test_src_dir = Path(__file__).resolve().parents[2] / "TestModules" / "src"
     test_core_dir = test_src_dir / "core"

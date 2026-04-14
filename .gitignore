@@ -1,0 +1,15 @@
+#Environments
+TestModules/venv/
+.venv/
+venv/
+
+# AI Models and Weights
+TestModules/checkpoints/
+*.pth
+
+# Data and Images
+TestModules/inputs/
+TestModules/outputs/
+
+# Python Cache
+__pycache__/ 

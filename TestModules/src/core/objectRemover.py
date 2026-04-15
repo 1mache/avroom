@@ -10,6 +10,24 @@ from utils.MaskOverlapRGBAComposer import MaskOverlapRGBAComposer
 # Configure logging
 logger = logging.getLogger(__name__)
 
+
+def _ensure_mask_hw(mask: np.ndarray, target_hw: tuple[int, int]) -> np.ndarray:
+    """Resize mask to target (H, W) using nearest-neighbor and keep binary semantics."""
+    h, w = target_hw
+
+    if mask.ndim == 3:
+        # If mask accidentally has channels, collapse to first channel.
+        mask = mask[:, :, 0]
+
+    if mask.shape[:2] != (h, w):
+        mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+
+    if mask.dtype == bool:
+        return mask
+
+    thresh = 0.5 if float(mask.max()) <= 1.0 else 127
+    return (mask > thresh).astype(np.uint8) * 255
+
 # Standard local imports 
 from ai_engines.segmentation.SamFacadeSingleton import SamFacadeSingleton
 from ai_engines.depth.OptimizedDepthFacade import OptimizedDepthFacade
@@ -100,6 +118,7 @@ class ObjectRemover:
             expand_pixels=run_context.get('expand_pixels', 14),
             use_broad_mask=run_context['use_broad_mask'] 
         )
+        tight_mask = _ensure_mask_hw(tight_mask, image.shape[:2])
         self.image_saver.save("tight_mask", tight_mask)
 
         # ==========================================
@@ -118,6 +137,7 @@ class ObjectRemover:
             original_mask=tight_mask,
             radius=3
         )
+        mask = _ensure_mask_hw(mask, image.shape[:2])
         
         # שמירת המסכה המדויקת לדיבוג
         self.image_saver.save("mask", mask)

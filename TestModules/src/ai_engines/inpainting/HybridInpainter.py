@@ -25,6 +25,9 @@ class HybridInpainter(IInpainter):
         logger.info("Hybrid Pipeline initialized successfully.")
 
     def inpaint(self, image: np.ndarray, mask: np.ndarray, **kwargs) -> np.ndarray:
+        if mask.ndim == 3:
+            mask = mask[:, :, 0]
+
         # Ensure mask is same size as image (depth/SAM can sometimes differ)
         if mask.shape[:2] != image.shape[:2]:
             mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
@@ -51,6 +54,14 @@ class HybridInpainter(IInpainter):
             logger.info("Skipping SD (strength <= 0.2); using LaMa result only.")
         else:
             final_result = self.sd.inpaint(lama_result, mask, **sd_kwargs)
+
+        # Defensive: keep generated output and mask aligned before boolean indexing.
+        if final_result.shape[:2] != image.shape[:2]:
+            final_result = cv2.resize(final_result, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_LANCZOS4)
+        if mask.shape[:2] != final_result.shape[:2]:
+            mask = cv2.resize(mask, (final_result.shape[1], final_result.shape[0]), interpolation=cv2.INTER_NEAREST)
+            thresh = 0.5 if mask.max() <= 1.0 else 127
+            mask = (mask > thresh).astype(np.uint8) * 255
 
         # 3. Sharpen: stronger so inpainted area and reimagined edges match surroundings
         sigma = 0.8

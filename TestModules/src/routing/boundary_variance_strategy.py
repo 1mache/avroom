@@ -25,6 +25,8 @@ class BoundaryVarianceRoutingStrategy(ISegmentationRoutingStrategy):
         # (use_broad_mask MUST be False here to avoid grabbing background objects)
         logger.info(f"Fetching probe mask at ({x}, {y}) for Boundary Analysis...")
         probe_mask = self.sam.get_mask_at_point(adapted_depth, x, y, expand_pixels=0, use_broad_mask=False)
+        if probe_mask.shape[:2] != (h, w):
+            probe_mask = cv2.resize(probe_mask, (w, h), interpolation=cv2.INTER_NEAREST)
         
         mask_uint8 = probe_mask.astype(np.uint8)
         

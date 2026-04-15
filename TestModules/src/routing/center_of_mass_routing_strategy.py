@@ -1,4 +1,5 @@
     # src/routing/center_of_mass_routing_strategy.py
+import cv2
 import numpy as np
 import logging
 from core.interfaces import ISegmentationRoutingStrategy
@@ -23,6 +24,8 @@ class CenterOfMassRoutingStrategy(ISegmentationRoutingStrategy):
         probe_mask = self.sam.get_mask_at_point(
             adapted_depth, x, y, expand_pixels=0, use_broad_mask=True
         )
+        if probe_mask.shape[:2] != (h, w):
+            probe_mask = cv2.resize(probe_mask, (w, h), interpolation=cv2.INTER_NEAREST)
 
         # 2. Find the bounding box of the probe mask (the entire object)
         y_indices, x_indices = np.where(probe_mask > 0)

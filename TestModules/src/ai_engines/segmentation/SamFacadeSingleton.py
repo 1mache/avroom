@@ -7,7 +7,7 @@ from pathlib import Path
 from segment_anything import sam_model_registry, SamPredictor
 from utils.DebugImageSaver import DebugImageSaver
 
-# הייבוא החדש של המחלקה שיצרנו
+# Import mask post-processing helper used by SAM output flow.
 from utils.MaskRefiner import MaskRefiner
 
 logger = logging.getLogger(__name__)
@@ -23,6 +23,10 @@ def _get_default_checkpoint_path() -> Path:
 
 
 def _resolve_checkpoint_path() -> Path:
+    # Resolution order:
+    # 1) explicit env var path
+    # 2) local default checkpoint file
+    # 3) optional auto-download fallback
     env_path = os.getenv("SAM_CHECKPOINT_PATH")
     if env_path:
         explicit = Path(env_path).expanduser().resolve()

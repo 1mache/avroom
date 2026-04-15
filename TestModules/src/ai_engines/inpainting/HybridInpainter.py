@@ -42,7 +42,9 @@ class HybridInpainter(IInpainter):
         logger.info("--- Hybrid Pipeline Phase 2: Texture refinement (SD) ---")
         sd_kwargs = kwargs.copy()
         
-        # 1. Apply dynamic strength (low = no hallucination; SD runs at 512px so higher strength tends to add objects)
+        # 1. Apply dynamic SD strength from router.
+        # Lower values are safer and preserve empty/background look.
+        # Higher values increase generation power but can hallucinate new objects.
         dynamic_strength = kwargs.get('strength', 0.35)
         sd_kwargs['strength'] = dynamic_strength
         logger.info(f"Using dynamic SD strength: {dynamic_strength}")
@@ -55,7 +57,8 @@ class HybridInpainter(IInpainter):
         else:
             final_result = self.sd.inpaint(lama_result, mask, **sd_kwargs)
 
-        # Defensive: keep generated output and mask aligned before boolean indexing.
+        # Keep result and mask perfectly aligned before boolean indexing.
+        # Any shape mismatch here can silently paint wrong pixels or crash later.
         if final_result.shape[:2] != image.shape[:2]:
             final_result = cv2.resize(final_result, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_LANCZOS4)
         if mask.shape[:2] != final_result.shape[:2]:
@@ -69,8 +72,8 @@ class HybridInpainter(IInpainter):
         f = final_result.astype(np.float32)
         final_result = np.clip(f + 0.6 * (f - blurred.astype(np.float32)), 0, 255).astype(np.uint8)
 
-        # 4. Nudge color toward background only in mask interior (not the boundary band)
-        #    so reimagined edges of obstructed objects keep their shape and are not distorted
+        # 4. Nudge color only in mask interior, not on the edge band.
+        # Edge pixels can contain reimagined geometry; changing them too much can warp object contours.
         mask_bool = (mask > 127) if (mask.dtype == np.uint8 or mask.max() > 1) else (mask > 0.5)
         if mask_bool.any() and len(final_result.shape) == 3:
             mask_uint = (mask * 255).astype(np.uint8) if mask.max() <= 1 else mask.astype(np.uint8)

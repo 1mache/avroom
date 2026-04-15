@@ -25,6 +25,9 @@ class GradientVarianceRoutingStrategy(ISegmentationRoutingStrategy):
         pixel_depth = raw_depth[y, x, 0] if len(raw_depth.shape) == 3 else raw_depth[y, x]
         depth_ratio = float(pixel_depth) / 255.0
 
+        # Dynamic window sizing:
+        # closer click -> larger window, farther click -> smaller window.
+        # This keeps local analysis proportional to perceived object scale.
         min_window = int(base_image_size * self.min_ratio)
         max_window = int(base_image_size * self.max_ratio)
         dynamic_window_size = int(min_window + depth_ratio * (max_window - min_window))
@@ -36,14 +39,16 @@ class GradientVarianceRoutingStrategy(ISegmentationRoutingStrategy):
         depth_window = raw_depth[y_min:y_max, x_min:x_max, 0] if len(raw_depth.shape) == 3 else raw_depth[y_min:y_max, x_min:x_max]
         norm_window = depth_window.astype(float) / 255.0
 
-        # Calculate gradients (derivatives) using Sobel operator
+        # Compute depth derivatives with Sobel.
+        # Flat regions keep similar gradients; curved/structured regions vary more.
         grad_x = cv2.Sobel(norm_window, cv2.CV_64F, 1, 0, ksize=3)
         grad_y = cv2.Sobel(norm_window, cv2.CV_64F, 0, 1, ksize=3)
         
         # Calculate gradient magnitude
         magnitude = cv2.magnitude(grad_x, grad_y)
         
-        # Calculate the VARIANCE OF THE GRADIENT (The core logic)
+        # Core signal: variance of gradient magnitude.
+        # High variance usually indicates non-flat geometry.
         grad_variance = np.var(magnitude)
         
         logger.info(f"[ROUTER] Gradient Variance at ({x}, {y}) -> {grad_variance:.5f} (Thresh: {self.gradient_var_thresh})")

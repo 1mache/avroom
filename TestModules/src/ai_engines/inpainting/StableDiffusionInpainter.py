@@ -14,19 +14,19 @@ class StableDiffusionInpainter(IInpainter):
     Provides photo-realistic generation for removed objects.
     """
     def __init__(self, model_id="runwayml/stable-diffusion-inpainting"):
-        # זיהוי אוטומטי של חומרה (CPU או כרטיס מסך CUDA)
+        # Auto-detect hardware target (CPU or CUDA GPU).
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         logger.info(f"Loading Stable Diffusion Inpainting model on {self.device} (This might take a while on first run...)")
         
-        # טעינת המודל מ-HuggingFace
+        # Load model weights from HuggingFace.
         self.pipe = StableDiffusionInpaintPipeline.from_pretrained(
             model_id,
-            # שימוש ב-float16 לכרטיסי מסך (חיסכון בזיכרון), ו-float32 ל-CPU
+            # Use float16 on GPU for lower memory use, float32 on CPU for compatibility.
             torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
         )
         self.pipe = self.pipe.to(self.device)
         
-        # אופטימיזציה לחיסכון בזיכרון אם יש כרטיס מסך
+        # Extra memory optimization for GPU runs.
         if self.device == "cuda":
             self.pipe.enable_attention_slicing()
 

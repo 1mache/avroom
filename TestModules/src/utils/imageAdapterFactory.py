@@ -1,5 +1,4 @@
 from pathlib import Path
-from typing import Union
 import logging
 import numpy as np
 from PIL import Image
@@ -20,7 +19,7 @@ class ImageAdapterFactory:
             logger.info("ImageAdapterFactory initialized")
         return cls._instance
     
-    def create_image(self, source: Union[str, Path, PILImage]) -> np.ndarray:
+    def create_image(self, source: str | Path | PILImage) -> np.ndarray:
         """
         Load and convert image from a file path or PIL Image to a numpy array
         acceptable by LamaInpainterFacade and SamFacade.

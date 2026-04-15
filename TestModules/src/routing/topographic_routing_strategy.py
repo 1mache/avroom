@@ -29,6 +29,8 @@ class TopographicRoutingStrategy(ISegmentationRoutingStrategy):
         pixel_depth = raw_depth[y, x, 0] if len(raw_depth.shape) == 3 else raw_depth[y, x]
         depth_ratio = float(pixel_depth) / 255.0
 
+        # Dynamic local window around click point.
+        # Near points get a larger neighborhood because their object footprint is usually larger.
         min_window = int(base_image_size * self.min_ratio)
         max_window = int(base_image_size * self.max_ratio)
         dynamic_window_size = int(min_window + depth_ratio * (max_window - min_window))
@@ -44,16 +46,15 @@ class TopographicRoutingStrategy(ISegmentationRoutingStrategy):
 
         topo_range = np.max(norm_window) - np.min(norm_window)
 
-        # Use the 10th percentile to guarantee we find the floor/background
+        # 10th percentile approximates a conservative background baseline
+        # inside the local window (often floor/wall behind the object).
         background_baseline = np.percentile(norm_window, 10)
         protrusion = abs(norm_center - background_baseline)
 
         logger.info(f"[ROUTER DECISION] Topography at ({x}, {y}) -> Range: {topo_range:.3f} (Threshold: {self.topo_range_thresh}), Protrusion: {protrusion:.3f} (Threshold: {self.protrusion_thresh})")
 
-        # ==========================================
-        # THE FIX: Logical OR Gate
-        # An object is 3D if the area has steep depth differences OR the object sticks out.
-        # ==========================================
+        # Decision rule:
+        # Treat as 3D if either local topography is rough OR center protrudes from local background.
         is_3d_object = (topo_range > self.topo_range_thresh) or (protrusion > self.protrusion_thresh)
 
         context = {

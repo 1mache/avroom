@@ -58,13 +58,13 @@ class LamaInpainter(IInpainter):
             image_rgb = image
         image_pil = Image.fromarray(image_rgb)
         
-        # וידוא שהמסכה בטווח הנכון (0-255) והמרה למצב Grayscale ('L')
+        # Make sure mask uses 0-255 range and convert to grayscale ('L') for LaMa.
         if mask.max() <= 1.0:
             logger.debug("Scaling mask from 0-1 to 0-255")
             mask = (mask * 255).astype(np.uint8)
         mask_pil = Image.fromarray(mask).convert('L')
         
-        # 2. הפעלת מודל LaMa
+        # 2. Run LaMa inpainting model.
         logger.debug("Running LaMa inpainting model")
         result_pil = self.lama(image_pil, mask_pil)
         logger.info("LaMa inpainting completed successfully")

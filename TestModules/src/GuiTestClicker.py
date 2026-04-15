@@ -31,7 +31,7 @@ class GuiTestClicker:
                 self.remover.set_point(x, y)
                 
                 # Trigger the removal
-                self.remover.removeObjectTest()
+                self.remover.remove_object_test()
 
                 # Close the window after performing the removal
                 cv2.destroyAllWindows()

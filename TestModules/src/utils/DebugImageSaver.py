@@ -30,8 +30,9 @@ class DebugImageSaver:
             logger.warning(f"Cannot save {filename}: invalid image data.")
             return ""
 
-        # === התיקון הקריטי למסכות של SAM ===
-        # אם התמונה היא בוליאנית (True/False), נמיר אותה לשחור-לבן (0/255)
+        # Critical SAM-mask fix:
+        # If the image is boolean (True/False), convert it to uint8 black/white (0/255)
+        # so OpenCV writes a visible image instead of a nearly empty file.
         save_image = image
         if save_image.dtype == bool:
             save_image = (save_image * 255).astype(np.uint8)

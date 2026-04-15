@@ -35,7 +35,9 @@ class CenterOfMassRoutingStrategy(ISegmentationRoutingStrategy):
         y_min, y_max = np.min(y_indices), np.max(y_indices)
         x_min, x_max = np.min(x_indices), np.max(x_indices)
 
-        # 3. Expand the bounding box to capture the immediate local background (e.g., the floor)
+        # 3. Expand the object's bounding box to include nearby background.
+        # We compare object depth against immediate surroundings (floor/wall near it),
+        # not against the full image, to avoid unrelated depth noise.
         obj_h = y_max - y_min
         obj_w = x_max - x_min
         pad_y = max(20, int(obj_h * 0.2))
@@ -52,12 +54,13 @@ class CenterOfMassRoutingStrategy(ISegmentationRoutingStrategy):
 
         norm_depth_window = depth_window.astype(float) / 255.0
 
-        # 5. Calculate Medians (Object vs Immediate Background)
+        # 5. Compare object depth to local background depth.
+        # Median is used because it is robust to outliers and noisy pixels.
         object_pixels = norm_depth_window[mask_window > 0]
-        bg_pixels = norm_depth_window[mask_window == 0]
+        background_pixels = norm_depth_window[mask_window == 0]
 
         object_median = np.median(object_pixels) if len(object_pixels) > 0 else 0
-        bg_median = np.median(bg_pixels) if len(bg_pixels) > 0 else 0
+        bg_median = np.median(background_pixels) if len(background_pixels) > 0 else 0
 
         protrusion = abs(object_median - bg_median)
         

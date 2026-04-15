@@ -1,6 +1,8 @@
 import cv2
 import logging
 import numpy as np
+from typing import Any
+
 from core.interfaces import IImageAdapter
 
 # Configure logging
@@ -18,7 +20,7 @@ class CacheComponent:
             return self._cached_data
         return None
 
-    def set(self, key: str, data: any):
+    def set(self, key: str, data: Any):
         self._cache_key = key
         self._cached_data = data
 
@@ -29,11 +31,11 @@ class SamImageAdapter(IImageAdapter):
     Uses Composition to implement caching.
     """
     def __init__(self):
-        # COMPOSITION: The Adapter 'has a' CacheComponent
+        # Composition: the adapter owns a dedicated cache component.
         self._cache = CacheComponent()
         logger.info("SamImageAdapter initialized")
 
-    def get_adapted_image(self, raw_data: any, image_id: str, point: tuple) -> np.ndarray:
+    def get_adapted_image(self, raw_data: Any, image_id: str, point: tuple[int, int]) -> np.ndarray:
         # Create a unique key based on both the image identity and the clicked point
         cache_key = f"{image_id}_{point[0]}_{point[1]}"
         

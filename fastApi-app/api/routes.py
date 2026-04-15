@@ -4,7 +4,7 @@ from typing import Annotated
 
 import uuid
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from pathlib import Path
 
@@ -63,13 +63,18 @@ async def handle_click(request: ClickRequest) -> ClickResultResponse:
 
     storage_dir: Path = get_image_storage_dir()
 
-    background_bytes, cutout_bytes, image_format = process_click_on_image(
-        image_id=request.image_id,
-        base_dir=storage_dir,
-        x=request.x,
-        y=request.y,
-        options=request.options,
-    )
+    try:
+        background_bytes, cutout_bytes, image_format = process_click_on_image(
+            image_id=request.image_id,
+            base_dir=storage_dir,
+            x=request.x,
+            y=request.y,
+            options=request.options,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Click processing failed: {exc}") from exc
 
     import base64
 

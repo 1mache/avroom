@@ -25,6 +25,9 @@ class HybridInpainter(IInpainter):
         logger.info("Hybrid Pipeline initialized successfully.")
 
     def inpaint(self, image: np.ndarray, mask: np.ndarray, **kwargs) -> np.ndarray:
+        if mask.ndim == 3:
+            mask = mask[:, :, 0]
+
         # Ensure mask is same size as image (depth/SAM can sometimes differ)
         if mask.shape[:2] != image.shape[:2]:
             mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
@@ -39,7 +42,9 @@ class HybridInpainter(IInpainter):
         logger.info("--- Hybrid Pipeline Phase 2: Texture refinement (SD) ---")
         sd_kwargs = kwargs.copy()
         
-        # 1. Apply dynamic strength (low = no hallucination; SD runs at 512px so higher strength tends to add objects)
+        # 1. Apply dynamic SD strength from router.
+        # Lower values are safer and preserve empty/background look.
+        # Higher values increase generation power but can hallucinate new objects.
         dynamic_strength = kwargs.get('strength', 0.35)
         sd_kwargs['strength'] = dynamic_strength
         logger.info(f"Using dynamic SD strength: {dynamic_strength}")
@@ -52,14 +57,23 @@ class HybridInpainter(IInpainter):
         else:
             final_result = self.sd.inpaint(lama_result, mask, **sd_kwargs)
 
+        # Keep result and mask perfectly aligned before boolean indexing.
+        # Any shape mismatch here can silently paint wrong pixels or crash later.
+        if final_result.shape[:2] != image.shape[:2]:
+            final_result = cv2.resize(final_result, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_LANCZOS4)
+        if mask.shape[:2] != final_result.shape[:2]:
+            mask = cv2.resize(mask, (final_result.shape[1], final_result.shape[0]), interpolation=cv2.INTER_NEAREST)
+            thresh = 0.5 if mask.max() <= 1.0 else 127
+            mask = (mask > thresh).astype(np.uint8) * 255
+
         # 3. Sharpen: stronger so inpainted area and reimagined edges match surroundings
         sigma = 0.8
         blurred = cv2.GaussianBlur(final_result, (0, 0), sigma)
         f = final_result.astype(np.float32)
         final_result = np.clip(f + 0.6 * (f - blurred.astype(np.float32)), 0, 255).astype(np.uint8)
 
-        # 4. Nudge color toward background only in mask interior (not the boundary band)
-        #    so reimagined edges of obstructed objects keep their shape and are not distorted
+        # 4. Nudge color only in mask interior, not on the edge band.
+        # Edge pixels can contain reimagined geometry; changing them too much can warp object contours.
         mask_bool = (mask > 127) if (mask.dtype == np.uint8 or mask.max() > 1) else (mask > 0.5)
         if mask_bool.any() and len(final_result.shape) == 3:
             mask_uint = (mask * 255).astype(np.uint8) if mask.max() <= 1 else mask.astype(np.uint8)

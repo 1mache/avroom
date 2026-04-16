@@ -10,6 +10,24 @@ from utils.MaskOverlapRGBAComposer import MaskOverlapRGBAComposer
 # Configure logging
 logger = logging.getLogger(__name__)
 
+
+def _ensure_mask_hw(mask: np.ndarray, target_hw: tuple[int, int]) -> np.ndarray:
+    """Resize mask to target (H, W) using nearest-neighbor and keep binary semantics."""
+    h, w = target_hw
+
+    if mask.ndim == 3:
+        # If mask accidentally has channels, collapse to first channel.
+        mask = mask[:, :, 0]
+
+    if mask.shape[:2] != (h, w):
+        mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+
+    if mask.dtype == bool:
+        return mask
+
+    thresh = 0.5 if float(mask.max()) <= 1.0 else 127
+    return (mask > thresh).astype(np.uint8) * 255
+
 # Standard local imports 
 from ai_engines.segmentation.SamFacadeSingleton import SamFacadeSingleton
 from ai_engines.depth.OptimizedDepthFacade import OptimizedDepthFacade
@@ -82,7 +100,9 @@ class ObjectRemover:
         )
         self.image_saver.save("adapted_for_sam", adapted_for_sam)
 
-       # 3. Dynamic Routing & SAM Mask 
+        # 3. Dynamic routing and SAM mask selection.
+        # The router decides which image representation SAM should see and how
+        # much post-expansion to apply based on local depth behavior.
         logger.info(f"Step 3: Determining optimal context for ({x}, {y})...")
         
         run_context = self.router.choose_input(
@@ -92,7 +112,8 @@ class ObjectRemover:
             x=x, y=y
         )
         
-        # --- שלב 1: מבקשים מ-SAM מסכה צמודה והדוקה (0 הרחבה) ---
+        # Step 1: ask SAM for a tight object mask first.
+        # We intentionally start tight so we do not accidentally include nearby background objects.
         logger.info(f"Requesting TIGHT mask from SAM at ({x}, {y})...")
         tight_mask = self.sam.get_mask_at_point(
             run_context['input_image'], 
@@ -100,6 +121,7 @@ class ObjectRemover:
             expand_pixels=run_context.get('expand_pixels', 14),
             use_broad_mask=run_context['use_broad_mask'] 
         )
+        tight_mask = _ensure_mask_hw(tight_mask, image.shape[:2])
         self.image_saver.save("tight_mask", tight_mask)
 
         # ==========================================
@@ -112,14 +134,16 @@ class ObjectRemover:
         self.image_saver.save("debug_tight_mask_overlay", tight_overlay)
         # ==========================================
 
-        # --- שלב 2: ניפוח מסכה פשוט ואחיד (2–3 פיקסלים לכל הכיוונים) ---
+        # Step 2: do a small and uniform expansion after the tight mask is found.
+        # This helps cover object edge pixels that SAM can miss by 1-3 pixels.
         logger.info("Refining mask using simple uniform dilation (~3px expansion)...")
         mask = self.mask_refiner.expand_mask_uniform(
             original_mask=tight_mask,
             radius=3
         )
+        mask = _ensure_mask_hw(mask, image.shape[:2])
         
-        # שמירת המסכה המדויקת לדיבוג
+        # Save the refined mask for debugging.
         self.image_saver.save("mask", mask)
 
         # ==========================================
@@ -134,7 +158,7 @@ class ObjectRemover:
         self.image_saver.save("debug_mask_overlay", mask_overlay)
         # ==========================================
 
-       # 4. Inpaint 
+        # 4. Inpaint
         logger.info("Step 4: Inpainting image using isolated pipeline...")
         
         # Pass the dynamic strength calculated by the router to the inpainting engine
@@ -160,8 +184,8 @@ class ObjectRemover:
 
         return result_image, original_bg_ra
 
-    def removeObjectTest(self) -> tuple[np.ndarray, np.ndarray] | None:
-        logger.info("removeObjectTest called")
+    def remove_object_test(self) -> tuple[np.ndarray, np.ndarray] | None:
+        logger.info("remove_object_test called")
         if self.image_path and self.point:
             return self.remove_object(
                 self.image_path,
@@ -170,7 +194,7 @@ class ObjectRemover:
                 depth_output_flag=True,
             )
         else:
-            logger.warning("removeObjectTest called but image_path or point not set")
+            logger.warning("remove_object_test called but image_path or point not set")
             print("[Error] Image path or point not set.")
             return None
 

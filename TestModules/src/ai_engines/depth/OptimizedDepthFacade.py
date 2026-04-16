@@ -25,7 +25,10 @@ class OptimizedDepthFacade(IDepthFacade):
         if len(depth_lihe.shape) == 3:
             depth_lihe = cv2.cvtColor(depth_lihe, cv2.COLOR_RGB2GRAY)
 
-        # 3. Soft Blend (Alpha Compositing)
+        # 3. Soft blend (alpha compositing):
+        # - depth_v2 contributes more where its normalized confidence is high.
+        # - depth_lihe contributes more where depth_v2 is weaker.
+        # This avoids hard seams between near-field and far-field behaviors.
         depth_v2_norm = cv2.normalize(depth_v2, None, 0, 255, cv2.NORM_MINMAX).astype(np.float32)
         depth_lihe_norm = cv2.normalize(depth_lihe, None, 0, 255, cv2.NORM_MINMAX).astype(np.float32)
         

@@ -28,6 +28,13 @@ class LamaInpainter(IInpainter):
         """
         logger.info("Starting inpainting process...")
         print("Starting inpainting process...")
+
+        if mask.ndim == 3:
+            mask = mask[:, :, 0]
+        if mask.shape[:2] != image.shape[:2]:
+            mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+            thresh = 0.5 if mask.max() <= 1.0 else 127
+            mask = (mask > thresh).astype(np.uint8) * 255
         
         # 0. So LaMa is not conditioned on the removed object's pixels (avoids ghost where it obstructed another object),
         #    fill the mask region with the mean color of the mask boundary only. Mask size and shape are unchanged.
@@ -51,13 +58,13 @@ class LamaInpainter(IInpainter):
             image_rgb = image
         image_pil = Image.fromarray(image_rgb)
         
-        # וידוא שהמסכה בטווח הנכון (0-255) והמרה למצב Grayscale ('L')
+        # Make sure mask uses 0-255 range and convert to grayscale ('L') for LaMa.
         if mask.max() <= 1.0:
             logger.debug("Scaling mask from 0-1 to 0-255")
             mask = (mask * 255).astype(np.uint8)
         mask_pil = Image.fromarray(mask).convert('L')
         
-        # 2. הפעלת מודל LaMa
+        # 2. Run LaMa inpainting model.
         logger.debug("Running LaMa inpainting model")
         result_pil = self.lama(image_pil, mask_pil)
         logger.info("LaMa inpainting completed successfully")

@@ -2,6 +2,14 @@ from __future__ import annotations
 
 import io
 import logging
+
+import sys
+import tempfile
+import types
+import uuid
+
+import cv2
+
 from pathlib import Path
 
 from PIL import Image, ImageDraw, UnidentifiedImageError
@@ -10,31 +18,6 @@ from schemas.image import ImageProcessingOptions
 
 
 logger = logging.getLogger(__name__)
-
-
-def process_image(input_bytes: bytes, options: ImageProcessingOptions) -> bytes:
-    """Process an uploaded image and return the output image bytes.
-
-    - `input_bytes` are the raw bytes of the uploaded file.
-    - `options` describes user-requested processing parameters (format, flags).
-
-    This function is intentionally a stub for the MVP. Replace the marked region
-    with your real image processing pipeline later.
-    """
-
-    if not input_bytes:
-        # Defensive check: an empty upload can't be processed meaningfully.
-        return b""
-
-    # === IMAGE PROCESSING LOGIC GOES HERE ===
-    # Typical pipeline (example):
-    # 1) Decode bytes -> image object (e.g. Pillow / OpenCV / etc.)
-    # 2) Apply transforms (resize, grayscale, detect objects, ...)
-    # 3) Encode image object -> bytes in the requested output format
-    #
-    # For MVP outline purposes we return the original bytes unchanged.
-    _ = options  # Options are currently unused by the stub implementation.
-    return input_bytes
 
 
 def get_image_path(image_id: str, base_dir: Path) -> Path:
@@ -81,12 +64,6 @@ def segment_at_click(
     # ObjectRemover expects an `image_path`, so we persist the incoming bytes as a
     # temporary PNG file first. Then we encode the two numpy-array returns back
     # into PNG bytes so the API can base64 them.
-    import sys
-    import tempfile
-    import types
-    import uuid
-
-    import cv2
 
     test_src_dir = Path(__file__).resolve().parents[2] / "TestModules" / "src"
     test_core_dir = test_src_dir / "core"

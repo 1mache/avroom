@@ -20,6 +20,8 @@ class VarianceBasedRoutingStrategy(ISegmentationRoutingStrategy):
         # Depth ratio: 0.0 is furthest (black), 1.0 is closest (white)
         depth_ratio = float(pixel_depth) / 255.0
 
+        # Dynamic local analysis window:
+        # use a larger neighborhood for closer clicks to preserve context scale.
         min_window = int(base_image_size * self.min_ratio)
         max_window = int(base_image_size * self.max_ratio)
         dynamic_window_size = int(min_window + depth_ratio * (max_window - min_window))
@@ -41,6 +43,7 @@ class VarianceBasedRoutingStrategy(ISegmentationRoutingStrategy):
             'use_broad_mask': False
         }
 
+        # Low local variance usually means flat surface (wall/screen/window).
         if variance < self.variance_threshold:
             # FLAT SURFACE (Wall, Picture, TV, Window)
             logger.info("Decision: Flat Surface")
@@ -49,6 +52,7 @@ class VarianceBasedRoutingStrategy(ISegmentationRoutingStrategy):
             context['use_broad_mask'] = False # ALWAYS False for flat objects to avoid grabbing consoles/frames
             context['expand_pixels'] = int(10 + (depth_ratio * 30)) # Max 40px expansion for flat things
         else:
+            # High local variance usually means structured 3D object geometry.
             # 3D OBJECT (Pouf, Sofa, Table)
             logger.info("Decision: 3D Object")
             context['input_image'] = adapted_depth

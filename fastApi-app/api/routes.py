@@ -3,8 +3,9 @@ from __future__ import annotations
 from typing import Annotated
 
 import uuid
+import logging
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import Response
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from schemas.image import (
 from settings import get_image_storage_dir
 
 router = APIRouter(prefix="/images", tags=["images"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/upload", response_model=ImageUploadResponse)
@@ -63,13 +65,20 @@ async def handle_click(request: ClickRequest) -> ClickResultResponse:
 
     storage_dir: Path = get_image_storage_dir()
 
-    background_bytes, cutout_bytes, image_format = process_click_on_image(
-        image_id=request.image_id,
-        base_dir=storage_dir,
-        x=request.x,
-        y=request.y,
-        options=request.options,
-    )
+    try:
+        background_bytes, cutout_bytes, image_format = process_click_on_image(
+            image_id=request.image_id,
+            base_dir=storage_dir,
+            x=request.x,
+            y=request.y,
+            options=request.options,
+        )
+    except FileNotFoundError as exc:
+        logger.exception("Click processing failed due to missing file")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Click processing failed")
+        raise HTTPException(status_code=500, detail=f"Click processing failed: {exc}") from exc
 
     import base64
 

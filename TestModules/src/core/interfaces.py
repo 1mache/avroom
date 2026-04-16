@@ -1,4 +1,6 @@
 from abc import ABC, abstractmethod
+from typing import Any
+
 import numpy as np
 
 class IDepthFacade(ABC):
@@ -10,7 +12,7 @@ class IDepthFacade(ABC):
 class IImageAdapter(ABC):
     """Interface for adapting raw image data into specific formats."""
     @abstractmethod
-    def get_adapted_image(self, raw_data: any, image_id: str, point: tuple) -> np.ndarray:
+    def get_adapted_image(self, raw_data: Any, image_id: str, point: tuple[int, int]) -> np.ndarray:
         pass
 
 class IInpainter(ABC):
@@ -36,5 +38,5 @@ class IInpainter(ABC):
 
 class ISegmentationRoutingStrategy(ABC):
     @abstractmethod
-    def choose_input(self, rgb_image: np.ndarray, raw_depth: np.ndarray, adapted_depth: np.ndarray, x: int, y: int) -> np.ndarray:
+    def choose_input(self, rgb_image: np.ndarray, raw_depth: np.ndarray, adapted_depth: np.ndarray, x: int, y: int) -> dict[str, Any]:
         pass

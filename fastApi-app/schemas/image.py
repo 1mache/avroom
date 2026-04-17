@@ -25,8 +25,7 @@ class ImageProcessingOptions(BaseModel):
 class ImageUploadResponse(BaseModel):
     """Response returned after successfully uploading and storing an image.
 
-    The `image_id` is what the frontend will use when calling the click endpoint
-    to reference this uploaded image.
+    The `image_id` is what the frontend will use to reference this uploaded image.
     """
 
     image_id: Annotated[

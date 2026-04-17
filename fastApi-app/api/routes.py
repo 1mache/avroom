@@ -4,6 +4,7 @@ from typing import Annotated
 
 import uuid
 import logging
+import base64
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pathlib import Path
@@ -35,7 +36,7 @@ async def upload_image(
     storage_dir.mkdir(parents=True, exist_ok=True)
 
     image_id = str(uuid.uuid4())
-    original_filename = file.filename or None
+    original_filename: str | None = file.filename or None
 
     # Determine a simple extension; for now default to .png if unknown.
     suffix = ".png"
@@ -58,7 +59,7 @@ async def handle_click(request: ClickRequest) -> ClickResultResponse:
     """Handle a user's click on a previously uploaded image.
 
     The coordinates are expressed in pixels with origin at the top-left of the image.
-    This endpoint loads the stored image, performs (stubbed) segmentation based on
+    This endpoint loads the stored image, performs segmentation based on
     the click, and returns background and cutout images as base64-encoded strings.
     """
 
@@ -78,9 +79,7 @@ async def handle_click(request: ClickRequest) -> ClickResultResponse:
     except Exception as exc:
         logger.exception("Click processing failed")
         raise HTTPException(status_code=500, detail=f"Click processing failed: {exc}") from exc
-
-    import base64
-
+    
     background_b64 = base64.b64encode(background_bytes).decode("ascii")
     cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")
 

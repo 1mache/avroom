@@ -20,6 +20,27 @@ from schemas.image import ImageProcessingOptions
 logger = logging.getLogger(__name__)
 
 
+def _create_debug_click_image(source_image: Image.Image, x: int, y: int, base_dir: Path, image_id: str):
+    """Create RGB debug image with a marker drawn at click coordinates."""
+
+    RADIUS = 6
+    DEBUG_DIR_SUBPATH = "tmp"
+
+    debug_image: Image.Image = source_image.convert("RGB")
+    draw = ImageDraw.Draw(debug_image)
+    draw.ellipse(
+        (x - RADIUS, y - RADIUS, x + RADIUS, y + RADIUS),
+        fill="red",
+        outline="white",
+        width=2,
+    )
+
+    tmp_dir = base_dir / DEBUG_DIR_SUBPATH
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    debug_image_path = tmp_dir / f"{image_id}_debug.png"
+    debug_image.save(debug_image_path)
+
+
 def get_image_path(image_id: str, base_dir: Path) -> Path:
     """Resolve filesystem path for a stored image regardless of extension."""
 
@@ -67,7 +88,7 @@ def segment_at_click(
     test_ai_engines_dir = test_src_dir / "ai_engines"
     test_routing_dir = test_src_dir / "routing"
 
-    saved_modules: dict[str, object | None] = {
+    saved_modules: dict[str, types.ModuleType | None] = {
         "core": sys.modules.get("core"),
         "utils": sys.modules.get("utils"),
         "ai_engines": sys.modules.get("ai_engines"),
@@ -144,7 +165,6 @@ def process_click_on_image(
     the pure segmentation logic defined in `segment_at_click`.
     """
 
-    image_path = get_image_path(image_id=image_id, base_dir=base_dir)
     image_bytes = load_image_bytes(image_id=image_id, base_dir=base_dir)
 
     try:
@@ -163,23 +183,11 @@ def process_click_on_image(
                 )
                 raise ValueError(f"Click coordinates (x={x}, y={y}) are out of bounds for image size {width}x{height}.")
 
-            debug_image = source_image.convert("RGB")
+            _create_debug_click_image(source_image, x, y, base_dir, image_id)
 
-            draw = ImageDraw.Draw(debug_image)
-            radius = 6
-            draw.ellipse(
-                (x - radius, y - radius, x + radius, y + radius),
-                fill="red",
-                outline="white",
-                width=2,
-            )
-
-            tmp_dir = base_dir / "tmp"
-            tmp_dir.mkdir(parents=True, exist_ok=True)
-            debug_image_path = tmp_dir / f"{image_id}_debug{image_path.suffix}"
-            debug_image.save(debug_image_path)
-    except UnidentifiedImageError:
+    except UnidentifiedImageError as exc:
         logger.exception("Unable to open image bytes for image_id='%s'", image_id)
+        raise ValueError(f"Stored file for image_id='{image_id}' is not a valid image.") from exc
 
     background_bytes, cutout_bytes, image_format = segment_at_click(
         image_bytes=image_bytes,

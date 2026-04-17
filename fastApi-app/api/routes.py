@@ -74,7 +74,7 @@ async def handle_click(request: ClickRequest) -> ClickResultResponse:
             options=request.options,
         )
     except ValueError as exc:
-        logger.exception("Click processing failed due to invalid click input")
+        logger.exception("Click processing failed due to invalid input")
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         logger.exception("Click processing failed due to missing file")

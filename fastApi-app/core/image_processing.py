@@ -51,10 +51,6 @@ def segment_at_click(
     - `image_bytes` are the bytes of the original image.
     - `x`, `y` are the click coordinates in pixels (origin top-left).
     - `options` can be used to configure the segmentation behavior.
-
-    This function is where the real segmentation logic will ultimately live.
-    For now, it simply returns the original bytes for both background and cutout
-    so the API and frontend integration can be wired up independently.
     """
 
     if not image_bytes:
@@ -154,10 +150,10 @@ def process_click_on_image(
     try:
         with Image.open(io.BytesIO(image_bytes)) as source_image:
             width, height = source_image.size
-            in_bounds = 0 <= x < width and 0 <= y < height
 
-            if not in_bounds:
-                logger.warning(
+            # bounds check
+            if not (0 <= x < width and 0 <= y < height):
+                logger.error(
                     "Click out of bounds for image_id='%s': x=%d y=%d image_width=%d image_height=%d",
                     image_id,
                     x,
@@ -165,17 +161,18 @@ def process_click_on_image(
                     width,
                     height,
                 )
+                raise ValueError(f"Click coordinates (x={x}, y={y}) are out of bounds for image size {width}x{height}.")
 
             debug_image = source_image.convert("RGB")
-            if in_bounds:
-                draw = ImageDraw.Draw(debug_image)
-                radius = 6
-                draw.ellipse(
-                    (x - radius, y - radius, x + radius, y + radius),
-                    fill="red",
-                    outline="white",
-                    width=2,
-                )
+
+            draw = ImageDraw.Draw(debug_image)
+            radius = 6
+            draw.ellipse(
+                (x - radius, y - radius, x + radius, y + radius),
+                fill="red",
+                outline="white",
+                width=2,
+            )
 
             tmp_dir = base_dir / "tmp"
             tmp_dir.mkdir(parents=True, exist_ok=True)

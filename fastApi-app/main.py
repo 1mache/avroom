@@ -10,7 +10,6 @@ app = FastAPI(
     version="0.1.0",
     description=(
         "MVP FastAPI microservice for image upload and click-based operations. "
-        "Processing logic is stubbed and can be filled in later."
     ),
 )
 

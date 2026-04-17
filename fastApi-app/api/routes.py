@@ -6,7 +6,6 @@ import uuid
 import logging
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
-from fastapi.responses import Response
 from pathlib import Path
 
 from core.image_processing import process_click_on_image

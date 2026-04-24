@@ -1,22 +1,9 @@
 import os
-import sys
 import shutil
 import logging
 
-# ==========================================
-# PATH RESOLUTION FIX
-# ==========================================
-# Identify where this script is running (the 'tests' directory)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# Locate the 'src' directory, which is one level up
-SRC_DIR = os.path.join(BASE_DIR, "..", "src")
-
-# Add 'src' to Python's sys.path so it can resolve our local modules
-sys.path.append(SRC_DIR)
-
-# Now the import will work smoothly!
-from ObjectRemover import ObjectRemover
+from avroom_object_removal import ObjectRemover
 
 # Configure basic logging for the test script
 logging.basicConfig(

@@ -1,7 +1,7 @@
 # src/routing/topographic_routing_strategy.py
 import numpy as np
 import logging
-from core.interfaces import ISegmentationRoutingStrategy
+from ..core.interfaces import ISegmentationRoutingStrategy
 
 logger = logging.getLogger(__name__)
 

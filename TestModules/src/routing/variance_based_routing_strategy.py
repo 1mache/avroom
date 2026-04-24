@@ -1,5 +1,5 @@
 # src/routing/variance_based_routing_strategy.py
-from core.interfaces import ISegmentationRoutingStrategy
+from ..core.interfaces import ISegmentationRoutingStrategy
 import numpy as np
 import logging
 

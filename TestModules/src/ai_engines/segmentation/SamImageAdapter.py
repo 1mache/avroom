@@ -3,7 +3,7 @@ import logging
 import numpy as np
 from typing import Any
 
-from core.interfaces import IImageAdapter
+from ...core.interfaces import IImageAdapter
 
 # Configure logging
 logger = logging.getLogger(__name__)

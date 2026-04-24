@@ -4,7 +4,7 @@ import logging
 from PIL import Image
 import cv2
 from diffusers import StableDiffusionInpaintPipeline
-from core.interfaces import IInpainter
+from ...core.interfaces import IInpainter
 
 logger = logging.getLogger(__name__)
 

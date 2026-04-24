@@ -3,7 +3,7 @@ import logging
 import cv2
 from PIL import Image
 from simple_lama_inpainting import SimpleLama
-from core.interfaces import IInpainter
+from ...core.interfaces import IInpainter
 
 # Configure logging
 logger = logging.getLogger(__name__)

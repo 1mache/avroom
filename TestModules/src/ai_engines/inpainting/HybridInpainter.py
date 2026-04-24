@@ -1,10 +1,10 @@
 import numpy as np
 import logging
 import cv2
-from core.interfaces import IInpainter
-from utils.DebugImageSaver import DebugImageSaver
-from ai_engines.inpainting.LamaInpainter import LamaInpainter
-from ai_engines.inpainting.StableDiffusionInpainter import StableDiffusionInpainter
+from ...core.interfaces import IInpainter
+from ...utils.DebugImageSaver import DebugImageSaver
+from .LamaInpainter import LamaInpainter
+from .StableDiffusionInpainter import StableDiffusionInpainter
 
 logger = logging.getLogger(__name__)
 

@@ -1,15 +1,11 @@
-import sys
 import os
 import cv2
 import numpy as np
 
-# Ensure src directory is on path
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.abspath(os.path.join(BASE_DIR, '..')))
-
-from TestModules.src.ai_engines.segmentation.SamFacadeSingleton import SamFacadeSingleton
-from TestModules.src.ai_engines.depth.ImageDepthMapper import ImageDepthMapper
-from TestModules.src.utils.imageAdapterFactory import ImageAdapterFactory
+from avroom_object_removal.ai_engines.segmentation.SamFacadeSingleton import SamFacadeSingleton
+from avroom_object_removal.ai_engines.depth.ImageDepthMapper import ImageDepthMapper
+from avroom_object_removal.utils.imageAdapterFactory import ImageAdapterFactory
 
 
 def test_sam_models():

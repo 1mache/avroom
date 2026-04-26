@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { clickImage, uploadImage } from "../../api/images";
 import type { ClickRequest } from "../../types/api";
+import { Model3DFrame } from "../widgets/Model3DFrame";
 import { ResultFrame } from "../widgets/ResultFrame";
 import { UploadFrame } from "../widgets/UploadFrame";
 
@@ -158,6 +159,10 @@ export const MainPage: React.FC = () => {
           </div>
 
           <ResultFrame title="Cutout" imageSrc={cutoutSrc} />
+        </section>
+
+        <section className="bottom-frame-section">
+          <Model3DFrame />
         </section>
       </main>
     </div>

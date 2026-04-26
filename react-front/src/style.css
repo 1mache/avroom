@@ -215,6 +215,48 @@ body {
   text-align: center;
 }
 
+/* ── 3D Model Frame ─────────────────────────────── */
+
+.model-3d-frame {
+  width: 100%;
+}
+
+.coming-soon-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 9999px;
+  background-color: var(--accent-soft);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.model-3d-viewport {
+  flex: 1;
+  border-radius: 8px;
+  background-color: #0d1117;
+  background-image:
+    radial-gradient(circle at 50% 50%, #1a2332 0%, #0d1117 70%),
+    repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(255,255,255,0.03) 40px),
+    repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(255,255,255,0.03) 40px);
+  min-height: 280px;
+  overflow: hidden;
+  position: relative;
+}
+
+.model-3d-viewport canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+
+/* ── Responsive ──────────────────────────────────── */
+
 @media (max-width: 768px) {
   #app {
     padding: 12px;

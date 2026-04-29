@@ -36,3 +36,16 @@ export async function clickImage(payload: ClickRequest): Promise<ClickResultResp
   return handleJsonResponse<ClickResultResponse>(response);
 }
 
+export async function generate3DModel(): Promise<ArrayBuffer> {
+  const response = await fetch(`${API_BASE_URL}/objects/test-3d`, {
+    method: "POST",
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed with status ${response.status}`);
+  }
+
+  return response.arrayBuffer();
+}
+

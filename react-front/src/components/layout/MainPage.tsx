@@ -1,7 +1,7 @@
 import React from "react";
 import { useCallback, useEffect, useState } from "react";
 
-import { clickImage, uploadImage } from "../../api/images";
+import { clickImage, generate3DModel, uploadImage } from "../../api/images";
 import type { ClickRequest } from "../../types/api";
 import { Model3DFrame } from "../widgets/Model3DFrame";
 import { ResultFrame } from "../widgets/ResultFrame";
@@ -23,6 +23,8 @@ export const MainPage: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [glbData, setGlbData] = useState<ArrayBuffer | null>(null);
+  const [isGenerating3D, setIsGenerating3D] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -111,6 +113,20 @@ export const MainPage: React.FC = () => {
     }
   }, [naturalClickPos, imageId]);
 
+  const handleGenerate3D = useCallback(async () => {
+    setIsGenerating3D(true);
+    setError(null);
+    try {
+      const buffer = await generate3DModel();
+      setGlbData(buffer);
+    } catch (genError) {
+      const message = genError instanceof Error ? genError.message : "Unexpected 3D generation error.";
+      setError(message);
+    } finally {
+      setIsGenerating3D(false);
+    }
+  }, []);
+
   const isBusy = isUploading || isProcessing;
 
   return (
@@ -162,7 +178,18 @@ export const MainPage: React.FC = () => {
         </section>
 
         <section className="bottom-frame-section">
-          <Model3DFrame />
+          <Model3DFrame glbData={glbData} />
+        </section>
+
+        <section className="bottom-frame-section">
+          <button
+            type="button"
+            className="primary-button"
+            onClick={handleGenerate3D}
+            disabled={isGenerating3D}
+          >
+            {isGenerating3D ? "Generating..." : "Generate 3D"}
+          </button>
         </section>
       </main>
     </div>

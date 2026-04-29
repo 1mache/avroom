@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 def _get_object_remover_class():
     try:
-        from avroom_object_removal import ObjectRemover
+        from avroom_object_removal.core.objectRemover import ObjectRemover
     except ModuleNotFoundError as exc:
         if exc.name == "avroom_object_removal":
             raise RuntimeError(

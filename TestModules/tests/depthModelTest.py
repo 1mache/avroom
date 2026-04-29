@@ -1,4 +1,3 @@
-import sys
 import os
 import cv2
 import multiprocessing
@@ -6,8 +5,7 @@ import time
 
 # Define paths and imports
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.abspath(os.path.join(BASE_DIR, '..')))
-from TestModules.src.ai_engines.depth.ImageDepthMapper import ImageDepthMapper
+from avroom_object_removal.ai_engines.depth.ImageDepthMapper import ImageDepthMapper
 
 # Moved function to global scope to prevent Pickle error on Windows
 def run_model_task(model_name, image_path, out_path):

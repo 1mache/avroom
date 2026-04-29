@@ -5,10 +5,10 @@ import numpy as np
 import urllib.request
 from pathlib import Path
 from segment_anything import sam_model_registry, SamPredictor
-from utils.DebugImageSaver import DebugImageSaver
+from ...utils.DebugImageSaver import DebugImageSaver
 
 # Import mask post-processing helper used by SAM output flow.
-from utils.MaskRefiner import MaskRefiner
+from ...utils.MaskRefiner import MaskRefiner
 
 logger = logging.getLogger(__name__)
 

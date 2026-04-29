@@ -2,10 +2,9 @@ import os
 import cv2
 import logging
 import numpy as np
-from PIL import Image
-from utils.DebugImageSaver import DebugImageSaver
-from utils.MaskRefiner import MaskRefiner
-from utils.MaskOverlapRGBAComposer import MaskOverlapRGBAComposer
+from ..utils.DebugImageSaver import DebugImageSaver
+from ..utils.MaskRefiner import MaskRefiner
+from ..utils.MaskOverlapRGBAComposer import MaskOverlapRGBAComposer
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -28,14 +27,13 @@ def _ensure_mask_hw(mask: np.ndarray, target_hw: tuple[int, int]) -> np.ndarray:
     thresh = 0.5 if float(mask.max()) <= 1.0 else 127
     return (mask > thresh).astype(np.uint8) * 255
 
-# Standard local imports 
-from ai_engines.segmentation.SamFacadeSingleton import SamFacadeSingleton
-from ai_engines.depth.OptimizedDepthFacade import OptimizedDepthFacade
-from core.interfaces import IInpainter
-from ai_engines.segmentation.SamImageAdapter import SamImageAdapter
-from ai_engines.inpainting.HybridInpainter import HybridInpainter
-from routing.boundary_variance_strategy import BoundaryVarianceRoutingStrategy
-from routing.gradient_variance_routing_strategy import GradientVarianceRoutingStrategy
+# Standard local imports
+from ..ai_engines.segmentation.SamFacadeSingleton import SamFacadeSingleton
+from ..ai_engines.depth.OptimizedDepthFacade import OptimizedDepthFacade
+from .interfaces import IInpainter
+from ..ai_engines.segmentation.SamImageAdapter import SamImageAdapter
+from ..ai_engines.inpainting.HybridInpainter import HybridInpainter
+from ..routing.boundary_variance_strategy import BoundaryVarianceRoutingStrategy
 
 class ObjectRemover:
     def __init__(self):

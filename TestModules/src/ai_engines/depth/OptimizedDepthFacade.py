@@ -1,7 +1,7 @@
 import cv2
 import numpy as np
-from core.interfaces import IDepthFacade
-from ai_engines.depth.ImageDepthMapper import ImageDepthMapper
+from ...core.interfaces import IDepthFacade
+from .ImageDepthMapper import ImageDepthMapper
 
 class OptimizedDepthFacade(IDepthFacade):
     """

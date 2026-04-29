@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "avroom-object-removal"
+version = "0.1.0"
+description = "Object removal pipeline extracted from TestModules."
+requires-python = ">=3.11"
+
+[tool.setuptools]
+packages = [
+    "avroom_object_removal",
+    "avroom_object_removal.ai_engines",
+    "avroom_object_removal.ai_engines.depth",
+    "avroom_object_removal.ai_engines.inpainting",
+    "avroom_object_removal.ai_engines.segmentation",
+    "avroom_object_removal.core",
+    "avroom_object_removal.routing",
+    "avroom_object_removal.utils",
+]
+
+[tool.setuptools.package-dir]
+avroom_object_removal = "src"

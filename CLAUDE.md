@@ -70,6 +70,24 @@ python TestModules/tests/depthModelTest.py
 python TestModules/tests/downloadTestModelWeights.py
 ```
 
+## FastAPI Logging
+
+Central config lives in `fastApi-app/logging_config.py`. Call `setup_logging()` once in `main.py` — do not configure logging elsewhere.
+
+**Every new endpoint and processing function must include log calls:**
+
+| Point | Level |
+|-------|-------|
+| Endpoint entry (key request params) | `INFO` |
+| Endpoint success (key response metrics) | `INFO` |
+| Pipeline stage start/finish | `INFO` |
+| Per-step checkpoints (sizes, shapes, paths) | `DEBUG` |
+| Recoverable oddities (empty input, fallback taken) | `WARNING` |
+| Failure points immediately before `raise` | `ERROR` |
+| Exception handlers (`logger.exception(...)`) | automatic |
+
+Use `logger = logging.getLogger(__name__)` at module level. No `print()`. Level controlled via `LOG_LEVEL` env var (default `INFO`). Output goes to stdout and `fastApi-app/logs/app.log` (gitignored, rotates at 5 MB).
+
 ## Python Code Style
 
 - **Python 3.11**, type-checked with **mypy**.

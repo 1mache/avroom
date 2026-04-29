@@ -32,6 +32,12 @@ async def upload_image(
     endpoint to reference this stored image.
     """
 
+    logger.info(
+        "Upload received: filename=%s content_type=%s",
+        file.filename,
+        file.content_type,
+    )
+
     storage_dir: Path = get_image_storage_dir()
     storage_dir.mkdir(parents=True, exist_ok=True)
 
@@ -43,9 +49,20 @@ async def upload_image(
     if original_filename and "." in original_filename:
         suffix = "." + original_filename.rsplit(".", 1)[1].lower()
 
-    file_bytes = await file.read()
     image_path = storage_dir / f"{image_id}{suffix}"
-    image_path.write_bytes(file_bytes)
+    try:
+        file_bytes = await file.read()
+        image_path.write_bytes(file_bytes)
+    except Exception as exc:
+        logger.exception("Upload failed: image_id=%s", image_id)
+        raise HTTPException(status_code=500, detail=f"Upload failed: {exc}") from exc
+
+    logger.info(
+        "Upload stored: image_id=%s path=%s size_bytes=%d",
+        image_id,
+        image_path,
+        len(file_bytes),
+    )
 
     return ImageUploadResponse(
         image_id=image_id,
@@ -62,6 +79,13 @@ async def handle_click(request: ClickRequest) -> ClickResultResponse:
     This endpoint loads the stored image, performs segmentation based on
     the click, and returns background and cutout images as base64-encoded strings.
     """
+
+    logger.info(
+        "Click received: image_id=%s x=%d y=%d",
+        request.image_id,
+        request.x,
+        request.y,
+    )
 
     storage_dir: Path = get_image_storage_dir()
 
@@ -82,9 +106,17 @@ async def handle_click(request: ClickRequest) -> ClickResultResponse:
     except Exception as exc:
         logger.exception("Click processing failed")
         raise HTTPException(status_code=500, detail=f"Click processing failed: {exc}") from exc
-    
+
     background_b64 = base64.b64encode(background_bytes).decode("ascii")
     cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")
+
+    logger.info(
+        "Click processed: image_id=%s background_bytes=%d cutout_bytes=%d format=%s",
+        request.image_id,
+        len(background_bytes),
+        len(cutout_bytes),
+        image_format,
+    )
 
     return ClickResultResponse(
         image_id=request.image_id,

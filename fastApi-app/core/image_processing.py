@@ -21,6 +21,7 @@ def _get_object_remover_class():
         from avroom_object_removal import ObjectRemover
     except ModuleNotFoundError as exc:
         if exc.name == "avroom_object_removal":
+            logger.error("avroom_object_removal package not importable")
             raise RuntimeError(
                 "Missing local package `avroom_object_removal`. Install repo dependencies or run `pip install -e ./TestModules`."
             ) from exc
@@ -84,26 +85,41 @@ def segment_at_click(
     """
 
     if not image_bytes:
+        logger.warning("segment_at_click called with empty bytes — returning empty result")
         return b"", b"", "png"
 
     remover = _get_object_remover_class()()
     image_key = f"memory://{hashlib.sha256(image_bytes).hexdigest()}"
+
+    logger.info("Running ObjectRemover: image_key=%s click=(%d,%d)", image_key, x, y)
     background_bgr, cutout_bgra = remover.remove_object(
         image_path=image_key,
         x=x,
         y=y,
         image_bytes=image_bytes,
     )
+    logger.info(
+        "ObjectRemover finished: bg_shape=%s cutout_shape=%s",
+        background_bgr.shape,
+        cutout_bgra.shape,
+    )
 
     ok_bg, bg_buf = cv2.imencode(".png", background_bgr)
     ok_co, co_buf = cv2.imencode(".png", cutout_bgra)
     if not ok_bg or bg_buf is None:
+        logger.error("Failed to encode background image to PNG")
         raise RuntimeError("Failed to encode background image to PNG.")
     if not ok_co or co_buf is None:
+        logger.error("Failed to encode cutout image to PNG")
         raise RuntimeError("Failed to encode cutout image to PNG.")
 
     background_bytes = bg_buf.tobytes()
     cutout_bytes = co_buf.tobytes()
+    logger.debug(
+        "Encoded result: bg_bytes=%d cutout_bytes=%d",
+        len(background_bytes),
+        len(cutout_bytes),
+    )
     return background_bytes, cutout_bytes, "png"
 
 
@@ -121,6 +137,7 @@ def process_click_on_image(
     """
 
     image_bytes = load_image_bytes(image_id=image_id, base_dir=base_dir)
+    logger.debug("Loaded image bytes: image_id=%s bytes=%d", image_id, len(image_bytes))
 
     try:
         with Image.open(io.BytesIO(image_bytes)) as source_image:
@@ -137,8 +154,17 @@ def process_click_on_image(
                     height,
                 )
                 raise ValueError(f"Click coordinates (x={x}, y={y}) are out of bounds for image size {width}x{height}.")
+            logger.debug(
+                "Click within bounds: image_id=%s click=(%d,%d) size=%dx%d",
+                image_id,
+                x,
+                y,
+                width,
+                height,
+            )
 
             _create_debug_click_image(source_image, x, y, base_dir, image_id)
+            logger.debug("Saved debug click overlay: image_id=%s", image_id)
 
     except UnidentifiedImageError as exc:
         logger.exception("Unable to open image bytes for image_id='%s'", image_id)

@@ -24,7 +24,7 @@ avroom/
 │   ├── core/             # image_processing.py - bridges API to ObjectRemover
 │   ├── schemas/          # Pydantic request/response models
 │   ├── settings.py       # Image storage dir config
-│   └── images/           # Runtime image storage (gitignored)
+│   └── tmp               # Runtime temp object storage (gitignored)
 └── react-front/          # React/TypeScript frontend (MVP state)
     └── src/
         ├── api/images.ts  # uploadImage(), clickImage() fetch calls
@@ -118,7 +118,7 @@ Use `logger = logging.getLogger(__name__)` at module level. No `print()`. Level 
 
 `fastApi-app/core/image_processing.py` imports `ObjectRemover` from the `avroom_object_removal` package (installed via `pip install -e ./TestModules`). If the package is missing, the server raises `RuntimeError` with an install hint. Image bytes are passed directly to `remover.remove_object(image_path=..., image_bytes=...)` using a `memory://sha256` key so models can cache without disk reads.
 
-Uploaded images are stored in `fastApi-app/images/{uuid}.ext`. Debug overlays go to `fastApi-app/images/tmp/`.
+Uploaded images are stored in `fastApi-app/tmp/images/{uuid}.ext`. Debug overlays go to `fastApi-app/tmp/images/`.
 
 ## Trellis 2 3D Generation
 

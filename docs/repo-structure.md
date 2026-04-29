@@ -14,7 +14,8 @@ C:/Avroom/avroom/
 ├── fastApi-app/          - FastAPI backend service
 ├── react-front/          - React + Vite SPA
 ├── TestModules/          - the avroom_object_removal Python package
-└── requirements.txt      - root requirements; installs TestModules editable
+├── TrellisModule/        - the avroom_trellis image-to-3D wrapper package
+└── requirements.txt      - root requirements; installs local packages editable
 ```
 
 ## `fastApi-app/`
@@ -93,6 +94,25 @@ TestModules/
 ```
 
 See [ai-pipeline/README.md](ai-pipeline/README.md) for details.
+
+## `TrellisModule/`
+
+Standalone image-to-3D wrapper package (`avroom_trellis`). It calls the public Hugging Face Space `microsoft/TRELLIS.2` via `gradio_client` and returns a GLB.
+
+```
+TrellisModule/
+├── pyproject.toml      - declares avroom-trellis package + deps
+├── src/                - imported as avroom_trellis
+│   ├── __init__.py     - exports Trellis3DGenerator + Quality
+│   ├── generator.py    - Trellis3DGenerator.generate(...)
+│   ├── quality.py      - FAST/BALANCED/HIGH presets
+│   ├── image_input.py  - input normalization (bytes/ndarray/PIL/path -> PIL RGBA)
+│   └── output_writer.py
+└── tests/
+    └── test_smoke.py   - manual ObjectRemover -> Trellis smoke test
+```
+
+This module is **not wired into** `fastApi-app/` today. See [trellis-module.md](trellis-module.md).
 
 ## What is not architectural
 

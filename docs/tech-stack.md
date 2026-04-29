@@ -76,6 +76,15 @@ The root [`requirements.txt`](../requirements.txt) is the canonical source. High
 
 Installs `avroom_object_removal` editable (sources in `TestModules/src/`).
 
+The same `requirements.txt` also installs the Trellis wrapper package editable:
+
+```80:81:requirements.txt
+gradio_client>=1.4
+-e ./TrellisModule
+```
+
+Installs `avroom_trellis` editable (sources in `TrellisModule/src/`). See [trellis-module.md](trellis-module.md).
+
 ## AI models (downloaded at runtime)
 
 These are **not** Python packages — they're pulled from Hugging Face / Facebook AI on first use:

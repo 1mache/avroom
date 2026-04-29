@@ -5,18 +5,30 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "avroom-object-removal"
 version = "0.1.0"
-description = "Object removal pipeline extracted from TestModules."
+description = "Object removal AI pipeline (depth, segmentation, inpainting, 3D reconstruction)."
 requires-python = ">=3.11"
+dependencies = [
+    "gradio_client>=1.4",
+    "Pillow",
+    "numpy",
+    "opencv-python",
+]
 
 [tool.setuptools]
 packages = [
     "avroom_object_removal",
     "avroom_object_removal.ai_engines",
     "avroom_object_removal.ai_engines.depth",
+    "avroom_object_removal.ai_engines.depth.strategies",
     "avroom_object_removal.ai_engines.inpainting",
+    "avroom_object_removal.ai_engines.inpainting.strategies",
+    "avroom_object_removal.ai_engines.reconstruction_3d",
+    "avroom_object_removal.ai_engines.reconstruction_3d.strategies",
     "avroom_object_removal.ai_engines.segmentation",
+    "avroom_object_removal.ai_engines.segmentation.strategies",
     "avroom_object_removal.core",
     "avroom_object_removal.routing",
+    "avroom_object_removal.routing.strategies",
     "avroom_object_removal.utils",
 ]
 

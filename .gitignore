@@ -1,16 +1,74 @@
-#Environments
-TestModules/venv/
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+
+# ---- Virtual environments ----
 .venv/
 venv/
+env/
+ENV/
 
-# AI Models and Weights
-TestModules/checkpoints/
+# ---- Node / Vite (root-level safety net; react-front has its own too) ----
+node_modules/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ---- Logs ----
+*.log
+logs/
+
+# ---- Editors / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.suo
+*.swp
+*.swo
+
+# ---- Env / secrets ----
+.env
+.env.*
+!.env.example
+
+# ---- AI model weights & large binaries ----
 *.pth
+*.pt
+*.ckpt
+*.bin
+*.onnx
+*.safetensors
+*.h5
 
-# Data and Images
+# ---- Project data (inputs/outputs, debug artifacts) ----
+TestModules/checkpoints/
 TestModules/inputs/
 TestModules/outputs/
+TestModules/depthMaps/
+fastApi-app/images/
 
+# ---- Cursor local tooling (hooks, skills) ----
+.cursor/
+
+# ---- Vendored third-party clone (treated as local dependency) ----
+TestModules/src/ai_engines/3dRreconstruction/Hunyuan3D-2.1/
 # Python Cache
 __pycache__/ 
 *.egg-info/

@@ -1,5 +1,17 @@
-from .HybridInpainter import HybridInpainter
-from .LamaInpainter import LamaInpainter
-from .StableDiffusionInpainter import StableDiffusionInpainter
+from __future__ import annotations
 
-__all__ = ["HybridInpainter", "LamaInpainter", "StableDiffusionInpainter"]
+from .image_inpainting_facade import ImageInpaintingFacade
+from .image_inpainting_strategy import ImageInpaintingStrategy
+from .strategies import (
+    HybridInpaintingStrategy,
+    LamaInpaintingStrategy,
+    StableDiffusionInpaintingStrategy,
+)
+
+__all__ = [
+    "HybridInpaintingStrategy",
+    "ImageInpaintingFacade",
+    "ImageInpaintingStrategy",
+    "LamaInpaintingStrategy",
+    "StableDiffusionInpaintingStrategy",
+]

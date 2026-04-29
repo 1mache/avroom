@@ -6,37 +6,27 @@ from enum import Enum
 
 @dataclass(frozen=True)
 class GenerationParams:
-    """All parameters forwarded to a 3D-reconstruction backend.
+    """Subset of Trellis 2 parameters that meaningfully trade quality for speed.
 
-    Defined by the Trellis 2 Space, which exposes a two-step pipeline:
+    All other inputs to the Space (`ss_*`, `shape_slat_*`, `tex_slat_*`
+    guidance strengths / rescales / rescale_t values) are held at the Space's
+    own published defaults inside
+    :class:`TrellisReconstructionStrategy`, because they affect generation
+    fidelity rather than wall time and have no clear "better for our case"
+    setting.
 
-    - Step 1 (image_to_3d): 15 inputs - image, seed, resolution, then 4
-      groups of 3 guidance params (ss, shape_slat, tex_slat stages).
-    - Step 2 (extract_glb): decimation_target + texture_size control mesh
-      density and texture resolution of the exported GLB.
+    Only the four fields below differ between presets:
 
-    Guidance strengths / rescales / rescale_t are held constant across
-    presets because they affect generation fidelity, not speed. Only step
-    counts and export resolution vary between FAST / BALANCED / HIGH.
+    * ``resolution`` -- exported voxel grid; one of ``"512" / "1024" / "1536"``.
+    * ``sampling_steps`` -- shared step count applied to all three diffusion
+      stages (``ss``, ``shape_slat``, ``tex_slat``). Higher = slower + sharper.
+    * ``decimation_target`` -- target triangle count for the GLB mesh
+      (Space range ``100_000 - 500_000``).
+    * ``texture_size`` -- exported texture edge in pixels (``1024 - 4096``).
     """
 
     resolution: str
-
-    ss_guidance_strength: float
-    ss_guidance_rescale: float
-    ss_sampling_steps: int
-    ss_rescale_t: float
-
-    shape_slat_guidance_strength: float
-    shape_slat_guidance_rescale: float
-    shape_slat_sampling_steps: int
-    shape_slat_rescale_t: float
-
-    tex_slat_guidance_strength: float
-    tex_slat_guidance_rescale: float
-    tex_slat_sampling_steps: int
-    tex_slat_rescale_t: float
-
+    sampling_steps: int
     decimation_target: int
     texture_size: int
 
@@ -53,62 +43,22 @@ class ReconstructionQuality(str, Enum):
     HIGH = "high"
 
 
-_SS_STRENGTH = 7.5
-_SS_RESCALE = 0.7
-_SS_RESCALE_T = 0.7
-_SLAT_STRENGTH = 7.5
-_SLAT_RESCALE = 0.7
-_SLAT_RESCALE_T = 0.7
-
 PRESETS: dict[ReconstructionQuality, GenerationParams] = {
     ReconstructionQuality.FAST: GenerationParams(
         resolution="512",
-        ss_guidance_strength=_SS_STRENGTH,
-        ss_guidance_rescale=_SS_RESCALE,
-        ss_sampling_steps=10,
-        ss_rescale_t=_SS_RESCALE_T,
-        shape_slat_guidance_strength=_SLAT_STRENGTH,
-        shape_slat_guidance_rescale=_SLAT_RESCALE,
-        shape_slat_sampling_steps=10,
-        shape_slat_rescale_t=_SLAT_RESCALE_T,
-        tex_slat_guidance_strength=_SLAT_STRENGTH,
-        tex_slat_guidance_rescale=_SLAT_RESCALE,
-        tex_slat_sampling_steps=10,
-        tex_slat_rescale_t=_SLAT_RESCALE_T,
+        sampling_steps=10,
         decimation_target=100_000,
         texture_size=1024,
     ),
     ReconstructionQuality.BALANCED: GenerationParams(
         resolution="1024",
-        ss_guidance_strength=_SS_STRENGTH,
-        ss_guidance_rescale=_SS_RESCALE,
-        ss_sampling_steps=25,
-        ss_rescale_t=_SS_RESCALE_T,
-        shape_slat_guidance_strength=_SLAT_STRENGTH,
-        shape_slat_guidance_rescale=_SLAT_RESCALE,
-        shape_slat_sampling_steps=25,
-        shape_slat_rescale_t=_SLAT_RESCALE_T,
-        tex_slat_guidance_strength=_SLAT_STRENGTH,
-        tex_slat_guidance_rescale=_SLAT_RESCALE,
-        tex_slat_sampling_steps=25,
-        tex_slat_rescale_t=_SLAT_RESCALE_T,
+        sampling_steps=25,
         decimation_target=300_000,
         texture_size=2048,
     ),
     ReconstructionQuality.HIGH: GenerationParams(
         resolution="1536",
-        ss_guidance_strength=_SS_STRENGTH,
-        ss_guidance_rescale=_SS_RESCALE,
-        ss_sampling_steps=50,
-        ss_rescale_t=_SS_RESCALE_T,
-        shape_slat_guidance_strength=_SLAT_STRENGTH,
-        shape_slat_guidance_rescale=_SLAT_RESCALE,
-        shape_slat_sampling_steps=50,
-        shape_slat_rescale_t=_SLAT_RESCALE_T,
-        tex_slat_guidance_strength=_SLAT_STRENGTH,
-        tex_slat_guidance_rescale=_SLAT_RESCALE,
-        tex_slat_sampling_steps=50,
-        tex_slat_rescale_t=_SLAT_RESCALE_T,
+        sampling_steps=50,
         decimation_target=500_000,
         texture_size=4096,
     ),

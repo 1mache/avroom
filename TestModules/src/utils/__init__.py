@@ -1,12 +1,11 @@
-from .DebugImageSaver import DebugImageSaver
-from .MaskOverlapRGBAComposer import MaskOverlapRGBAComposer
-from .MaskRefiner import MaskRefiner
-from .imageAdapterFactory import ImageAdapterFactory, get_image_adapter_factory
+from __future__ import annotations
+
+from .bgra_cutout_composer import BgraCutoutComposer
+from .debug_image_saver import DebugImageSaver
+from .mask_refiner import MaskRefiner
 
 __all__ = [
+    "BgraCutoutComposer",
     "DebugImageSaver",
-    "ImageAdapterFactory",
-    "MaskOverlapRGBAComposer",
     "MaskRefiner",
-    "get_image_adapter_factory",
 ]

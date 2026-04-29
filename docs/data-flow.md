@@ -74,18 +74,18 @@ sequenceDiagram
 
 ### 6. AI pipeline
 
-[`TestModules/src/core/objectRemover.py`](../TestModules/src/core/objectRemover.py) — `ObjectRemover.remove_object` (lines 64–183) executes:
+[`TestModules/src/core/object_remover.py`](../TestModules/src/core/object_remover.py) — `ObjectRemover.remove_object` (lines 102–197) executes:
 
-1. **Decode** image from `image_bytes` if provided (lines 73–79), else `cv2.imread(image_path)`.
-2. **Depth** — `OptimizedDepthFacade.get_optimized_depth_map(image)` (line 88).
-3. **Adapt** — `SamImageAdapter.get_adapted_image(...)` (lines 94–98) caches per `(image_path, x, y)`.
-4. **Route** — `BoundaryVarianceRoutingStrategy.choose_input(...)` (lines 106–111) returns a context dict with `input_image`, `expand_pixels`, `use_broad_mask`, `sd_strength`.
-5. **Tight SAM mask** — `SamFacadeSingleton.get_mask_at_point(...)` (lines 116–121).
-6. **Uniform expand** — `MaskRefiner.expand_mask_uniform(radius=3)` (lines 138–141).
-7. **Hybrid inpaint** — `HybridInpainter.inpaint(image, mask, strength=...)` (lines 163–167).
-8. **Compose cutout** — `MaskOverlapRGBAComposer.compose_original_overlap_bgra(image, mask)` (lines 178–181).
+1. **Decode** image from `image_bytes` if provided (lines 113–118), else `cv2.imread(image_path)` (lines 119–123).
+2. **Depth** — `DepthMappingFacade.map_depth(image)` (line 126), backed by `NearFarBlendedDepthMappingStrategy` (V2 + LiheYoung alpha-blend).
+3. **Adapt** — `SamImageAdapter.get_adapted_image(...)` (lines 130–134) caches per `(image_path, x, y)`.
+4. **Route** — `BoundaryVarianceRoutingStrategy.choose_input(...)` (lines 138–144) returns a context dict with `input_image`, `expand_pixels`, `use_broad_mask`, `sd_strength`.
+5. **Tight SAM mask** — `ImageSegmentationFacade.get_mask_at_point(...)` (lines 150–156), routed to `SamSegmentationStrategy.predict_mask`.
+6. **Uniform expand** — `MaskRefiner.expand_mask_uniform(radius=3)` (lines 167–170).
+7. **Hybrid inpaint** — `ImageInpaintingFacade.inpaint(image, mask, strength=...)` (lines 181–185), backed by `HybridInpaintingStrategy` (LaMa + optional SD).
+8. **Compose cutout** — `BgraCutoutComposer.compose_original_overlap_bgra(image, mask)` (lines 192–195).
 
-See [ai-pipeline/data-flow.md](ai-pipeline/data-flow.md) for line-by-line details and the per-stage diagram.
+See [ai-pipeline/core/README.md](ai-pipeline/core/README.md) for the pipeline execution walk.
 
 ### 7. Response (backend → frontend)
 
@@ -95,7 +95,7 @@ See [ai-pipeline/data-flow.md](ai-pipeline/data-flow.md) for line-by-line detail
 
 ## Failure modes worth knowing
 
-- **`avroom_object_removal` not installed** → `_get_object_remover_class` raises `RuntimeError` ([`image_processing.py`](../fastApi-app/core/image_processing.py) lines 22–26) with a hint to run `pip install -e ./TestModules`.
+- **`avroom_object_removal` not installed** → `_get_object_remover_class` raises `RuntimeError` ([`image_processing.py`](../fastApi-app/core/image_processing.py) lines 22–27) with a hint to run `pip install -e ./TestModules`.
 - **Click out of bounds** → `process_click_on_image` raises `ValueError` ([`image_processing.py`](../fastApi-app/core/image_processing.py) lines 130–139), translated to HTTP 422.
 - **Stored file not a valid image** → `UnidentifiedImageError` becomes `ValueError` → 422.
-- **Missing SAM checkpoint** → `SamFacadeSingleton` will try to download from `dl.fbaipublicfiles.com` unless `SAM_AUTO_DOWNLOAD=0` ([`SamFacadeSingleton.py`](../TestModules/src/ai_engines/segmentation/SamFacadeSingleton.py) lines 20–55).
+- **Missing SAM checkpoint** → `SamSegmentationStrategy` will try to download from `dl.fbaipublicfiles.com` unless `SAM_AUTO_DOWNLOAD=0` ([`sam_segmentation_strategy.py`](../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) lines 29–62).

@@ -65,8 +65,9 @@ The root [`requirements.txt`](../requirements.txt) is the canonical source. High
 
 | Package | Version | Used by |
 |---|---|---|
-| `segment-anything` | `1.0` | [`SamFacadeSingleton`](../TestModules/src/ai_engines/segmentation/SamFacadeSingleton.py) |
-| `simple-lama-inpainting` | `0.1.2` | [`LamaInpainter`](../TestModules/src/ai_engines/inpainting/LamaInpainter.py) |
+| `segment-anything` | `1.0` | [`SamSegmentationStrategy`](../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) |
+| `simple-lama-inpainting` | `0.1.2` | [`LamaInpaintingStrategy`](../TestModules/src/ai_engines/inpainting/strategies/lama_inpainting_strategy.py) |
+| `gradio_client` | `>=1.4` | [`TrellisReconstructionStrategy`](../TestModules/src/ai_engines/reconstruction_3d/strategies/trellis_reconstruction_strategy.py) |
 
 ### Local package
 
@@ -74,16 +75,7 @@ The root [`requirements.txt`](../requirements.txt) is the canonical source. High
 -e ./TestModules
 ```
 
-Installs `avroom_object_removal` editable (sources in `TestModules/src/`).
-
-The same `requirements.txt` also installs the Trellis wrapper package editable:
-
-```80:81:requirements.txt
-gradio_client>=1.4
--e ./TrellisModule
-```
-
-Installs `avroom_trellis` editable (sources in `TrellisModule/src/`). See [trellis-module.md](trellis-module.md).
+Installs `avroom_object_removal` editable (sources in `TestModules/src/`). The package owns the depth, segmentation, inpainting, and 3D reconstruction domains; there is no longer a separate Trellis package — see [ai-pipeline/ai-engines/reconstruction-3d/README.md](ai-pipeline/ai-engines/reconstruction-3d/README.md).
 
 ## AI models (downloaded at runtime)
 
@@ -91,17 +83,18 @@ These are **not** Python packages — they're pulled from Hugging Face / Faceboo
 
 | Model | Used as | Source |
 |---|---|---|
-| `depth-anything/Depth-Anything-V2-Small-hf` | Near-field depth | [`OptimizedDepthFacade`](../TestModules/src/ai_engines/depth/OptimizedDepthFacade.py) line 17 |
-| `LiheYoung/depth-anything-small-hf` | Far-field depth + default | [`OptimizedDepthFacade`](../TestModules/src/ai_engines/depth/OptimizedDepthFacade.py) line 23, [`ImageDepthMapper`](../TestModules/src/ai_engines/depth/ImageDepthMapper.py) line 30 |
-| `sam_vit_b_01ec64.pth` (SAM ViT-B) | Segmentation | [`SamFacadeSingleton`](../TestModules/src/ai_engines/segmentation/SamFacadeSingleton.py) line 16, default URL `https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth` |
-| `runwayml/stable-diffusion-inpainting` | Texture refinement | [`StableDiffusionInpainter`](../TestModules/src/ai_engines/inpainting/StableDiffusionInpainter.py) line 16 |
-| LaMa weights (bundled with `simple_lama_inpainting`) | Structural inpainting | [`LamaInpainter`](../TestModules/src/ai_engines/inpainting/LamaInpainter.py) line 20 |
+| `depth-anything/Depth-Anything-V2-Small-hf` | Near-field depth | [`NearFarBlendedDepthMappingStrategy.DEFAULT_NEAR_MODEL`](../TestModules/src/ai_engines/depth/strategies/near_far_blended_depth_mapping_strategy.py) line 30 |
+| `LiheYoung/depth-anything-small-hf` | Far-field depth + default | [`NearFarBlendedDepthMappingStrategy.DEFAULT_FAR_MODEL`](../TestModules/src/ai_engines/depth/strategies/near_far_blended_depth_mapping_strategy.py) line 31, [`DepthAnythingMappingStrategy.DEFAULT_MODEL`](../TestModules/src/ai_engines/depth/strategies/depth_anything_mapping_strategy.py) line 40 |
+| `sam_vit_b_01ec64.pth` (SAM ViT-B) | Segmentation | [`SamSegmentationStrategy`](../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) lines 19–20, default URL `https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth` |
+| `runwayml/stable-diffusion-inpainting` | Texture refinement | [`StableDiffusionInpaintingStrategy`](../TestModules/src/ai_engines/inpainting/strategies/stable_diffusion_inpainting_strategy.py) line 16 |
+| LaMa weights (bundled with `simple_lama_inpainting`) | Structural inpainting | [`LamaInpaintingStrategy._load_simple_lama`](../TestModules/src/ai_engines/inpainting/strategies/lama_inpainting_strategy.py) lines 16–25 |
+| `microsoft/TRELLIS.2` (HF Space, image-to-3D) | 3D reconstruction (not in HTTP path) | [`TrellisReconstructionStrategy.DEFAULT_SPACE_ID`](../TestModules/src/ai_engines/reconstruction_3d/strategies/trellis_reconstruction_strategy.py) line 35 |
 
-SAM checkpoint resolution order is `SAM_CHECKPOINT_PATH` env var → `TestModules/checkpoints/sam_vit_b_01ec64.pth` → auto-download (unless `SAM_AUTO_DOWNLOAD=0`).
+SAM checkpoint resolution order is `SAM_CHECKPOINT_PATH` env var → `TestModules/checkpoints/sam_vit_b_01ec64.pth` → auto-download (unless `SAM_AUTO_DOWNLOAD=0`). Heavy model loads (depth pipeline, SAM predictor, LaMa, SD pipe) are each cached behind a module-level `functools.lru_cache(maxsize=1)`/`maxsize=4` factory so they're loaded exactly once per process.
 
 ## Hardware
 
-- The pipeline auto-detects CUDA. SD and SAM call `torch.cuda.is_available()` and switch between `float16`/`float32` accordingly ([`StableDiffusionInpainter.py`](../TestModules/src/ai_engines/inpainting/StableDiffusionInpainter.py) lines 17–31, [`SamFacadeSingleton.py`](../TestModules/src/ai_engines/segmentation/SamFacadeSingleton.py) line 72).
+- The pipeline auto-detects CUDA. SD and SAM call `torch.cuda.is_available()` and switch between `float16`/`float32` accordingly ([`stable_diffusion_inpainting_strategy.py`](../TestModules/src/ai_engines/inpainting/strategies/stable_diffusion_inpainting_strategy.py) lines 41, 77–84, [`sam_segmentation_strategy.py`](../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) lines 107–114).
 - CPU inference works but is slow.
 
 ## Build / dev commands

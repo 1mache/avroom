@@ -70,4 +70,4 @@ sequenceDiagram
 
 Every request blocks until `ObjectRemover.remove_object` returns. With a CPU-only setup this is many seconds. There is no queue, no worker pool, no streaming progress channel — the response only comes back after the full pipeline is done.
 
-If you ever need parallel requests, note that the AI pipeline uses module-level singletons for SAM/LaMa/SD; serializing access to those is left to the caller.
+If you ever need parallel requests, note that the AI pipeline caches the SAM predictor, LaMa, the SD pipe and HF depth pipelines behind module-level `functools.lru_cache` factories — one shared instance of each per process. Serializing access to those (especially the SD pipeline) is left to the caller.

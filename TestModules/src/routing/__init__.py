@@ -1,3 +1,13 @@
-from .boundary_variance_strategy import BoundaryVarianceRoutingStrategy
+from __future__ import annotations
 
-__all__ = ["BoundaryVarianceRoutingStrategy"]
+from .segmentation_routing_strategy import SegmentationRoutingStrategy
+from .strategies import (
+    BoundaryVarianceRoutingStrategy,
+    CenterOfMassRoutingStrategy,
+)
+
+__all__ = [
+    "BoundaryVarianceRoutingStrategy",
+    "CenterOfMassRoutingStrategy",
+    "SegmentationRoutingStrategy",
+]

@@ -26,7 +26,7 @@
 ```19:29:fastApi-app/core/image_processing.py
 def _get_object_remover_class():
     try:
-        from avroom_object_removal.core.objectRemover import ObjectRemover
+        from avroom_object_removal import ObjectRemover
     except ModuleNotFoundError as exc:
         if exc.name == "avroom_object_removal":
             raise RuntimeError(
@@ -36,6 +36,8 @@ def _get_object_remover_class():
 
     return ObjectRemover
 ```
+
+`ObjectRemover` is the master Facade re-exported from the top of the package — see [ai-pipeline/core/README.md](../ai-pipeline/core/README.md).
 
 Why lazy? It keeps `import core.image_processing` cheap (the model loading happens later, when `ObjectRemover()` is constructed inside `segment_at_click`).
 
@@ -111,11 +113,11 @@ These accumulate forever; there is no cleanup.
 Things to notice:
 
 - The `image_path` argument is a synthetic `memory://<sha256>` URI used only as a cache key inside `SamImageAdapter`. The real bytes are passed via `image_bytes=`.
-- `ObjectRemover()` is constructed **per call**. Most heavy components inside it (SAM, LaMa, depth) are singletons, so subsequent calls only pay the construction cost for thin wrappers.
+- `ObjectRemover()` is constructed **per call**. The strategy classes themselves are cheap; the heavy resources (SAM predictor, LaMa, SD pipe, HF depth pipelines) are loaded exactly once per process behind module-level `functools.lru_cache` factories, so subsequent calls only pay thin wrapper construction.
 - The output is always PNG today; the `format` field is hardcoded `"png"`.
 
 ## Notes / quirks worth knowing
 
 - `ImageProcessingOptions` is accepted by both `segment_at_click` and `process_click_on_image` but **not** forwarded to `remove_object` — it has no effect today (see lines 89–96). Treat the field as reserved for future use.
-- `process_click_on_image` opens the image with PIL only to bounds-check and write the debug overlay. The bytes themselves are passed un-decoded to the pipeline, which uses OpenCV to decode them again ([`objectRemover.py`](../../TestModules/src/core/objectRemover.py) lines 73–79).
+- `process_click_on_image` opens the image with PIL only to bounds-check and write the debug overlay. The bytes themselves are passed un-decoded to the pipeline, which uses OpenCV to decode them again ([`object_remover.py`](../../TestModules/src/core/object_remover.py) lines 113–123).
 - `UnidentifiedImageError` from PIL is converted to `ValueError` so the API returns 422 instead of 500.

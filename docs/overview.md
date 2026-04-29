@@ -17,7 +17,7 @@ The current MVP, end-to-end, exposes a single interactive flow:
 2. Frontend lets the user click the object to remove.
 3. Backend runs the AI pipeline and returns two base64-encoded PNGs (background + cutout) which the frontend renders.
 
-There is **no** auth, no multi-user state, and no 3D reconstruction in the live `/images/*` pipeline. The repo contains 3D-related code that is **not wired into** the HTTP flow today: a Trellis image-to-3D wrapper module ([trellis-module.md](trellis-module.md)) and a vendored Hunyuan3D stub ([ai-pipeline/3d-reconstruction-hunyuan.md](ai-pipeline/3d-reconstruction-hunyuan.md)). There is also no batch / async workflow yet.
+There is **no** auth, no multi-user state, and no 3D reconstruction in the live `/images/*` pipeline. The `avroom_object_removal` package does ship a `Reconstruction3DFacade` (Trellis 2 via `gradio_client`) — see [ai-pipeline/ai-engines/reconstruction-3d/README.md](ai-pipeline/ai-engines/reconstruction-3d/README.md) — but it is **not wired into** the HTTP flow today; only the smoke test exercises it. There is also no batch / async workflow yet.
 
 ## High-level design
 

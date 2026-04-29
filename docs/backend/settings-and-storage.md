@@ -82,4 +82,4 @@ These don't live in `settings.py`, but the AI pipeline reads them at runtime:
 - `SAM_AUTO_DOWNLOAD` — set to `0`/`false`/`no` to disable the download fallback.
 - `SAM_CHECKPOINT_URL` — override the default `dl.fbaipublicfiles.com` URL.
 
-Source: [`SamFacadeSingleton.py`](../../TestModules/src/ai_engines/segmentation/SamFacadeSingleton.py) lines 30–55.
+Source: [`sam_segmentation_strategy.py`](../../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) lines 29–62.

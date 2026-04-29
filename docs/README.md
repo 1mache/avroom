@@ -6,9 +6,8 @@ Welcome to the Avroom architecture documentation. These docs describe the **curr
 
 What changed in this refresh:
 
-- Added docs for the standalone Trellis image-to-3D package (`TrellisModule/`).
-- Added a short docs map page (`docs-map.md`) to speed up future searches.
-- Updated repo structure / tech stack / overview to reflect the Trellis module and install wiring.
+- Split `docs/ai-pipeline/` into **overview READMEs** plus detail partials (`components.md`, `flow.md`, `contracts.md`, `operations.md`) per subsystem; added [overview-vs-partials.md](ai-pipeline/overview-vs-partials.md).
+- Expanded [docs-map.md](docs-map.md) so each AI pipeline subsystem lists both its README and partial pages.
 
 If you change architecture, run the [`update-avroom-docs`](../.cursor/skills/update-avroom-docs/SKILL.md) skill to keep these files in sync with the code.
 
@@ -25,10 +24,13 @@ docs/
 ├── tech-stack.md        - languages, frameworks, models, versions
 ├── repo-structure.md    - annotated tour of the repo
 ├── conventions.md       - design patterns, naming, debug artifacts
+├── docs-map.md          - quick index of where to find what
 ├── backend/             - FastAPI service in fastApi-app/
 ├── frontend/            - React SPA in react-front/
 └── ai-pipeline/         - avroom_object_removal package in TestModules/
 ```
+
+AI pipeline docs: each subsystem folder has a short **README** (overview); deeper topics live in **partial** markdown files linked from that README (see [ai-pipeline/overview-vs-partials.md](ai-pipeline/overview-vs-partials.md)).
 
 ## Shared docs
 
@@ -39,7 +41,6 @@ docs/
 - [repo-structure.md](repo-structure.md) — what each top-level folder is for.
 - [conventions.md](conventions.md) — design patterns and project-wide conventions.
 - [docs-map.md](docs-map.md) — where to find what.
-- [trellis-module.md](trellis-module.md) — `avroom_trellis` image-to-3D wrapper (not wired into the main flow).
 
 ## Per-component docs
 

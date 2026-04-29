@@ -42,8 +42,9 @@ flowchart LR
 
 - Distributed as Python package `avroom_object_removal` (sources under `TestModules/src/`, imported as `avroom_object_removal.*`).
 - Installed editable via the root [`requirements.txt`](../requirements.txt) line 1: `-e ./TestModules`.
-- Public surface is a single class, `ObjectRemover`, exported from [`TestModules/src/__init__.py`](../TestModules/src/__init__.py).
-- Internally orchestrates depth estimation → adapter → router → SAM → mask refinement → hybrid inpainting → BGRA cutout composition.
+- Public surface is `ObjectRemover` plus four per-domain Facades (`DepthMappingFacade`, `ImageSegmentationFacade`, `ImageInpaintingFacade`, `Reconstruction3DFacade`) and their Strategy ABCs — all re-exported from [`TestModules/src/__init__.py`](../TestModules/src/__init__.py).
+- `ObjectRemover.remove_object` orchestrates depth mapping → adapter → router → SAM → mask refinement → hybrid inpainting → BGRA cutout composition.
+- `Reconstruction3DFacade` is a separate, optional surface for image-to-3D (Trellis 2 via `gradio_client`); it is **not** invoked by `ObjectRemover` or by the HTTP endpoints today.
 - See [ai-pipeline/](ai-pipeline/README.md) for details.
 
 ## Cross-tier contracts
@@ -59,7 +60,9 @@ Schemas in [`fastApi-app/schemas/image.py`](../fastApi-app/schemas/image.py); fr
 
 The backend ↔ pipeline contract is the single Python call:
 
-```91:96:fastApi-app/core/image_processing.py
+```89:96:fastApi-app/core/image_processing.py
+    remover = _get_object_remover_class()()
+    image_key = f"memory://{hashlib.sha256(image_bytes).hexdigest()}"
     background_bgr, cutout_bgra = remover.remove_object(
         image_path=image_key,
         x=x,
@@ -74,7 +77,7 @@ The backend ↔ pipeline contract is the single Python call:
 
 - The frontend builds to static assets via `vite build`; in dev, `npm run dev` (port 5173) talks to a local FastAPI (port 8000 by default).
 - The FastAPI service runs as a normal ASGI app (`main:app` per [`fastApi-app/pyproject.toml`](../fastApi-app/pyproject.toml)). It needs CUDA + torch + the SAM checkpoint to actually run inference, otherwise the pipeline import will succeed but the call will fail at SAM/SD load time.
-- The AI pipeline writes a lot of debug PNGs to `TestModules/outputs/` during every call (see [ai-pipeline/outputs.md](ai-pipeline/outputs.md)).
+- The AI pipeline writes debug PNGs to `TestModules/outputs/` during every call (see [ai-pipeline/core/README.md](ai-pipeline/core/README.md)).
 
 ## Where to read next
 

@@ -10,7 +10,7 @@ from pathlib import Path
 
 
 IMAGE_STORAGE_DIR = ""
-DEFAULT_IMAGE_STORAGE_SUBDIR = "images"
+DEFAULT_IMAGE_STORAGE_SUBDIR = "tmp/images"
 
 
 def _project_root() -> Path:
@@ -28,7 +28,7 @@ def get_image_storage_dir() -> Path:
 
     The directory is determined as follows:
     - If `IMAGE_STORAGE_DIR` is set here and path exists, that path is used.
-    - Otherwise, a local `images/` directory in project root is used.
+    - Otherwise, a local `tmp/images/` directory in project root is used.
     """
 
     project_root = _project_root()

@@ -34,7 +34,7 @@ def _create_debug_click_image(source_image: Image.Image, x: int, y: int, base_di
     """Create RGB debug image with a marker drawn at click coordinates."""
 
     RADIUS = 6
-    DEBUG_DIR_SUBPATH = "tmp"
+    DEBUG_DIR_SUBPATH = "point"
 
     debug_image: Image.Image = source_image.convert("RGB")
     draw = ImageDraw.Draw(debug_image)

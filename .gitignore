@@ -69,3 +69,6 @@ fastApi-app/images/
 
 # ---- Vendored third-party clone (treated as local dependency) ----
 TestModules/src/ai_engines/3dRreconstruction/Hunyuan3D-2.1/
+# Python Cache
+__pycache__/ 
+*.egg-info/

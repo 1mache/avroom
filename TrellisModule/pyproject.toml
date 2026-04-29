@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=65"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "avroom-trellis"
+version = "0.1.0"
+description = "Trellis 2 image-to-3D wrapper for the avroom pipeline."
+requires-python = ">=3.11"
+dependencies = [
+    "gradio_client>=1.4",
+    "Pillow",
+    "numpy",
+    "opencv-python",
+]
+
+[tool.setuptools]
+packages = ["avroom_trellis"]
+
+[tool.setuptools.package-dir]
+avroom_trellis = "src"

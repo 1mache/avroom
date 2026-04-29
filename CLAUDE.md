@@ -120,6 +120,16 @@ Use `logger = logging.getLogger(__name__)` at module level. No `print()`. Level 
 
 Uploaded images are stored in `fastApi-app/images/{uuid}.ext`. Debug overlays go to `fastApi-app/images/tmp/`.
 
+## Trellis 2 3D Generation
+
+`TrellisModule/` (package `avroom_trellis`) wraps Microsoft's Trellis 2 image-to-3D model **via the public Hugging Face Space** (`microsoft/TRELLIS.2`) using `gradio_client`. Local install is not supported on this machine (Linux + 24 GB VRAM only).
+
+Public API: `Trellis3DGenerator().generate(image, *, quality=Quality.FAST, output="bytes")`. Accepts BGRA `np.ndarray` from `ObjectRemover`, PNG `bytes`, `PIL.Image`, or `pathlib.Path`. Returns GLB as `bytes` / `Path` / `BytesIO`.
+
+The Space is queued (Zero GPU). One generation takes seconds of compute plus queue wait. Module is **not** wired into FastAPI yet.
+
+Install: `pip install -e ./TrellisModule` (or `pip install -r requirements.txt` which includes it).
+
 ## Frontend Notes
 
 - Frontend is **MVP**: single page (`MainPage.tsx`), no routing, no auth.

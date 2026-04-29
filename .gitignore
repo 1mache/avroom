@@ -13,3 +13,4 @@ TestModules/outputs/
 
 # Python Cache
 __pycache__/ 
+*.egg-info/

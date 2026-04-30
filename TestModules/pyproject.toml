@@ -9,9 +9,15 @@ description = "Object removal AI pipeline (depth, segmentation, inpainting, 3D r
 requires-python = ">=3.11"
 dependencies = [
     "gradio_client>=1.4",
-    "Pillow",
+    "huggingface_hub>=0.20",
+    "imageio[ffmpeg]>=2.31",
     "numpy",
     "opencv-python",
+    "Pillow",
+    "PyMCubes>=0.1.4",
+    "torch>=2.1",
+    "transformers>=4.36",
+    "trimesh>=4.0.0",
 ]
 
 [tool.setuptools]
@@ -23,6 +29,13 @@ packages = [
     "avroom_object_removal.ai_engines.inpainting",
     "avroom_object_removal.ai_engines.inpainting.strategies",
     "avroom_object_removal.ai_engines.reconstruction_3d",
+    "avroom_object_removal.ai_engines.reconstruction_3d._backends",
+    "avroom_object_removal.ai_engines.reconstruction_3d._backends.openlrm_v10",
+    "avroom_object_removal.ai_engines.reconstruction_3d._backends.openlrm_v10.lrm",
+    "avroom_object_removal.ai_engines.reconstruction_3d._backends.openlrm_v10.lrm.models",
+    "avroom_object_removal.ai_engines.reconstruction_3d._backends.openlrm_v10.lrm.models.encoders",
+    "avroom_object_removal.ai_engines.reconstruction_3d._backends.openlrm_v10.lrm.models.rendering",
+    "avroom_object_removal.ai_engines.reconstruction_3d._backends.openlrm_v10.lrm.models.rendering.utils",
     "avroom_object_removal.ai_engines.reconstruction_3d.strategies",
     "avroom_object_removal.ai_engines.segmentation",
     "avroom_object_removal.ai_engines.segmentation.strategies",

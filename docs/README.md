@@ -2,14 +2,25 @@
 
 Welcome to the Avroom architecture documentation. These docs describe the **current state** of the project as found in the code (not aspirational design).
 
-> Last refresh: 2026-04-29
+> Last refresh: 2026-04-30
 
 What changed in this refresh:
 
-- Split `docs/ai-pipeline/` into **overview READMEs** plus detail partials (`components.md`, `flow.md`, `contracts.md`, `operations.md`) per subsystem; added [overview-vs-partials.md](ai-pipeline/overview-vs-partials.md).
-- Expanded [docs-map.md](docs-map.md) so each AI pipeline subsystem lists both its README and partial pages.
+- Document pyramid: added **How detail increases** (below) so root docs stay conceptual and leaf partials stay the deep reference.
+- Aligned **3D reconstruction** docs with code: `Reconstruction3DFacade` defaults to **OpenLRM**; **Trellis** remains an injectable strategy; updated overview, architecture, engine tables, reconstruction-3d partials, `repo-structure.md`, and `tech-stack.md`.
+- Vendored OpenLRM path is `TestModules/src/ai_engines/reconstruction_3d/_backends/openlrm_v10/` (see [reconstruction-3d/operations.md](ai-pipeline/ai-engines/reconstruction-3d/operations.md)).
 
 If you change architecture, run the [`update-avroom-docs`](../.cursor/skills/update-avroom-docs/SKILL.md) skill to keep these files in sync with the code.
+
+## How detail increases (pyramid)
+
+Reading depth is intentional:
+
+- **Root shared docs** ([overview.md](overview.md), [architecture.md](architecture.md), [data-flow.md](data-flow.md), [tech-stack.md](tech-stack.md), [repo-structure.md](repo-structure.md), [conventions.md](conventions.md)) explain what the system is, how tiers connect, and global rules. They stay relatively high level.
+- **Per-tier folders** ([backend/](backend/README.md), [frontend/](frontend/README.md), [ai-pipeline/](ai-pipeline/README.md)) add structure: what lives where in that tier’s code and which doc partials to open next.
+- **Leaf partials** under each subsystem (`components.md`, `flow.md`, `contracts.md`, `operations.md`) are the most technical: current behavior, data steps, and operational knobs for that slice only.
+
+Start at the root for orientation; drill into partials when you are implementing or debugging a specific component.
 
 ## How to read these docs
 

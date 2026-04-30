@@ -20,7 +20,7 @@ Overviews live in each folder’s `README.md`. Deeper detail is split into small
 ## Runtime status
 
 - **On the click API path:** core, depth, segmentation, routing, inpainting, utils.
-- **In the package but not on the click API path:** 3D reconstruction (Trellis), used from tests only.
+- **In the package but not on the click API path:** 3D reconstruction (OpenLRM by default; Trellis when injected), used from tests only.
 
 ## Public surface
 

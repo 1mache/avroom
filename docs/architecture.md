@@ -44,7 +44,7 @@ flowchart LR
 - Installed editable via the root [`requirements.txt`](../requirements.txt) line 1: `-e ./TestModules`.
 - Public surface is `ObjectRemover` plus four per-domain Facades (`DepthMappingFacade`, `ImageSegmentationFacade`, `ImageInpaintingFacade`, `Reconstruction3DFacade`) and their Strategy ABCs — all re-exported from [`TestModules/src/__init__.py`](../TestModules/src/__init__.py).
 - `ObjectRemover.remove_object` orchestrates depth mapping → adapter → router → SAM → mask refinement → hybrid inpainting → BGRA cutout composition.
-- `Reconstruction3DFacade` is a separate, optional surface for image-to-3D (Trellis 2 via `gradio_client`); it is **not** invoked by `ObjectRemover` or by the HTTP endpoints today.
+- `Reconstruction3DFacade` is a separate, optional surface for image-to-3D (GLB). It **defaults** to local **OpenLRM** (`OpenLrmReconstructionStrategy`); **Trellis 2** via `gradio_client` is available when that strategy is injected. It is **not** invoked by `ObjectRemover` or by the HTTP endpoints today.
 - See [ai-pipeline/](ai-pipeline/README.md) for details.
 
 ## Cross-tier contracts

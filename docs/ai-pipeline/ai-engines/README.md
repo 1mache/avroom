@@ -20,6 +20,6 @@
 | [depth/README.md](depth/README.md) | Two depth nets blended into one map |
 | [segmentation/README.md](segmentation/README.md) | SAM on adapted depth, point prompt |
 | [inpainting/README.md](inpainting/README.md) | LaMa hole fill, optional SD polish |
-| [reconstruction-3d/README.md](reconstruction-3d/README.md) | Optional Trellis image-to-GLB |
+| [reconstruction-3d/README.md](reconstruction-3d/README.md) | Optional image-to-GLB (OpenLRM default; Trellis optional) |
 
 Upstream: [core/README.md](../core/README.md).

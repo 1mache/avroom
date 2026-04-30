@@ -14,6 +14,7 @@ from .inpainting import (
     StableDiffusionInpaintingStrategy,
 )
 from .reconstruction_3d import (
+    OpenLrmReconstructionStrategy,
     Reconstruction3DFacade,
     Reconstruction3DStrategy,
     ReconstructionQuality,
@@ -37,6 +38,7 @@ __all__ = [
     "ImageSegmentationStrategy",
     "LamaInpaintingStrategy",
     "NearFarBlendedDepthMappingStrategy",
+    "OpenLrmReconstructionStrategy",
     "Reconstruction3DFacade",
     "Reconstruction3DStrategy",
     "ReconstructionQuality",

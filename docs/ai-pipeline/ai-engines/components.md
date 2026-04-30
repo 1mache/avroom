@@ -9,7 +9,7 @@ Pattern everywhere under [`TestModules/src/ai_engines/`](../../../TestModules/sr
 | Depth | `DepthMappingFacade` | Near/far blend (`NearFarBlendedDepthMappingStrategy`) |
 | Segmentation | `ImageSegmentationFacade` | SAM (`SamSegmentationStrategy`) |
 | Inpainting | `ImageInpaintingFacade` | LaMa + optional SD (`HybridInpaintingStrategy`) |
-| Reconstruction 3D | `Reconstruction3DFacade` | Trellis HF Space (`TrellisReconstructionStrategy`) |
+| Reconstruction 3D | `Reconstruction3DFacade` | OpenLRM local (`OpenLrmReconstructionStrategy`, default); Trellis HF Space (`TrellisReconstructionStrategy`) when injected |
 
 Each facade holds one active `*Strategy` instance configured at construction.
 

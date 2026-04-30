@@ -67,7 +67,10 @@ The root [`requirements.txt`](../requirements.txt) is the canonical source. High
 |---|---|---|
 | `segment-anything` | `1.0` | [`SamSegmentationStrategy`](../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) |
 | `simple-lama-inpainting` | `0.1.2` | [`LamaInpaintingStrategy`](../TestModules/src/ai_engines/inpainting/strategies/lama_inpainting_strategy.py) |
-| `gradio_client` | `>=1.4` | [`TrellisReconstructionStrategy`](../TestModules/src/ai_engines/reconstruction_3d/strategies/trellis_reconstruction_strategy.py) |
+| `gradio_client` | `>=1.4` | [`TrellisReconstructionStrategy`](../TestModules/src/ai_engines/reconstruction_3d/strategies/trellis_reconstruction_strategy.py) only (optional 3D backend) |
+| `imageio[ffmpeg]` | `>=2.31.0` | Vendored OpenLRM imports (`_backends/openlrm_v10/lrm/`) |
+| `PyMCubes` | `>=0.1.4` | [`OpenLrmReconstructionStrategy`](../TestModules/src/ai_engines/reconstruction_3d/strategies/openlrm_reconstruction_strategy.py) (marching cubes) |
+| `trimesh` | `>=4.0.0` | [`OpenLrmReconstructionStrategy`](../TestModules/src/ai_engines/reconstruction_3d/strategies/openlrm_reconstruction_strategy.py) (mesh I/O + GLB) |
 
 ### Local package
 
@@ -88,9 +91,10 @@ These are **not** Python packages — they're pulled from Hugging Face / Faceboo
 | `sam_vit_b_01ec64.pth` (SAM ViT-B) | Segmentation | [`SamSegmentationStrategy`](../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) lines 19–20, default URL `https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth` |
 | `runwayml/stable-diffusion-inpainting` | Texture refinement | [`StableDiffusionInpaintingStrategy`](../TestModules/src/ai_engines/inpainting/strategies/stable_diffusion_inpainting_strategy.py) line 16 |
 | LaMa weights (bundled with `simple_lama_inpainting`) | Structural inpainting | [`LamaInpaintingStrategy._load_simple_lama`](../TestModules/src/ai_engines/inpainting/strategies/lama_inpainting_strategy.py) lines 16–25 |
-| `microsoft/TRELLIS.2` (HF Space, image-to-3D) | 3D reconstruction (not in HTTP path) | [`TrellisReconstructionStrategy.DEFAULT_SPACE_ID`](../TestModules/src/ai_engines/reconstruction_3d/strategies/trellis_reconstruction_strategy.py) line 35 |
+| `zxhezexin/openlrm-small-obj-1.0` (HF weights + config) | Default 3D reconstruction (not in HTTP path) | [reconstruction-3d/operations.md](ai-pipeline/ai-engines/reconstruction-3d/operations.md) — cache dirs and `OPENLRM_WEIGHT_CACHE` |
+| `microsoft/TRELLIS.2` (HF Space, image-to-3D) | Optional 3D reconstruction when using Trellis strategy (not in HTTP path) | [`TrellisReconstructionStrategy.DEFAULT_SPACE_ID`](../TestModules/src/ai_engines/reconstruction_3d/strategies/trellis_reconstruction_strategy.py) line 35 |
 
-SAM checkpoint resolution order is `SAM_CHECKPOINT_PATH` env var → `TestModules/checkpoints/sam_vit_b_01ec64.pth` → auto-download (unless `SAM_AUTO_DOWNLOAD=0`). Heavy model loads (depth pipeline, SAM predictor, LaMa, SD pipe) are each cached behind a module-level `functools.lru_cache(maxsize=1)`/`maxsize=4` factory so they're loaded exactly once per process.
+SAM checkpoint resolution order is `SAM_CHECKPOINT_PATH` env var → `TestModules/checkpoints/sam_vit_b_01ec64.pth` → auto-download (unless `SAM_AUTO_DOWNLOAD=0`). Heavy model loads (depth pipeline, SAM predictor, LaMa, SD pipe) are each cached behind a module-level `functools.lru_cache(maxsize=1)`/`maxsize=4` factory so they're loaded exactly once per process. The OpenLRM inferrer is also lazy-loaded behind `functools.lru_cache(maxsize=1)` in [`openlrm_reconstruction_strategy.py`](../TestModules/src/ai_engines/reconstruction_3d/strategies/openlrm_reconstruction_strategy.py) lines 40–49.
 
 ## Hardware
 

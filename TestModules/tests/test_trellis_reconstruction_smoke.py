@@ -1,8 +1,13 @@
 """Smoke test: ObjectRemover cutout -> Reconstruction3DFacade -> GLB bytes.
 
-Manual integration test. It hits the live Hugging Face Space
-(microsoft/TRELLIS.2) and runs the full ObjectRemover pipeline, so it is
-slow (model load + queue wait). Run it explicitly, never in CI.
+Manual integration test. By default :class:`Reconstruction3DFacade` uses
+:class:`OpenLrmReconstructionStrategy` (local OpenLRM v1.0 + HF weights
+``zxhezexin/openlrm-small-obj-1.0``): first run downloads weights and needs a
+GPU for practical runtime. To exercise Trellis 2 on the Hugging Face Space
+instead, construct ``Reconstruction3DFacade(TrellisReconstructionStrategy())``.
+
+The full-pipeline path runs ObjectRemover then 3D reconstruction; it is slow.
+Run explicitly, never in CI.
 
 Usage (from repo root):
     python TestModules/tests/test_trellis_reconstruction_smoke.py

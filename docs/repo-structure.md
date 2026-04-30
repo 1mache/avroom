@@ -84,7 +84,8 @@ TestModules/
 │   │   ├── inpainting/                   - ImageInpaintingFacade + ImageInpaintingStrategy (ABC)
 │   │   │   └── strategies/               - LamaInpaintingStrategy, StableDiffusionInpaintingStrategy, HybridInpaintingStrategy
 │   │   └── reconstruction_3d/            - Reconstruction3DFacade + ABC + quality presets + GLB writer
-│   │       └── strategies/               - TrellisReconstructionStrategy (microsoft/TRELLIS.2 via gradio_client)
+│   │       ├── _backends/openlrm_v10/   - vendored OpenLRM v1.0 inference (`lrm/`)
+│   │       └── strategies/               - OpenLrmReconstructionStrategy (default), TrellisReconstructionStrategy (optional HF Space)
 │   ├── routing/                          - SegmentationRoutingStrategy (ABC)
 │   │   └── strategies/                   - BoundaryVarianceRoutingStrategy, CenterOfMassRoutingStrategy
 │   └── utils/                            - DebugImageSaver, MaskRefiner, BgraCutoutComposer

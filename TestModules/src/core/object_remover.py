@@ -189,12 +189,12 @@ class ObjectRemover:
         if mask is None:
             raise ValueError("Internal error: mask is None after mask refinement.")
 
-        original_bg_ra = BgraCutoutComposer.compose_original_overlap_bgra(
+        cutout_bgra = BgraCutoutComposer.compose_original_overlap_bgra(
             original_bgr=image,
-            mask=mask,
+            mask=tight_mask,
         )
 
-        return result_image, original_bg_ra
+        return result_image, cutout_bgra
 
     def remove_object_test(self) -> tuple[np.ndarray, np.ndarray] | None:
         """Run :meth:`remove_object` using state set via :meth:`set_image`/

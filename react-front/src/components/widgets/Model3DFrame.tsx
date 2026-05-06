@@ -27,7 +27,7 @@ const RIM_LIGHT_POSITION = { x: 0, y: -3, z: -6 };
 
 const MATERIAL_COLOR = 0xdbeafe;    // Tailwind blue-100
 const MATERIAL_SPECULAR = 0x93c5fd; // Tailwind blue-300
-const MATERIAL_SHININESS = 120;
+const MATERIAL_SHININESS = 30;
 
 const MODEL_TARGET_SIZE = 3; // longest axis in world units, fits CAMERA_POSITION.z=7
 

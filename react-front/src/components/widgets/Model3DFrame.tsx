@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
 const CAMERA_FOV = 40;
 const CAMERA_NEAR = 0.1;
@@ -29,14 +30,37 @@ const MATERIAL_SPECULAR = 0x93c5fd; // Tailwind blue-300
 const MATERIAL_SHININESS = 120;
 
 const MODEL_TARGET_SIZE = 3; // longest axis in world units, fits CAMERA_POSITION.z=7
-const ROTATION_SPEED_Y = 0.007;
+
+interface NormalizedPos {
+  x: number;
+  y: number;
+}
 
 interface Props {
   glbData: ArrayBuffer | null;
   backgroundImage?: string | null;
+  clickNormalizedPos?: NormalizedPos | null;
 }
 
-export const Model3DFrame: React.FC<Props> = ({ glbData, backgroundImage }) => {
+/**
+ * Shift the camera's projection so a centered scene appears at normalized screen position (cx, cy).
+ * Uses setViewOffset to move the principal point — equivalent to a tilt-shift / lens-shift.
+ * Pass null to clear the offset (model renders centered).
+ */
+function applyClickViewOffset(
+  camera: THREE.PerspectiveCamera,
+  pos: NormalizedPos | null | undefined,
+  width: number,
+  height: number,
+): void {
+  if (pos) {
+    camera.setViewOffset(width, height, width * (0.5 - pos.x), height * (0.5 - pos.y), width, height);
+  } else {
+    camera.clearViewOffset();
+  }
+}
+
+export const Model3DFrame: React.FC<Props> = ({ glbData, backgroundImage, clickNormalizedPos }) => {
   const mountRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -59,6 +83,9 @@ export const Model3DFrame: React.FC<Props> = ({ glbData, backgroundImage }) => {
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO)); // cap — 3x+ screens get diminishing returns and burn GPU
     mount.appendChild(renderer.domElement);
 
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
     scene.add(new THREE.AmbientLight(AMBIENT_LIGHT_COLOR, AMBIENT_LIGHT_INTENSITY));
 
     // Three-point lighting rig in Tailwind blue palette for a stylized look
@@ -74,9 +101,13 @@ export const Model3DFrame: React.FC<Props> = ({ glbData, backgroundImage }) => {
     rim.position.set(RIM_LIGHT_POSITION.x, RIM_LIGHT_POSITION.y, RIM_LIGHT_POSITION.z);
     scene.add(rim);
 
-    // Group wraps the model so rotation/scale apply without touching the model's own transform
+    // Group wraps the model so rotation/scale apply without touching the model's own transform.
+    // Position stays at origin so OrbitControls (target=origin) orbits around model center.
+    // Click placement is handled by camera.setViewOffset, not by translating the model.
     const group = new THREE.Group();
     scene.add(group);
+
+    applyClickViewOffset(camera, clickNormalizedPos, width, height);
 
     const loader = new GLTFLoader();
     // slice(0) copies the buffer — GLTFLoader transfers (detaches) the original ArrayBuffer, which would break React state
@@ -109,7 +140,7 @@ export const Model3DFrame: React.FC<Props> = ({ glbData, backgroundImage }) => {
     let frameId: number;
     const animate = () => {
       frameId = requestAnimationFrame(animate);
-      group.rotation.y += ROTATION_SPEED_Y;
+      controls.update();
       renderer.render(scene, camera);
     };
     animate();
@@ -118,7 +149,9 @@ export const Model3DFrame: React.FC<Props> = ({ glbData, backgroundImage }) => {
       const w = mount.clientWidth;
       const h = mount.clientHeight;
       camera.aspect = w / h;
-      camera.updateProjectionMatrix(); // must call after changing any camera property or the old matrix stays in effect
+      // setViewOffset internally calls updateProjectionMatrix using the new aspect.
+      // When no click pos, clearViewOffset still triggers the matrix update.
+      applyClickViewOffset(camera, clickNormalizedPos, w, h);
       renderer.setSize(w, h);
     });
     observer.observe(mount);
@@ -126,12 +159,13 @@ export const Model3DFrame: React.FC<Props> = ({ glbData, backgroundImage }) => {
     return () => {
       cancelAnimationFrame(frameId);
       observer.disconnect();
+      controls.dispose();
       renderer.dispose(); // frees GPU resources: textures, buffers, shaders
       if (mount.contains(renderer.domElement)) {
         mount.removeChild(renderer.domElement);
       }
     };
-  }, [glbData]);
+  }, [glbData, clickNormalizedPos]);
 
   return (
     <div className="frame model-3d-frame">

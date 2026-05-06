@@ -18,6 +18,7 @@ export const MainPage: React.FC = () => {
   const [imageId, setImageId] = useState<string | null>(null);
   const [clickPosition, setClickPosition] = useState<ClickPosition | null>(null);
   const [naturalClickPos, setNaturalClickPos] = useState<ClickPosition | null>(null);
+  const [normalizedClickPos, setNormalizedClickPos] = useState<ClickPosition | null>(null);
   const [backgroundSrc, setBackgroundSrc] = useState<string | null>(null);
   const [cutoutSrc, setCutoutSrc] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
@@ -39,6 +40,7 @@ export const MainPage: React.FC = () => {
     setImageId(null);
     setClickPosition(null);
     setNaturalClickPos(null);
+    setNormalizedClickPos(null);
     setBackgroundSrc(null);
     setCutoutSrc(null);
     setError(null);
@@ -53,9 +55,10 @@ export const MainPage: React.FC = () => {
     });
   }, []);
 
-  const handleImageClick = useCallback((displayPos: ClickPosition, naturalPos: ClickPosition) => {
+  const handleImageClick = useCallback((displayPos: ClickPosition, naturalPos: ClickPosition, normalizedPos: ClickPosition) => {
     setClickPosition(displayPos);
     setNaturalClickPos(naturalPos);
+    setNormalizedClickPos(normalizedPos);
   }, []);
 
   const handleUpload = useCallback(async () => {
@@ -178,7 +181,7 @@ export const MainPage: React.FC = () => {
         </section>
 
         <section className="bottom-frame-section">
-          <Model3DFrame glbData={glbData} backgroundImage={uploadedImageUrl} />
+          <Model3DFrame glbData={glbData} backgroundImage={uploadedImageUrl} clickNormalizedPos={normalizedClickPos} />
         </section>
 
         <section className="bottom-frame-section">

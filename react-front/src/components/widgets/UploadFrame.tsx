@@ -5,7 +5,7 @@ export interface UploadFrameProps {
   imageSrc?: string | null;
   clickPosition?: { x: number; y: number } | null;
   onFileSelected: (file: File) => void;
-  onImageClick: (displayPos: { x: number; y: number }, naturalPos: { x: number; y: number }) => void;
+  onImageClick: (displayPos: { x: number; y: number }, naturalPos: { x: number; y: number }, normalizedPos: { x: number; y: number }) => void;
   disabled?: boolean;
 }
 
@@ -55,10 +55,15 @@ export const UploadFrame: React.FC<UploadFrameProps> = ({
         x: Math.round((clickXOnImg / imgRect.width) * img.naturalWidth),
         y: Math.round((clickYOnImg / imgRect.height) * img.naturalHeight),
       };
-      
-      onImageClick({ x, y }, naturalPos);
+
+      const normalizedPos = {
+        x: clickXOnImg / imgRect.width,
+        y: clickYOnImg / imgRect.height,
+      };
+
+      onImageClick({ x, y }, naturalPos, normalizedPos);
     } else {
-      onImageClick({ x, y }, { x, y });
+      onImageClick({ x, y }, { x, y }, { x: 0.5, y: 0.5 });
     }
   };
 

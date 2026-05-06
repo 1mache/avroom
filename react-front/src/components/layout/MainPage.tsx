@@ -178,7 +178,7 @@ export const MainPage: React.FC = () => {
         </section>
 
         <section className="bottom-frame-section">
-          <Model3DFrame glbData={glbData} />
+          <Model3DFrame glbData={glbData} backgroundImage={uploadedImageUrl} />
         </section>
 
         <section className="bottom-frame-section">

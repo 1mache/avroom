@@ -1,0 +1,14 @@
+Vendored subset of OpenLRM (Apache License 2.0)
+==============================================
+
+Source repository: https://github.com/3DTopia/OpenLRM
+Vendored revision: git tag v1.0.0 (commit d4caebbea3f446904d9faafaf734e797fcc4ec89)
+
+The `lrm/` package is copied from that tag with small compatibility edits
+(torch.load weights_only, default weight cache path, logging instead of print).
+
+Upstream code license: LICENSE in the OpenLRM repository (Apache-2.0).
+
+Model weights (e.g. zxhezexin/openlrm-small-obj-1.0) are distributed under
+Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0);
+see the Hugging Face model card. Weights are not vendored here.

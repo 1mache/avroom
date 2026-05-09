@@ -46,7 +46,7 @@ async def generate_test_3d() -> Response:
     try:
         glb_bytes = _get_facade().generate(
             _TEST_IMAGE_PATH,
-            quality=ReconstructionQuality.FAST,
+            quality=ReconstructionQuality.HIGH,
             output="bytes",
         )
     except Exception as exc:

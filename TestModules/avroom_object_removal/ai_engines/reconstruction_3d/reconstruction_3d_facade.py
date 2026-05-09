@@ -11,6 +11,7 @@ from .reconstruction_3d_strategy import OutputMode, Reconstruction3DStrategy
 from .reconstruction_quality import ReconstructionQuality
 from .strategies.openlrm_reconstruction_strategy import OpenLrmReconstructionStrategy
 from .strategies.trellis_reconstruction_strategy import TrellisReconstructionStrategy
+from .strategies.vfusion3d_reconstruction_strategy import Vfusion3dReconstructionStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ class Reconstruction3DFacade:
     """
 
     def __init__(self, strategy: Reconstruction3DStrategy | None = None) -> None:
-        self._strategy: Reconstruction3DStrategy = strategy or OpenLrmReconstructionStrategy()
+        self._strategy: Reconstruction3DStrategy = strategy or Vfusion3dReconstructionStrategy()
         logger.info(
             f"Reconstruction3DFacade ready (strategy={type(self._strategy).__name__})"
         )
@@ -38,7 +39,7 @@ class Reconstruction3DFacade:
         self,
         image: bytes | np.ndarray | Image.Image | Path | str,
         *,
-        quality: ReconstructionQuality = ReconstructionQuality.FAST,
+        quality: ReconstructionQuality = ReconstructionQuality.HIGH,
         output: OutputMode = "bytes",
         output_path: Path | None = None,
         seed: int = 0,

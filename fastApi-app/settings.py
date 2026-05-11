@@ -42,3 +42,28 @@ def get_image_storage_dir() -> Path:
 
     return project_root / DEFAULT_IMAGE_STORAGE_SUBDIR
 
+
+def get_sessions_file() -> Path:
+    """Return path to tmp/sessions.json, one level above the image storage dir."""
+    return get_image_storage_dir().parent / "sessions.json"
+
+
+def register_uid(uid: str) -> None:
+    """Append uid to sessions.json, creating the file if absent."""
+    import json
+
+    sessions_file = get_sessions_file()
+    sessions_file.parent.mkdir(parents=True, exist_ok=True)
+
+    uids: list[str] = []
+    if sessions_file.exists():
+        try:
+            uids = json.loads(sessions_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, ValueError):
+            uids = []
+
+    if uid not in uids:
+        uids.append(uid)
+
+    sessions_file.write_text(json.dumps(uids, indent=2), encoding="utf-8")
+

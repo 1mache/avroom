@@ -6,6 +6,8 @@ import uuid
 import logging
 import base64
 
+import json
+
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from pathlib import Path
 
@@ -15,10 +17,22 @@ from schemas.image import (
     ClickResultResponse,
     ImageUploadResponse,
 )
-from settings import get_image_storage_dir
+from settings import get_image_storage_dir, get_sessions_file, register_uid
 
 router = APIRouter(prefix="/images", tags=["images"])
 logger = logging.getLogger(__name__)
+
+
+@router.get("/sessions")
+async def get_sessions() -> list[str]:
+    """Return all image UIDs registered via upload."""
+    sessions_file = get_sessions_file()
+    if not sessions_file.exists():
+        return []
+    try:
+        return json.loads(sessions_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError):
+        return []
 
 
 @router.post("/upload", response_model=ImageUploadResponse)
@@ -63,6 +77,8 @@ async def upload_image(
         image_path,
         len(file_bytes),
     )
+
+    register_uid(image_id)
 
     return ImageUploadResponse(
         image_id=image_id,

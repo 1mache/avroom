@@ -18,7 +18,7 @@ from settings import get_image_storage_dir
 router = APIRouter(prefix="/objects", tags=["objects"])
 logger = logging.getLogger(__name__)
 
-_DEBUG_MODE = True
+_DEBUG_MODE = False
 _DEBUG_MODEL_PATH = Path(__file__).resolve().parent.parent / "res" / "test" / "debug_toilet.glb"
 
 _facade: Reconstruction3DFacade | None = None
@@ -81,7 +81,7 @@ async def generate_test_3d(request: Test3DRequest) -> Response:
     try:
         glb_bytes = _get_facade().generate(
             cutout_image_path,
-            quality=ReconstructionQuality.HIGH,
+            quality=ReconstructionQuality.FAST,
             output="bytes",
         )
     except Exception as exc:

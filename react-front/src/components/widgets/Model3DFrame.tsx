@@ -25,7 +25,7 @@ const RIM_LIGHT_COLOR = 0xbfdbfe; // Tailwind blue-200
 const RIM_LIGHT_INTENSITY = 0.4;
 const RIM_LIGHT_POSITION = { x: 0, y: -3, z: -6 };
 
-const MATERIAL_COLOR = 0xdbeafe;    // Tailwind blue-100
+const MATERIAL_COLOR = 0xdbeafe; // Tailwind blue-100
 const MATERIAL_SPECULAR = 0x93c5fd; // Tailwind blue-300
 const MATERIAL_SHININESS = 30;
 
@@ -54,13 +54,24 @@ function applyClickViewOffset(
   height: number,
 ): void {
   if (pos) {
-    camera.setViewOffset(width, height, width * (0.5 - pos.x), height * (0.5 - pos.y), width, height);
+    camera.setViewOffset(
+      width,
+      height,
+      width * (0.5 - pos.x),
+      height * (0.5 - pos.y),
+      width,
+      height,
+    );
   } else {
     camera.clearViewOffset();
   }
 }
 
-export const Model3DFrame: React.FC<Props> = ({ glbData, backgroundImage, clickNormalizedPos }) => {
+export const Model3DFrame: React.FC<Props> = ({
+  glbData,
+  backgroundImage,
+  clickNormalizedPos,
+}) => {
   const mountRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -73,8 +84,17 @@ export const Model3DFrame: React.FC<Props> = ({ glbData, backgroundImage, clickN
     const scene = new THREE.Scene();
 
     // fov=40 is a narrow lens — less perspective distortion than the typical 75, looks more "product photo"
-    const camera = new THREE.PerspectiveCamera(CAMERA_FOV, width / height, CAMERA_NEAR, CAMERA_FAR);
-    camera.position.set(CAMERA_POSITION.x, CAMERA_POSITION.y, CAMERA_POSITION.z);
+    const camera = new THREE.PerspectiveCamera(
+      CAMERA_FOV,
+      width / height,
+      CAMERA_NEAR,
+      CAMERA_FAR,
+    );
+    camera.position.set(
+      CAMERA_POSITION.x,
+      CAMERA_POSITION.y,
+      CAMERA_POSITION.z,
+    );
     camera.lookAt(0, 0, 0);
 
     // alpha: true = transparent canvas background so the CSS background shows through
@@ -86,19 +106,42 @@ export const Model3DFrame: React.FC<Props> = ({ glbData, backgroundImage, clickN
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
-    scene.add(new THREE.AmbientLight(AMBIENT_LIGHT_COLOR, AMBIENT_LIGHT_INTENSITY));
+    scene.add(
+      new THREE.AmbientLight(AMBIENT_LIGHT_COLOR, AMBIENT_LIGHT_INTENSITY),
+    );
 
     // Three-point lighting rig in Tailwind blue palette for a stylized look
-    const key = new THREE.DirectionalLight(KEY_LIGHT_COLOR, KEY_LIGHT_INTENSITY); // key: main light, upper-right-front
-    key.position.set(KEY_LIGHT_POSITION.x, KEY_LIGHT_POSITION.y, KEY_LIGHT_POSITION.z);
+    const key = new THREE.DirectionalLight(
+      KEY_LIGHT_COLOR,
+      KEY_LIGHT_INTENSITY,
+    ); // key: main light, upper-right-front
+    key.position.set(
+      KEY_LIGHT_POSITION.x,
+      KEY_LIGHT_POSITION.y,
+      KEY_LIGHT_POSITION.z,
+    );
     scene.add(key);
 
-    const fill = new THREE.DirectionalLight(FILL_LIGHT_COLOR, FILL_LIGHT_INTENSITY); // fill: softens shadows on the left-back side
-    fill.position.set(FILL_LIGHT_POSITION.x, FILL_LIGHT_POSITION.y, FILL_LIGHT_POSITION.z);
+    const fill = new THREE.DirectionalLight(
+      FILL_LIGHT_COLOR,
+      FILL_LIGHT_INTENSITY,
+    ); // fill: softens shadows on the left-back side
+    fill.position.set(
+      FILL_LIGHT_POSITION.x,
+      FILL_LIGHT_POSITION.y,
+      FILL_LIGHT_POSITION.z,
+    );
     scene.add(fill);
 
-    const rim = new THREE.DirectionalLight(RIM_LIGHT_COLOR, RIM_LIGHT_INTENSITY); // rim: below-back edge highlight to separate model from background
-    rim.position.set(RIM_LIGHT_POSITION.x, RIM_LIGHT_POSITION.y, RIM_LIGHT_POSITION.z);
+    const rim = new THREE.DirectionalLight(
+      RIM_LIGHT_COLOR,
+      RIM_LIGHT_INTENSITY,
+    ); // rim: below-back edge highlight to separate model from background
+    rim.position.set(
+      RIM_LIGHT_POSITION.x,
+      RIM_LIGHT_POSITION.y,
+      RIM_LIGHT_POSITION.z,
+    );
     scene.add(rim);
 
     // Group wraps the model so rotation/scale apply without touching the model's own transform.
@@ -124,15 +167,15 @@ export const Model3DFrame: React.FC<Props> = ({ glbData, backgroundImage, clickN
       group.scale.setScalar(MODEL_TARGET_SIZE / maxDim);
 
       // Override every mesh's material — ignores whatever the GLB shipped with, enforces uniform blue style
-      obj.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.material = new THREE.MeshPhongMaterial({
-            color: MATERIAL_COLOR,
-            specular: MATERIAL_SPECULAR,
-            shininess: MATERIAL_SHININESS,
-          });
-        }
-      });
+      // obj.traverse((child) => {
+      //   if (child instanceof THREE.Mesh) {
+      //     child.material = new THREE.MeshPhongMaterial({
+      //       color: MATERIAL_COLOR,
+      //       specular: MATERIAL_SPECULAR,
+      //       shininess: MATERIAL_SHININESS,
+      //     });
+      //   }
+      // });
 
       group.add(obj);
     });
@@ -176,7 +219,15 @@ export const Model3DFrame: React.FC<Props> = ({ glbData, backgroundImage, clickN
       <div
         ref={mountRef}
         className="model-3d-viewport"
-        style={backgroundImage ? { backgroundImage: `url(${backgroundImage})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}
+        style={
+          backgroundImage
+            ? {
+                backgroundImage: `url(${backgroundImage})`,
+                backgroundSize: "cover",
+                backgroundPosition: "center",
+              }
+            : undefined
+        }
       />
     </div>
   );

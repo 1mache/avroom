@@ -117,10 +117,15 @@ export const MainPage: React.FC = () => {
   }, [naturalClickPos, imageId]);
 
   const handleGenerate3D = useCallback(async () => {
+    if (!imageId) {
+      setError("No uploaded image to process yet.");
+      return;
+    }
+
     setIsGenerating3D(true);
     setError(null);
     try {
-      const buffer = await generate3DModel();
+      const buffer = await generate3DModel(imageId);
       setGlbData(buffer);
     } catch (genError) {
       const message = genError instanceof Error ? genError.message : "Unexpected 3D generation error.";
@@ -128,7 +133,7 @@ export const MainPage: React.FC = () => {
     } finally {
       setIsGenerating3D(false);
     }
-  }, []);
+  }, [imageId]);
 
   const isBusy = isUploading || isProcessing;
 
@@ -189,7 +194,7 @@ export const MainPage: React.FC = () => {
             type="button"
             className="primary-button"
             onClick={handleGenerate3D}
-            disabled={isGenerating3D}
+            disabled={isGenerating3D || !imageId}
           >
             {isGenerating3D ? "Generating..." : "Generate 3D"}
           </button>

@@ -107,6 +107,12 @@ async def handle_click(request: ClickRequest) -> ClickResultResponse:
         logger.exception("Click processing failed")
         raise HTTPException(status_code=500, detail=f"Click processing failed: {exc}") from exc
 
+    # save the background and cutout images to the disk
+    background_image_path = storage_dir / f"{request.image_id}_background.png"
+    background_image_path.write_bytes(background_bytes)
+    cutout_image_path = storage_dir / f"{request.image_id}_cutout.png"
+    cutout_image_path.write_bytes(cutout_bytes)
+
     background_b64 = base64.b64encode(background_bytes).decode("ascii")
     cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")
 

@@ -14,7 +14,9 @@ from avroom_object_removal.ai_engines.reconstruction_3d import (
 router = APIRouter(prefix="/objects", tags=["objects"])
 logger = logging.getLogger(__name__)
 
+_DEBUG_MODE = True
 _TEST_IMAGE_PATH = Path(__file__).resolve().parent.parent / "tmp" / "3d" / "toilet.png"
+_DEBUG_MODEL_PATH = Path(__file__).resolve().parent.parent / "tmp" / "3d" / "debug_toilet.glb"
 
 _facade: Reconstruction3DFacade | None = None
 
@@ -33,7 +35,22 @@ async def generate_test_3d() -> Response:
     Returns raw GLB bytes (model/gltf-binary). Intended for Three.js consumption
     via GLTFLoader.load() or GLTFLoader.parse().
     """
-    logger.info("test-3d called: image_path=%s", _TEST_IMAGE_PATH)
+    logger.info("test-3d called: debug_mode=%s", _DEBUG_MODE)
+
+    if _DEBUG_MODE:
+        if not _DEBUG_MODEL_PATH.exists():
+            logger.error("Debug model not found: %s", _DEBUG_MODEL_PATH)
+            raise HTTPException(
+                status_code=404,
+                detail=f"Debug model not found at {_DEBUG_MODEL_PATH}. "
+                "Place debug_toilet.glb at fastApi-app/tmp/3d/debug_toilet.glb.",
+            )
+        logger.info("test-3d debug shortcut: returning %s", _DEBUG_MODEL_PATH)
+        return Response(
+            content=_DEBUG_MODEL_PATH.read_bytes(),
+            media_type="model/gltf-binary",
+            headers={"Content-Disposition": "inline; filename=debug_toilet.glb"},
+        )
 
     if not _TEST_IMAGE_PATH.exists():
         logger.error("Test image not found: %s", _TEST_IMAGE_PATH)

@@ -25,11 +25,9 @@ const RIM_LIGHT_COLOR = 0xbfdbfe; // Tailwind blue-200
 const RIM_LIGHT_INTENSITY = 0.4;
 const RIM_LIGHT_POSITION = { x: 0, y: -3, z: -6 };
 
-const MATERIAL_COLOR = 0xdbeafe;    // Tailwind blue-100
-const MATERIAL_SPECULAR = 0x93c5fd; // Tailwind blue-300
-const MATERIAL_SHININESS = 30;
-
 const MODEL_TARGET_SIZE = 3; // longest axis in world units, fits CAMERA_POSITION.z=7
+
+const MATERIAL_ROUGHNESS = 0.3; // lower = shinier (PBR equivalent of Phong shininess)
 
 interface NormalizedPos {
   x: number;
@@ -123,14 +121,10 @@ export const Model3DFrame: React.FC<Props> = ({ glbData, backgroundImage, clickN
       obj.position.copy(center).negate(); // shift model so its geometric center sits at the group origin
       group.scale.setScalar(MODEL_TARGET_SIZE / maxDim);
 
-      // Override every mesh's material — ignores whatever the GLB shipped with, enforces uniform blue style
+      // Mutate existing PBR material to boost shininess while preserving GLB textures (map, normalMap, etc).
       obj.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          child.material = new THREE.MeshPhongMaterial({
-            color: MATERIAL_COLOR,
-            specular: MATERIAL_SPECULAR,
-            shininess: MATERIAL_SHININESS,
-          });
+        if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
+          child.material.roughness = MATERIAL_ROUGHNESS;
         }
       });
 

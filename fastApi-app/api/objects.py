@@ -89,7 +89,10 @@ async def generate_test_3d(request: Test3DRequest) -> Response:
         raise HTTPException(status_code=500, detail=f"3D generation failed: {exc}") from exc
 
     assert isinstance(glb_bytes, bytes)
-    logger.info("test-3d complete: uid=%s glb_bytes=%d", request.uid, len(glb_bytes))
+
+    glb_path = get_image_storage_dir() / f"{request.uid}.glb"
+    glb_path.write_bytes(glb_bytes)
+    logger.info("test-3d complete: uid=%s glb_bytes=%d saved=%s", request.uid, len(glb_bytes), glb_path)
 
     return Response(
         content=glb_bytes,

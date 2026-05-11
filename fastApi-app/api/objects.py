@@ -15,8 +15,8 @@ router = APIRouter(prefix="/objects", tags=["objects"])
 logger = logging.getLogger(__name__)
 
 _DEBUG_MODE = True
-_TEST_IMAGE_PATH = Path(__file__).resolve().parent.parent / "tmp" / "3d" / "toilet.png"
-_DEBUG_MODEL_PATH = Path(__file__).resolve().parent.parent / "tmp" / "3d" / "debug_toilet.glb"
+_TEST_IMAGE_PATH = Path(__file__).resolve().parent.parent / "res" / "test" / "toilet.png"
+_DEBUG_MODEL_PATH = Path(__file__).resolve().parent.parent / "res" / "test" / "debug_toilet.glb"
 
 _facade: Reconstruction3DFacade | None = None
 

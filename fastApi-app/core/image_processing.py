@@ -176,5 +176,6 @@ def process_click_on_image(
         y=y,
         options=options,
     )
+
     return background_bytes, cutout_bytes, image_format
 

@@ -1,6 +1,6 @@
-import type { ClickRequest, ClickResultResponse, ImageUploadResponse } from "../types/api";
+import type { ClickRequest, ClickResultResponse, ImageUploadResponse, UidCacheStatusResponse } from "../types/api";
 
-const API_BASE_URL =
+export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000";
 
 async function handleJsonResponse<T>(response: Response): Promise<T> {
@@ -50,6 +50,27 @@ export async function generate3DModel(uid: string): Promise<ArrayBuffer> {
     throw new Error(text || `Request failed with status ${response.status}`);
   }
 
+  return response.arrayBuffer();
+}
+
+export async function getSessions(): Promise<string[]> {
+  const response = await fetch(`${API_BASE_URL}/images/sessions`);
+  return handleJsonResponse<string[]>(response);
+}
+
+export async function getUidCacheStatus(uid: string): Promise<UidCacheStatusResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/${uid}/cache`);
+  return handleJsonResponse<UidCacheStatusResponse>(response);
+}
+
+/** Returns the cached GLB as ArrayBuffer, or null if not yet generated (404). */
+export async function fetchCached3DModel(uid: string): Promise<ArrayBuffer | null> {
+  const response = await fetch(`${API_BASE_URL}/objects/${uid}`);
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed with status ${response.status}`);
+  }
   return response.arrayBuffer();
 }
 

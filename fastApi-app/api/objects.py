@@ -13,7 +13,7 @@ from avroom_object_removal.ai_engines.reconstruction_3d import (
     ReconstructionQuality,
 )
 
-from settings import get_image_storage_dir
+from settings import get_3d_storage_dir, get_image_storage_dir
 
 router = APIRouter(prefix="/objects", tags=["objects"])
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ async def generate_test_3d(request: Test3DRequest) -> Response:
     try:
         glb_bytes = _get_facade().generate(
             cutout_image_path,
-            quality=ReconstructionQuality.FAST,
+            quality=ReconstructionQuality.HIGH,
             output="bytes",
         )
     except Exception as exc:
@@ -90,7 +90,9 @@ async def generate_test_3d(request: Test3DRequest) -> Response:
 
     assert isinstance(glb_bytes, bytes)
 
-    glb_path = get_image_storage_dir() / f"{request.uid}.glb"
+    glb_dir = get_3d_storage_dir()
+    glb_dir.mkdir(parents=True, exist_ok=True)
+    glb_path = glb_dir / f"{request.uid}.glb"
     glb_path.write_bytes(glb_bytes)
     logger.info("test-3d complete: uid=%s glb_bytes=%d saved=%s", request.uid, len(glb_bytes), glb_path)
 
@@ -105,7 +107,7 @@ async def generate_test_3d(request: Test3DRequest) -> Response:
 async def get_3d_model(uid: str) -> FileResponse:
     """Serve the cached GLB 3D model for the given UID."""
     logger.info("3D model requested: uid=%s", uid)
-    path = get_image_storage_dir() / f"{uid}.glb"
+    path = get_3d_storage_dir() / f"{uid}.glb"
     if not path.exists():
         logger.warning("3D model not found: uid=%s path=%s", uid, path)
         raise HTTPException(status_code=404, detail="3D model not found")

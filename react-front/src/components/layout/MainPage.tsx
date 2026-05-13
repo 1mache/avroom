@@ -1,10 +1,11 @@
 import React from "react";
 import { useCallback, useEffect, useState } from "react";
 
-import { clickImage, generate3DModel, uploadImage } from "../../api/images";
+import { API_BASE_URL, clickImage, fetchCached3DModel, generate3DModel, getUidCacheStatus, uploadImage } from "../../api/images";
 import type { ClickRequest } from "../../types/api";
 import { Model3DFrame } from "../widgets/Model3DFrame";
 import { ResultFrame } from "../widgets/ResultFrame";
+import { SessionPicker } from "../widgets/SessionPicker";
 import { UploadFrame } from "../widgets/UploadFrame";
 
 interface ClickPosition {
@@ -29,7 +30,7 @@ export const MainPage: React.FC = () => {
 
   useEffect(() => {
     return () => {
-      if (uploadedImageUrl) {
+      if (uploadedImageUrl?.startsWith("blob:")) {
         URL.revokeObjectURL(uploadedImageUrl);
       }
     };
@@ -59,6 +60,27 @@ export const MainPage: React.FC = () => {
     setClickPosition(displayPos);
     setNaturalClickPos(naturalPos);
     setNormalizedClickPos(normalizedPos);
+  }, []);
+
+  const handleSessionSelect = useCallback(async (uid: string) => {
+    setImageId(uid);
+    setUploadedFile(null);
+    setUploadedImageUrl(`${API_BASE_URL}/images/${uid}/original`);
+    setClickPosition(null);
+    setNaturalClickPos(null);
+    setNormalizedClickPos(null);
+    setGlbData(null);
+    setBackgroundSrc(null);
+    setCutoutSrc(null);
+    setError(null);
+
+    try {
+      const status = await getUidCacheStatus(uid);
+      if (status.has_background) setBackgroundSrc(`${API_BASE_URL}/images/${uid}/background`);
+      if (status.has_cutout) setCutoutSrc(`${API_BASE_URL}/images/${uid}/cutout`);
+    } catch {
+      // Non-fatal: user can re-run segmentation manually
+    }
   }, []);
 
   const handleUpload = useCallback(async () => {
@@ -125,6 +147,11 @@ export const MainPage: React.FC = () => {
     setIsGenerating3D(true);
     setError(null);
     try {
+      const cached = await fetchCached3DModel(imageId);
+      if (cached) {
+        setGlbData(cached);
+        return;
+      }
       const buffer = await generate3DModel(imageId);
       setGlbData(buffer);
     } catch (genError) {
@@ -147,6 +174,10 @@ export const MainPage: React.FC = () => {
       </header>
 
       <main className="page-main">
+        <section className="top-frame-section">
+          <SessionPicker onSessionSelect={handleSessionSelect} />
+        </section>
+
         <section className="top-frame-section">
           <UploadFrame
             imageSrc={uploadedImageUrl}

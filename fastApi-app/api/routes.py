@@ -12,14 +12,14 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pathlib import Path
 
-from core.image_processing import process_click_on_image
+from core.image_processing import get_image_path, process_click_on_image
 from schemas.image import (
     ClickRequest,
     ClickResultResponse,
     ImageUploadResponse,
     UidCacheStatusResponse,
 )
-from settings import get_image_storage_dir, get_sessions_file, register_uid
+from settings import get_3d_storage_dir, get_image_storage_dir, get_sessions_file, register_uid
 
 router = APIRouter(prefix="/images", tags=["images"])
 logger = logging.getLogger(__name__)
@@ -159,7 +159,7 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
         uid=uid,
         has_background=(storage_dir / f"{uid}_background.png").exists(),
         has_cutout=(storage_dir / f"{uid}_cutout.png").exists(),
-        has_3d=(storage_dir / f"{uid}.glb").exists(),
+        has_3d=(get_3d_storage_dir() / f"{uid}.glb").exists(),
     )
     logger.info(
         "Cache status: uid=%s background=%s cutout=%s 3d=%s",
@@ -193,4 +193,20 @@ async def get_cutout(uid: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="Cutout not found")
     logger.info("Cutout served: uid=%s path=%s", uid, path)
     return FileResponse(path, media_type="image/png")
+
+
+@router.get("/{uid}/original")
+async def get_original_image(uid: str) -> FileResponse:
+    """Serve the original uploaded image for the given UID."""
+    logger.info("Original image requested: uid=%s", uid)
+    storage_dir = get_image_storage_dir()
+    try:
+        path = get_image_path(uid, storage_dir)
+    except FileNotFoundError:
+        logger.warning("Original image not found: uid=%s", uid)
+        raise HTTPException(status_code=404, detail="Original image not found")
+    suffix = path.suffix.lower().lstrip(".")
+    media_type = "image/jpeg" if suffix in ("jpg", "jpeg") else f"image/{suffix}"
+    logger.info("Original image served: uid=%s path=%s", uid, path)
+    return FileResponse(path, media_type=media_type)
 

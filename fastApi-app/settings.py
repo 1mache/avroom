@@ -11,6 +11,7 @@ from pathlib import Path
 
 IMAGE_STORAGE_DIR = ""
 DEFAULT_IMAGE_STORAGE_SUBDIR = "tmp/images"
+DEFAULT_3D_STORAGE_SUBDIR = "tmp/3d"
 
 
 def _project_root() -> Path:
@@ -41,6 +42,11 @@ def get_image_storage_dir() -> Path:
             return configured_path
 
     return project_root / DEFAULT_IMAGE_STORAGE_SUBDIR
+
+
+def get_3d_storage_dir() -> Path:
+    """Resolve the directory used to persist generated GLB models on disk."""
+    return _project_root() / DEFAULT_3D_STORAGE_SUBDIR
 
 
 def get_sessions_file() -> Path:

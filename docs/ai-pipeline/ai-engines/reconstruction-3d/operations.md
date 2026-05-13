@@ -1,19 +1,29 @@
 # Reconstruction 3D operations
 
-## Default backend (OpenLRM)
+## Default backend (TripoSR)
 
-`Reconstruction3DFacade` now defaults to `OpenLrmReconstructionStrategy` (local PyTorch inference) using the Hugging Face model **`zxhezexin/openlrm-small-obj-1.0`**.
+`Reconstruction3DFacade` defaults to `TriposrReconstructionStrategy` (local PyTorch inference) using the Hugging Face model **`stabilityai/TripoSR`**.
 
-To switch back to Trellis, inject it explicitly:
+To use a different backend, inject it explicitly:
 
 ```python
 from avroom_object_removal.ai_engines.reconstruction_3d import (
     Reconstruction3DFacade,
+    OpenLrmReconstructionStrategy,
     TrellisReconstructionStrategy,
 )
 
+recon_openlrm = Reconstruction3DFacade(OpenLrmReconstructionStrategy())
 recon = Reconstruction3DFacade(TrellisReconstructionStrategy())
 ```
+
+## Vendored TripoSR code (isolation)
+
+TripoSR inference code is vendored under:
+
+- `TestModules/src/ai_engines/reconstruction_3d/_backends/triposr/`
+
+The strategy lazy-loads weights via Hugging Face Hub on first use (standard HF cache behavior).
 
 ## Vendored OpenLRM code (isolation)
 

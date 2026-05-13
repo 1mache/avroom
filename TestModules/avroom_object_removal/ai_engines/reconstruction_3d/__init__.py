@@ -8,6 +8,8 @@ from .strategies import (
     OpenLrmReconstructionStrategy,
     Trellis3DGenerationError,
     TrellisReconstructionStrategy,
+    Triposr3DGenerationError,
+    TriposrReconstructionStrategy,
     Vfusion3dReconstructionError,
     Vfusion3dReconstructionStrategy,
 )
@@ -23,6 +25,8 @@ __all__ = [
     "ReconstructionQuality",
     "Trellis3DGenerationError",
     "TrellisReconstructionStrategy",
+    "Triposr3DGenerationError",
+    "TriposrReconstructionStrategy",
     "Vfusion3dReconstructionError",
     "Vfusion3dReconstructionStrategy",
 ]

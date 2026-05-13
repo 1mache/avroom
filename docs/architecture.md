@@ -10,11 +10,11 @@ flowchart LR
     spa["React SPA<br/>react-front/"]
     api["FastAPI service<br/>fastApi-app/"]
     pipeline["avroom_object_removal<br/>TestModules/src/"]
-    storage[("images/<br/>fastApi-app/images/")]
+    storage[("images/<br/>fastApi-app/tmp/images/")]
     outputs[("debug outputs<br/>TestModules/outputs/")]
 
     user -->|HTTP| spa
-    spa -->|"POST /images/upload<br/>POST /images/click"| api
+    spa -->|"POST /images/upload<br/>POST /images/click<br/>POST /objects/test-3d"| api
     api -->|read/write files| storage
     api -->|"in-process import<br/>ObjectRemover.remove_object"| pipeline
     pipeline -->|debug PNGs| outputs
@@ -32,9 +32,9 @@ flowchart LR
 
 ### Backend — [fastApi-app/](../fastApi-app/)
 
-- FastAPI app declared in [`fastApi-app/main.py`](../fastApi-app/main.py); `/images` router from [`fastApi-app/api/routes.py`](../fastApi-app/api/routes.py).
+- FastAPI app declared in [`fastApi-app/main.py`](../fastApi-app/main.py); routers: `/images` from [`fastApi-app/api/routes.py`](../fastApi-app/api/routes.py) and `/objects` from [`fastApi-app/api/objects.py`](../fastApi-app/api/objects.py).
 - CORS allows `http://localhost:5173` and `http://127.0.0.1:5173` (Vite default) — see [`fastApi-app/main.py`](../fastApi-app/main.py) lines 16–22.
-- Persists uploads on local disk (default `fastApi-app/images/`, see [`fastApi-app/settings.py`](../fastApi-app/settings.py)).
+- Persists uploads on local disk (default `fastApi-app/tmp/images/`, see [`fastApi-app/settings.py`](../fastApi-app/settings.py)).
 - Performs the actual segmentation/inpainting by calling the AI pipeline directly from [`fastApi-app/core/image_processing.py`](../fastApi-app/core/image_processing.py).
 - See [backend/](backend/README.md) for details.
 
@@ -44,17 +44,18 @@ flowchart LR
 - Installed editable via the root [`requirements.txt`](../requirements.txt) line 1: `-e ./TestModules`.
 - Public surface is `ObjectRemover` plus four per-domain Facades (`DepthMappingFacade`, `ImageSegmentationFacade`, `ImageInpaintingFacade`, `Reconstruction3DFacade`) and their Strategy ABCs — all re-exported from [`TestModules/src/__init__.py`](../TestModules/src/__init__.py).
 - `ObjectRemover.remove_object` orchestrates depth mapping → adapter → router → SAM → mask refinement → hybrid inpainting → BGRA cutout composition.
-- `Reconstruction3DFacade` is a separate, optional surface for image-to-3D (GLB). It **defaults** to local **OpenLRM** (`OpenLrmReconstructionStrategy`); **Trellis 2** via `gradio_client` is available when that strategy is injected. It is **not** invoked by `ObjectRemover` or by the HTTP endpoints today.
+- `Reconstruction3DFacade` is a separate, optional surface for image-to-3D (GLB). By default it uses **TripoSR** (`TriposrReconstructionStrategy`); other strategies (OpenLRM, Trellis, etc.) can be injected. It is **not** invoked by `ObjectRemover` or by the `/images/*` HTTP endpoints today.
 - See [ai-pipeline/](ai-pipeline/README.md) for details.
 
 ## Cross-tier contracts
 
-Two HTTP endpoints, both under `/images`:
+HTTP endpoints (MVP):
 
 | Endpoint | Request | Response |
 |---|---|---|
 | `POST /images/upload` | `multipart/form-data` with `file` | `ImageUploadResponse` (`image_id`, `original_filename`, `stored_path`) |
 | `POST /images/click` | `ClickRequest` (`image_id`, `x`, `y`, optional `options`) | `ClickResultResponse` (`background_b64`, `cutout_b64`, `format`) |
+| `POST /objects/test-3d` | `{"uid": "..."}` | raw GLB bytes (`model/gltf-binary`) |
 
 Schemas in [`fastApi-app/schemas/image.py`](../fastApi-app/schemas/image.py); frontend mirrors them in [`react-front/src/types/api.ts`](../react-front/src/types/api.ts).
 

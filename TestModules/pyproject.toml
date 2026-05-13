@@ -8,16 +8,19 @@ version = "0.1.0"
 description = "Object removal AI pipeline (depth, segmentation, inpainting, 3D reconstruction)."
 requires-python = ">=3.11"
 dependencies = [
+    "einops>=0.7.0",
     "gradio_client>=1.4",
     "huggingface_hub>=0.20",
     "imageio[ffmpeg]>=2.31",
     "kiui",
     "numpy",
+    "omegaconf>=2.3.0",
     "opencv-python",
     "Pillow",
     "PyMCubes>=0.1.4",
     "rembg",
     "torch>=2.1",
+    "torchmcubes @ git+https://github.com/tatsy/torchmcubes.git",
     "torchvision>=0.16",
     "transformers>=4.36",
     "trimesh>=4.0.0",
@@ -50,3 +53,9 @@ packages = [
 
 [tool.setuptools.package-dir]
 avroom_object_removal = "src"
+
+[tool.setuptools.package-data]
+"avroom_object_removal.ai_engines.reconstruction_3d._backends" = [
+    "triposr/tsr/**/*.py",
+    "triposr/LICENSE.TripoSR",
+]

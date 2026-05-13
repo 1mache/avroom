@@ -77,6 +77,30 @@ export async function clickImage(payload: ClickRequest): Promise<ClickResultResp
 
 There are none. Each call is fire-once. If you add auth or retry behavior, wrap it inside `handleJsonResponse` rather than at every call site.
 
+## `generate3DModel`
+
+```39:54:react-front/src/api/images.ts
+export async function generate3DModel(uid: string): Promise<ArrayBuffer> {
+  const response = await fetch(`${API_BASE_URL}/objects/test-3d`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ uid }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed with status ${response.status}`);
+  }
+
+  return response.arrayBuffer();
+}
+```
+
+- This endpoint returns **raw GLB bytes**, not JSON (so it bypasses `handleJsonResponse`).
+- The backend expects a cutout stored at `{uid}_cutout.png` (written by `POST /images/click`). See [backend/api-endpoints.md](../backend/api-endpoints.md#post-objectstest-3d).
+
 ## Response handling in `MainPage`
 
 ```99:103:react-front/src/components/layout/MainPage.tsx

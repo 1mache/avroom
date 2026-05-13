@@ -57,14 +57,14 @@ This is why upload doesn't need to remember the extension — the click can find
 
 ## Debug PNG
 
-Every click writes a copy of the input with a red dot drawn at the click coordinates to `{base_dir}/tmp/{image_id}_debug.png`:
+Every click writes a copy of the input with a red dot drawn at the click coordinates to `{base_dir}/point/{image_id}_debug.png`:
 
-```32:50:fastApi-app/core/image_processing.py
+```33:51:fastApi-app/core/image_processing.py
 def _create_debug_click_image(source_image: Image.Image, x: int, y: int, base_dir: Path, image_id: str):
     """Create RGB debug image with a marker drawn at click coordinates."""
 
     RADIUS = 6
-    DEBUG_DIR_SUBPATH = "tmp"
+    DEBUG_DIR_SUBPATH = "point"
 
     debug_image: Image.Image = source_image.convert("RGB")
     draw = ImageDraw.Draw(debug_image)

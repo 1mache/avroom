@@ -12,7 +12,7 @@ From [`react-front/package.json`](../../react-front/package.json):
 | Module type | ESM (`"type": "module"`) |
 | Scripts | `dev` (vite), `build` (`tsc && vite build`), `preview` |
 
-There are no other dependencies — no react-router, redux/zustand, axios, tailwind, MUI, etc.
+Runtime deps are intentionally minimal: React + Three.js only. There is no router, no state library, no HTTP client, and no styling framework.
 
 ## TypeScript config
 

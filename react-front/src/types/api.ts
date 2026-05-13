@@ -23,3 +23,10 @@ export interface ClickResultResponse {
   format: string;
 }
 
+export interface UidCacheStatusResponse {
+  uid: string;
+  has_background: boolean;
+  has_cutout: boolean;
+  has_3d: boolean;
+}
+

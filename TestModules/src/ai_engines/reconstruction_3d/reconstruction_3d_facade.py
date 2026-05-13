@@ -27,7 +27,7 @@ class Reconstruction3DFacade:
     """
 
     def __init__(self, strategy: Reconstruction3DStrategy | None = None) -> None:
-        self._strategy: Reconstruction3DStrategy = strategy or TriposrReconstructionStrategy()
+        self._strategy: Reconstruction3DStrategy = strategy or TrellisReconstructionStrategy()
         logger.info(
             f"Reconstruction3DFacade ready (strategy={type(self._strategy).__name__})"
         )

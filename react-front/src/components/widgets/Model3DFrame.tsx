@@ -217,8 +217,9 @@ export const Model3DFrame: React.FC<Props> = ({
           backgroundImage
             ? {
                 backgroundImage: `url(${backgroundImage})`,
-                backgroundSize: "cover",
+                backgroundSize: "contain",
                 backgroundPosition: "center",
+                backgroundRepeat: "no-repeat",
               }
             : undefined
         }

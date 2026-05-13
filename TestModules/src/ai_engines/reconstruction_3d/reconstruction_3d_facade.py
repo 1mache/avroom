@@ -63,7 +63,7 @@ class Reconstruction3DFacade:
             )
         except Exception as main_exc:
             logger.warning(
-                "Primary strategy %s failed (%s); trying fallback %s.",
+                "Primary strategy %s failed (%s); \ntrying fallback %s.",
                 type(self._strategy).__name__,
                 main_exc,
                 type(self._fallback_strategy).__name__,

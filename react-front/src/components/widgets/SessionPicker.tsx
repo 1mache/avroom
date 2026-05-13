@@ -19,7 +19,7 @@ export const SessionPicker: React.FC<SessionPickerProps> = ({ onSessionSelect })
     getSessions()
       .then(async (uids) => {
         if (cancelled) return;
-        // Fetch cache status for each uid in parallel to show result indicators
+
         const metas = await Promise.all(
           uids.map(async (uid): Promise<SessionMeta> => {
             try {
@@ -30,10 +30,15 @@ export const SessionPicker: React.FC<SessionPickerProps> = ({ onSessionSelect })
             }
           }),
         );
-        if (!cancelled) setSessions(metas);
+
+        if (!cancelled) {
+          setSessions(metas);
+        }
       })
       .catch(() => {
-        if (!cancelled) setSessions([]);
+        if (!cancelled) {
+          setSessions([]);
+        }
       });
 
     return () => {
@@ -43,7 +48,7 @@ export const SessionPicker: React.FC<SessionPickerProps> = ({ onSessionSelect })
 
   return (
     <div className="session-picker">
-      <span className="session-picker-label">Sessions</span>
+      <span className="session-picker-label">Previous sessions</span>
       <div className="session-picker-strip">
         {sessions === null ? (
           <>
@@ -63,7 +68,7 @@ export const SessionPicker: React.FC<SessionPickerProps> = ({ onSessionSelect })
               onClick={() => onSessionSelect(uid)}
             >
               <span className={`session-chip-dot${hasResults ? " has-results" : ""}`} />
-              {`…${uid.slice(-8)}`}
+              {uid.length > 8 ? `${uid.slice(0, 8)}...` : uid}
             </button>
           ))
         )}

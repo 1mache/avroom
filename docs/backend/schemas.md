@@ -45,6 +45,17 @@ Returned by `POST /images/click`.
 | `cutout_b64` | `str` | Base64-encoded **BGRA** PNG of the clicked object on a transparent background. |
 | `format` | `str` | Always `"png"` today; the field exists in case the pipeline gains other encodings. |
 
+## `UidCacheStatusResponse`
+
+Returned by `GET /images/{uid}/cache`.
+
+| Field | Type | Description |
+|---|---|---|
+| `uid` | `str` | The requested UID. |
+| `has_background` | `bool` | `{uid}_background.png` exists on disk. |
+| `has_cutout` | `bool` | `{uid}_cutout.png` exists on disk. |
+| `has_3d` | `bool` | `{uid}.glb` exists in the 3D storage dir. |
+
 ## Frontend mirror
 
 The frontend re-declares these in TypeScript at [`react-front/src/types/api.ts`](../../react-front/src/types/api.ts). When you change a Pydantic model here, update that file as well — there is no codegen.

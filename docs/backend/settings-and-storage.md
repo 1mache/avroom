@@ -53,22 +53,47 @@ Because the deepest `pyproject.toml` walking up from `settings.py` is [`fastApi-
 
 > Caveat: a configured `IMAGE_STORAGE_DIR` is silently ignored if the path doesn't exist. There's no warning logged. If your override isn't picking up, check that the directory is created first.
 
+## Sessions file
+
+`get_sessions_file()` ([`settings.py`](../../fastApi-app/settings.py) lines 52–54) returns:
+
+```
+<image_storage_dir>/../sessions.json   →   fastApi-app/tmp/sessions.json
+```
+
+`register_uid(uid)` ([`settings.py`](../../fastApi-app/settings.py) lines 57–74) appends a UID string to that file. The file contains a plain JSON array of UUID strings:
+
+```json
+["f5e0edc4-fe7a-48bf-bd76-d706d32b61c1", "a1b2c3d4-..."]
+```
+
+Every `POST /images/upload` calls `register_uid` after writing the image. `GET /images/sessions` reads and returns this array. The file is created on first write; if it doesn't exist yet, `GET /images/sessions` returns `[]`.
+
+## 3D model storage
+
+`get_3d_storage_dir()` ([`settings.py`](../../fastApi-app/settings.py) lines 47–49) returns `<project_root>/tmp/3d`. Generated GLB files are stored as `{uid}.glb` and served by `GET /objects/{uid}`.
+
 ## Storage layout at runtime
 
 ```
-fastApi-app/tmp/images/
-├── {image_id}.{ext}             - one per upload (jpg/png/...)
-├── {image_id}_background.png    - background result (written on click)
-├── {image_id}_cutout.png        - cutout result (written on click)
-└── point/
-    └── {image_id}_debug.png     - click-marker overlay
+fastApi-app/tmp/
+├── sessions.json                    - array of all registered UIDs
+├── images/
+│   ├── {image_id}.{ext}             - one per upload (jpg/png/...)
+│   ├── {image_id}_background.png    - background result (written on click)
+│   ├── {image_id}_cutout.png        - cutout result (written on click)
+│   └── point/
+│       └── {image_id}_debug.png     - click-marker overlay
+└── 3d/
+    └── {image_id}.glb               - 3D model (written by /objects/test-3d)
 ```
 
 - `{image_id}.{ext}` is written by `upload_image` — the suffix comes from the original filename or defaults to `.png` ([`api/routes.py`](../../fastApi-app/api/routes.py) lines 41–48).
 - `{image_id}_background.png` and `{image_id}_cutout.png` are written by `handle_click` on every click ([`api/routes.py`](../../fastApi-app/api/routes.py) lines 110–114).
 - `point/{image_id}_debug.png` is written by `_create_debug_click_image` on every click ([`core/image_processing.py`](../../fastApi-app/core/image_processing.py) lines 33–51).
+- `{image_id}.glb` is written by `generate_test_3d` ([`api/objects.py`](../../fastApi-app/api/objects.py) lines 43–103).
 
-Neither file is ever cleaned up by the service.
+No file is ever cleaned up by the service.
 
 ## What's not configurable
 

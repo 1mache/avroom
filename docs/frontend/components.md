@@ -1,18 +1,19 @@
 # Components
 
-There are three real components, all functional with hooks.
+There are five real components, all functional with hooks.
 
 ## `MainPage`
 
 [`react-front/src/components/layout/MainPage.tsx`](../../react-front/src/components/layout/MainPage.tsx)
 
-The screen-level orchestrator. Owns all state, all callbacks, and renders one `UploadFrame` plus two `ResultFrame`s (Background and Cutout) plus action buttons.
+The screen-level orchestrator. Owns all state, all callbacks, and renders a `SessionPicker`, one `UploadFrame`, two `ResultFrame`s (Background and Cutout), a `Model3DFrame`, and action buttons.
 
 **Responsibilities:**
 
-- Hold the picked file, the preview object URL, the `image_id` from the backend, the click positions (display + natural), and the result data URLs.
-- Talk to the backend via `uploadImage` / `clickImage` from [`api/images.ts`](../../react-front/src/api/images.ts).
-- Track loading flags (`isUploading`, `isProcessing`) and show error text under the buttons.
+- Hold the picked file, the preview object URL, the `image_id` from the backend, the click positions (display + natural + normalized), the result data URLs, and 3D model bytes.
+- Talk to the backend via `uploadImage` / `clickImage` / `getSessions` / `getUidCacheStatus` from [`api/images.ts`](../../react-front/src/api/images.ts).
+- Restore prior session state via `handleSessionSelect` when the user picks a session from `SessionPicker`.
+- Track loading flags (`isUploading`, `isProcessing`, `isGenerating3D`) and show error text under the buttons.
 - Revoke object URLs on unmount and on file replacement to avoid leaks.
 
 **Render tree:**
@@ -21,20 +22,24 @@ The screen-level orchestrator. Owns all state, all callbacks, and renders one `U
 flowchart TD
     Page["div.page"]
     Header["header.page-header"]
+    SessionPicker["SessionPicker"]
     Top["section.top-frame-section"]
     Bottom["section.bottom-frame-section"]
     Upload["UploadFrame"]
     Bg["ResultFrame (Background)"]
     Co["ResultFrame (Cutout)"]
     Actions["div.action-column<br/>Upload + Run buttons"]
+    Model3D["Model3DFrame"]
 
     Page --> Header
+    Page --> SessionPicker
     Page --> Top
     Page --> Bottom
     Top --> Upload
     Bottom --> Bg
     Bottom --> Actions
     Bottom --> Co
+    Page --> Model3D
 ```
 
 **Buttons:**
@@ -123,3 +128,48 @@ export const ResultFrame: React.FC<ResultFrameProps> = ({ title, imageSrc }) => 
 ```
 
 `MainPage` renders two of these, one for Background and one for Cutout, fed by data URLs assembled from the base64 fields of `ClickResultResponse`.
+
+## `SessionPicker`
+
+[`react-front/src/components/widgets/SessionPicker.tsx`](../../react-front/src/components/widgets/SessionPicker.tsx)
+
+Displays the list of past sessions so the user can restore the app to a prior state.
+
+**Props:**
+
+| Prop | Type | Notes |
+|---|---|---|
+| `onSessionSelect` | `(uid: string) => void` | Called when the user clicks a session entry. |
+
+**Internal state:**
+
+```typescript
+interface SessionMeta {
+  uid: string;
+  hasResults: boolean;
+}
+sessions: SessionMeta[] | null
+```
+
+On mount the component calls `getSessions()` to get all UIDs, then fans out `getUidCacheStatus(uid)` in parallel for each, setting `hasResults = has_background || has_cutout`. Sessions without results are still shown (the user can re-run segmentation).
+
+**Session restore in `MainPage.handleSessionSelect`** ([`MainPage.tsx`](../../react-front/src/components/layout/MainPage.tsx) lines 65–84):
+
+1. Sets `imageId` to the selected UID.
+2. Clears `uploadedFile` and all click positions.
+3. Points `uploadedImageUrl` at `GET /images/{uid}/original`.
+4. Calls `getUidCacheStatus(uid)` — if background/cutout exist, sets `backgroundSrc` / `cutoutSrc` to the corresponding `GET /images/{uid}/background|cutout` URLs so results render immediately.
+
+## `Model3DFrame`
+
+[`react-front/src/components/widgets/Model3DFrame.tsx`](../../react-front/src/components/widgets/Model3DFrame.tsx)
+
+Three.js viewer for the generated GLB model. Renders a canvas with a three-point lighting rig and `OrbitControls`. A `ResizeObserver` keeps the canvas sized to its container.
+
+**Props:**
+
+| Prop | Type | Notes |
+|---|---|---|
+| `glbData` | `ArrayBuffer \| null` | Raw GLB bytes from `generate3DModel`. Null renders a placeholder. |
+| `backgroundImage` | `string \| null` | Optional background image URL (unused visually, reserved). |
+| `clickNormalizedPos` | `NormalizedPos \| null` | Normalized `(x, y)` used to offset the camera view toward the clicked object. |

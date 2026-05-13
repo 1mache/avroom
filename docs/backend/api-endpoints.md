@@ -8,9 +8,15 @@ Image/object routes live in:
 | Method | Path | Request | Response | Handler |
 |---|---|---|---|---|
 | `GET` | `/` | — | `{"status": "ok", "service": "image-processing"}` | `read_root` in [`main.py`](../../fastApi-app/main.py) |
+| `GET` | `/images/sessions` | — | `list[str]` (UIDs) | `get_sessions` in [`api/routes.py`](../../fastApi-app/api/routes.py) |
 | `POST` | `/images/upload` | multipart/form-data with `file` | [`ImageUploadResponse`](schemas.md#imageuploadresponse) | `upload_image` in [`api/routes.py`](../../fastApi-app/api/routes.py) |
 | `POST` | `/images/click` | JSON [`ClickRequest`](schemas.md#clickrequest) | [`ClickResultResponse`](schemas.md#clickresultresponse) | `handle_click` in [`api/routes.py`](../../fastApi-app/api/routes.py) |
+| `GET` | `/images/{uid}/cache` | path param `uid` | [`UidCacheStatusResponse`](schemas.md#uidcachestatusresponse) | `get_uid_cache_status` in [`api/routes.py`](../../fastApi-app/api/routes.py) |
+| `GET` | `/images/{uid}/background` | path param `uid` | PNG file (`image/png`) | `get_background` in [`api/routes.py`](../../fastApi-app/api/routes.py) |
+| `GET` | `/images/{uid}/cutout` | path param `uid` | PNG file (`image/png`) | `get_cutout` in [`api/routes.py`](../../fastApi-app/api/routes.py) |
+| `GET` | `/images/{uid}/original` | path param `uid` | image file (original format) | `get_original_image` in [`api/routes.py`](../../fastApi-app/api/routes.py) |
 | `POST` | `/objects/test-3d` | JSON `{"uid": "..."}` | raw GLB bytes (`model/gltf-binary`) | `generate_test_3d` in [`api/objects.py`](../../fastApi-app/api/objects.py) |
+| `GET` | `/objects/{uid}` | path param `uid` | GLB file (`model/gltf-binary`) | `get_3d_model` in [`api/objects.py`](../../fastApi-app/api/objects.py) |
 
 ## `POST /images/upload`
 
@@ -43,6 +49,7 @@ Defined at [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) lines 
 **Notes:**
 
 - The handler does **not** validate that the bytes are actually an image — that happens later, on the click request, when PIL tries to decode them.
+- After writing the file, `register_uid(image_id)` appends the UID to `sessions.json` (see [settings-and-storage.md](settings-and-storage.md#sessions-file)).
 - There is no size limit, no MIME check, no auth. This is a development-grade endpoint.
 - Upload failures are returned as HTTP 500 with `detail="Upload failed: ..."` ([`api/routes.py`](../../fastApi-app/api/routes.py) lines 53–59).
 
@@ -106,6 +113,57 @@ Defined at [`fastApi-app/api/objects.py`](../../fastApi-app/api/objects.py) line
 |---|---:|---|
 | `{uid}_cutout.png` missing | 404 | [`api/objects.py`](../../fastApi-app/api/objects.py) lines 71–79 |
 | 3D generation fails | 500 | [`api/objects.py`](../../fastApi-app/api/objects.py) lines 87–89 |
+
+## `GET /images/sessions`
+
+Defined at [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) lines 28–37.
+
+Returns the list of all known UIDs from `sessions.json` (see [settings-and-storage.md](settings-and-storage.md#sessions-file)).
+
+**Response example:**
+
+```json
+["f5e0edc4-fe7a-48bf-bd76-d706d32b61c1", "a1b2c3d4-..."]
+```
+
+Returns `[]` if the file does not exist yet.
+
+## `GET /images/{uid}/cache`
+
+Defined at [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) lines 153–171.
+
+Checks which output artifacts exist on disk for the given UID without serving them.
+
+**Response:** [`UidCacheStatusResponse`](schemas.md#uidcachestatusresponse).
+
+| Condition | HTTP |
+|---|---|
+| UID has no artifacts at all | 200 with all flags `false` |
+| UID unknown | 200 with all flags `false` (no 404) |
+
+## `GET /images/{uid}/background`
+
+Defined at [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) lines 174–183.
+
+Serves `{uid}_background.png` from the image storage dir. Returns 404 if not found.
+
+## `GET /images/{uid}/cutout`
+
+Defined at [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) lines 186–195.
+
+Serves `{uid}_cutout.png`. Returns 404 if not found.
+
+## `GET /images/{uid}/original`
+
+Defined at [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) lines 198–211.
+
+Serves the original uploaded file (any extension). Scans the storage dir for `{uid}.*`. Returns 404 if not found.
+
+## `GET /objects/{uid}`
+
+Defined at [`fastApi-app/api/objects.py`](../../fastApi-app/api/objects.py) lines 106–119.
+
+Serves `{uid}.glb` from the 3D storage dir. Returns 404 if not found.
 
 ## `GET /`
 

@@ -9,19 +9,23 @@ From [`react-front/src/components/layout/MainPage.tsx`](../../react-front/src/co
 | Variable | Type | Set by | Used for |
 |---|---|---|---|
 | `uploadedFile` | `File \| null` | `handleFileSelected` | Source for `URL.createObjectURL` and the multipart upload. |
-| `uploadedImageUrl` | `string \| null` | `handleFileSelected` | `<img src>` for live preview. Revoked on replacement / unmount. |
-| `imageId` | `string \| null` | response of `uploadImage` | Sent on every click request. |
+| `uploadedImageUrl` | `string \| null` | `handleFileSelected` / `handleSessionSelect` | `<img src>` for live preview. Revoked on replacement / unmount. |
+| `imageId` | `string \| null` | response of `uploadImage` / `handleSessionSelect` | Sent on every click request. |
 | `clickPosition` | `{ x; y } \| null` | `handleImageClick` (display coords) | Position of the red dot overlay. |
 | `naturalClickPos` | `{ x; y } \| null` | `handleImageClick` (natural coords) | Sent in `ClickRequest`. |
-| `backgroundSrc` | `string \| null` | response of `clickImage` | Data URL for the Background `ResultFrame`. |
-| `cutoutSrc` | `string \| null` | response of `clickImage` | Data URL for the Cutout `ResultFrame`. |
+| `normalizedClickPos` | `{ x; y } \| null` | `handleImageClick` (normalized 0–1 coords) | Passed to `Model3DFrame` for camera offset. |
+| `backgroundSrc` | `string \| null` | response of `clickImage` / `handleSessionSelect` | Image URL for the Background `ResultFrame`. |
+| `cutoutSrc` | `string \| null` | response of `clickImage` / `handleSessionSelect` | Image URL for the Cutout `ResultFrame`. |
 | `isUploading` | `boolean` | `handleUpload` | Disables Upload button. |
 | `isProcessing` | `boolean` | `handleRun` | Disables Run button. |
-| `error` | `string \| null` | both async handlers | Shown under the action buttons. |
+| `isGenerating3D` | `boolean` | `handleGenerate3D` | Disables the Generate 3D button. |
+| `glbData` | `ArrayBuffer \| null` | response of `generate3DModel` | Raw GLB bytes fed to `Model3DFrame`. |
+| `error` | `string \| null` | all async handlers | Shown under the action buttons. |
 
 ## State invariants
 
-- Picking a new file resets `imageId`, `clickPosition`, `naturalClickPos`, `backgroundSrc`, `cutoutSrc`, and `error` ([`MainPage.tsx`](../../react-front/src/components/layout/MainPage.tsx) lines 34–51). The user must re-upload after each new pick.
+- Picking a new file resets `imageId`, `clickPosition`, `naturalClickPos`, `normalizedClickPos`, `backgroundSrc`, `cutoutSrc`, `glbData`, and `error` ([`MainPage.tsx`](../../react-front/src/components/layout/MainPage.tsx) lines 34–51). The user must re-upload after each new pick.
+- Selecting a session via `SessionPicker` sets `imageId` and `uploadedImageUrl` from the server, clears click state, and conditionally restores `backgroundSrc` / `cutoutSrc` if cached artifacts exist ([`MainPage.tsx`](../../react-front/src/components/layout/MainPage.tsx) lines 65–84).
 - The Run button is disabled until both `imageId` (server has the file) and `clickPosition` (the user has actually clicked) exist.
 - `useEffect` cleanup revokes the latest object URL on unmount ([`MainPage.tsx`](../../react-front/src/components/layout/MainPage.tsx) lines 26–32).
 
@@ -36,7 +40,7 @@ From [`react-front/src/components/layout/MainPage.tsx`](../../react-front/src/co
 
 All API types live in [`react-front/src/types/api.ts`](../../react-front/src/types/api.ts). They are the TypeScript mirror of the Pydantic models in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.py).
 
-```1:24:react-front/src/types/api.ts
+```1:31:react-front/src/types/api.ts
 export interface ImageUploadResponse {
   image_id: string;
   original_filename?: string | null;
@@ -60,6 +64,13 @@ export interface ClickResultResponse {
   background_b64: string;
   cutout_b64: string;
   format: string;
+}
+
+export interface UidCacheStatusResponse {
+  uid: string;
+  has_background: boolean;
+  has_cutout: boolean;
+  has_3d: boolean;
 }
 ```
 

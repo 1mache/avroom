@@ -28,8 +28,10 @@ class Reconstruction3DFacade:
 
     def __init__(self, strategy: Reconstruction3DStrategy | None = None) -> None:
         self._strategy: Reconstruction3DStrategy = strategy or TrellisReconstructionStrategy()
+        self._fallback_strategy: Reconstruction3DStrategy = TriposrReconstructionStrategy()
         logger.info(
-            f"Reconstruction3DFacade ready (strategy={type(self._strategy).__name__})"
+            f"Reconstruction3DFacade ready (strategy={type(self._strategy).__name__}, "
+            f"fallback={type(self._fallback_strategy).__name__})"
         )
 
     @property
@@ -45,11 +47,34 @@ class Reconstruction3DFacade:
         output_path: Path | None = None,
         seed: int = 0,
     ) -> bytes | Path | BinaryIO:
-        """Generate a GLB 3D model from ``image`` via the active strategy."""
-        return self._strategy.generate(
-            image,
-            quality=quality,
-            output=output,
-            output_path=output_path,
-            seed=seed,
-        )
+        """Generate a GLB 3D model from ``image`` via the active strategy.
+
+        If the primary strategy raises, the fallback strategy is tried with
+        identical arguments. If the fallback also raises, the original
+        exception from the primary strategy is re-raised.
+        """
+        try:
+            return self._strategy.generate(
+                image,
+                quality=quality,
+                output=output,
+                output_path=output_path,
+                seed=seed,
+            )
+        except Exception as main_exc:
+            logger.warning(
+                "Primary strategy %s failed (%s); trying fallback %s.",
+                type(self._strategy).__name__,
+                main_exc,
+                type(self._fallback_strategy).__name__,
+            )
+            try:
+                return self._fallback_strategy.generate(
+                    image,
+                    quality=quality,
+                    output=output,
+                    output_path=output_path,
+                    seed=seed,
+                )
+            except Exception:
+                raise main_exc

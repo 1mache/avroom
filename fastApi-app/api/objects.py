@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from avroom_object_removal.ai_engines.reconstruction_3d import (
@@ -89,10 +89,29 @@ async def generate_test_3d(request: Test3DRequest) -> Response:
         raise HTTPException(status_code=500, detail=f"3D generation failed: {exc}") from exc
 
     assert isinstance(glb_bytes, bytes)
-    logger.info("test-3d complete: uid=%s glb_bytes=%d", request.uid, len(glb_bytes))
+
+    glb_path = get_image_storage_dir() / f"{request.uid}.glb"
+    glb_path.write_bytes(glb_bytes)
+    logger.info("test-3d complete: uid=%s glb_bytes=%d saved=%s", request.uid, len(glb_bytes), glb_path)
 
     return Response(
         content=glb_bytes,
         media_type="model/gltf-binary",
         headers={"Content-Disposition": f'inline; filename="{request.uid}.glb"'},
+    )
+
+
+@router.get("/{uid}")
+async def get_3d_model(uid: str) -> FileResponse:
+    """Serve the cached GLB 3D model for the given UID."""
+    logger.info("3D model requested: uid=%s", uid)
+    path = get_image_storage_dir() / f"{uid}.glb"
+    if not path.exists():
+        logger.warning("3D model not found: uid=%s path=%s", uid, path)
+        raise HTTPException(status_code=404, detail="3D model not found")
+    logger.info("3D model served: uid=%s path=%s", uid, path)
+    return FileResponse(
+        path,
+        media_type="model/gltf-binary",
+        headers={"Content-Disposition": f'inline; filename="{uid}.glb"'},
     )

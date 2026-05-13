@@ -6,7 +6,10 @@ import uuid
 import logging
 import base64
 
+import json
+
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from pathlib import Path
 
 from core.image_processing import process_click_on_image
@@ -14,11 +17,24 @@ from schemas.image import (
     ClickRequest,
     ClickResultResponse,
     ImageUploadResponse,
+    UidCacheStatusResponse,
 )
-from settings import get_image_storage_dir
+from settings import get_image_storage_dir, get_sessions_file, register_uid
 
 router = APIRouter(prefix="/images", tags=["images"])
 logger = logging.getLogger(__name__)
+
+
+@router.get("/sessions")
+async def get_sessions() -> list[str]:
+    """Return all image UIDs registered via upload."""
+    sessions_file = get_sessions_file()
+    if not sessions_file.exists():
+        return []
+    try:
+        return json.loads(sessions_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError):
+        return []
 
 
 @router.post("/upload", response_model=ImageUploadResponse)
@@ -63,6 +79,8 @@ async def upload_image(
         image_path,
         len(file_bytes),
     )
+
+    register_uid(image_id)
 
     return ImageUploadResponse(
         image_id=image_id,
@@ -130,4 +148,49 @@ async def handle_click(request: ClickRequest) -> ClickResultResponse:
         cutout_b64=cutout_b64,
         format=image_format,
     )
+
+
+@router.get("/{uid}/cache", response_model=UidCacheStatusResponse)
+async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
+    """Return which processed artifacts are cached on disk for the given UID."""
+    logger.info("Cache status requested: uid=%s", uid)
+    storage_dir = get_image_storage_dir()
+    status = UidCacheStatusResponse(
+        uid=uid,
+        has_background=(storage_dir / f"{uid}_background.png").exists(),
+        has_cutout=(storage_dir / f"{uid}_cutout.png").exists(),
+        has_3d=(storage_dir / f"{uid}.glb").exists(),
+    )
+    logger.info(
+        "Cache status: uid=%s background=%s cutout=%s 3d=%s",
+        uid,
+        status.has_background,
+        status.has_cutout,
+        status.has_3d,
+    )
+    return status
+
+
+@router.get("/{uid}/background")
+async def get_background(uid: str) -> FileResponse:
+    """Serve the cached background PNG for the given UID."""
+    logger.info("Background requested: uid=%s", uid)
+    path = get_image_storage_dir() / f"{uid}_background.png"
+    if not path.exists():
+        logger.warning("Background not found: uid=%s path=%s", uid, path)
+        raise HTTPException(status_code=404, detail="Background not found")
+    logger.info("Background served: uid=%s path=%s", uid, path)
+    return FileResponse(path, media_type="image/png")
+
+
+@router.get("/{uid}/cutout")
+async def get_cutout(uid: str) -> FileResponse:
+    """Serve the cached cutout PNG for the given UID."""
+    logger.info("Cutout requested: uid=%s", uid)
+    path = get_image_storage_dir() / f"{uid}_cutout.png"
+    if not path.exists():
+        logger.warning("Cutout not found: uid=%s path=%s", uid, path)
+        raise HTTPException(status_code=404, detail="Cutout not found")
+    logger.info("Cutout served: uid=%s path=%s", uid, path)
+    return FileResponse(path, media_type="image/png")
 

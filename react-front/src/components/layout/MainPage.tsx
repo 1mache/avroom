@@ -234,6 +234,31 @@ export const MainPage: React.FC = () => {
 
   return (
     <div className="page">
+      {error ? (
+        <div className="error-modal-backdrop" role="presentation" onClick={() => setError(null)}>
+          <div
+            className="error-modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="error-modal-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="error-modal-header">
+              <h2 id="error-modal-title">Request error</h2>
+              <button
+                type="button"
+                className="error-modal-close"
+                onClick={() => setError(null)}
+                aria-label="Close error dialog"
+              >
+                Close
+              </button>
+            </div>
+            <pre className="error-modal-body">{error}</pre>
+          </div>
+        </div>
+      ) : null}
+
       <input
         ref={uploadOtherInputRef}
         type="file"
@@ -250,7 +275,7 @@ export const MainPage: React.FC = () => {
 
         <div className="brand-copy">
           <h1>Avroom demo</h1>
-          <p className="page-subtitle">Object segmentation and 3d recnstruction</p>
+          <p className="page-subtitle">Object segmentation and 3d reconstruction</p>
         </div>
 
         <div className="status-pulse">{sessionStatus}</div>
@@ -341,8 +366,6 @@ export const MainPage: React.FC = () => {
             >
               {isProcessing ? "Running..." : "Cut Out"}
             </button>
-
-            {error ? <p className="error-text">{error}</p> : null}
           </div>
         </section>
       </main>

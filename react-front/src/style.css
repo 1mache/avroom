@@ -381,11 +381,66 @@ input {
   transform: none;
 }
 
-.error-text {
+.error-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(9, 24, 31, 0.5);
+  backdrop-filter: blur(8px);
+}
+
+.error-modal {
+  width: min(720px, 100%);
+  max-height: min(80vh, 720px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-md);
+  padding: 22px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(194, 65, 60, 0.22);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(250, 245, 244, 0.96));
+  box-shadow: 0 24px 60px rgba(9, 24, 31, 0.24);
+}
+
+.error-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--gap-sm);
+}
+
+.error-modal-header h2 {
   margin: 0;
-  font-size: var(--font-xs);
   color: var(--danger);
+  font-size: 1.15rem;
+}
+
+.error-modal-close {
+  padding: 0.6rem 1rem;
+  border: 1px solid rgba(16, 35, 67, 0.12);
+  border-radius: var(--radius-pill);
+  background: rgba(16, 35, 67, 0.06);
+  color: var(--ink-strong);
   font-weight: 700;
+  cursor: pointer;
+}
+
+.error-modal-body {
+  margin: 0;
+  overflow: auto;
+  padding: 16px;
+  border-radius: var(--radius-sm);
+  background: rgba(16, 35, 67, 0.06);
+  color: var(--ink-strong);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .model-3d-frame {

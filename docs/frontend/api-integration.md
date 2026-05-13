@@ -73,6 +73,44 @@ export async function clickImage(payload: ClickRequest): Promise<ClickResultResp
 - JSON payload typed as [`ClickRequest`](../backend/schemas.md#clickrequest).
 - The TS types in [`react-front/src/types/api.ts`](../../react-front/src/types/api.ts) mirror the backend Pydantic models — see [state-and-types.md](state-and-types.md).
 
+## `getSessions`
+
+```56:59:react-front/src/api/images.ts
+export async function getSessions(): Promise<string[]> {
+  const response = await fetch(`${API_BASE_URL}/images/sessions`);
+  return handleJsonResponse<string[]>(response);
+}
+```
+
+Returns the array of UIDs from `sessions.json`. Empty array if none exist yet.
+
+## `getUidCacheStatus`
+
+```61:64:react-front/src/api/images.ts
+export async function getUidCacheStatus(uid: string): Promise<UidCacheStatusResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/${uid}/cache`);
+  return handleJsonResponse<UidCacheStatusResponse>(response);
+}
+```
+
+Checks which output files exist for a UID without downloading them. Used by `SessionPicker` and `handleSessionSelect`.
+
+## `fetchCached3DModel`
+
+```67:75:react-front/src/api/images.ts
+export async function fetchCached3DModel(uid: string): Promise<ArrayBuffer | null> {
+  const response = await fetch(`${API_BASE_URL}/objects/${uid}`);
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Request failed with status ${response.status}`);
+  }
+  return response.arrayBuffer();
+}
+```
+
+Returns GLB bytes if the model exists, `null` on 404. Throws on other errors.
+
 ## Auth, retries, timeouts
 
 There are none. Each call is fire-once. If you add auth or retry behavior, wrap it inside `handleJsonResponse` rather than at every call site.

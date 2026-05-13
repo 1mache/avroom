@@ -62,6 +62,47 @@ sequenceDiagram
 - **Backend returns non-2xx** — `handleJsonResponse` throws with the response text; the catch block surfaces it via `setError`.
 - **File replaced before re-uploading** — all derived state is cleared, including the previous `imageId`. The Run button stays disabled until a new upload completes.
 
+## Session restore flow
+
+A parallel path: the user picks a prior session from the `SessionPicker` sidebar instead of uploading a new file.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant SP as SessionPicker
+    participant MP as MainPage
+    participant API as "api/images.ts"
+    participant Backend as "FastAPI backend"
+
+    SP->>API: getSessions()
+    API->>Backend: GET /images/sessions
+    Backend-->>API: ["uid1","uid2",...]
+    API-->>SP: string[]
+    SP->>API: getUidCacheStatus(uid) x N (parallel)
+    API->>Backend: GET /images/{uid}/cache
+    Backend-->>API: UidCacheStatusResponse
+    SP->>SP: render list with hasResults flags
+
+    User->>SP: click session entry
+    SP->>MP: onSessionSelect(uid)
+    MP->>MP: setImageId, clear click state
+    MP->>MP: uploadedImageUrl = /images/uid/original
+    MP->>API: getUidCacheStatus(uid)
+    API->>Backend: GET /images/{uid}/cache
+    Backend-->>API: UidCacheStatusResponse
+    MP->>MP: if has_background -> backgroundSrc = /images/uid/background
+    MP->>MP: if has_cutout -> cutoutSrc = /images/uid/cutout
+```
+
+| Step | Code |
+|---|---|
+| `SessionPicker` mounts, fetches sessions | [`SessionPicker.tsx`](../../react-front/src/components/widgets/SessionPicker.tsx) lines 16–42 |
+| Parallel cache status checks | [`SessionPicker.tsx`](../../react-front/src/components/widgets/SessionPicker.tsx) lines 23–31 |
+| User clicks session → `handleSessionSelect` | [`MainPage.tsx`](../../react-front/src/components/layout/MainPage.tsx) lines 65–84 |
+| Conditional background/cutout restore | [`MainPage.tsx`](../../react-front/src/components/layout/MainPage.tsx) lines 77–83 |
+
+After session restore the user can click the image and run segmentation again — the existing `imageId` is already set so the Run button becomes available once a click is registered.
+
 ## What the UI deliberately does not do
 
 - No drag-and-drop file pick (only the `<input>`).

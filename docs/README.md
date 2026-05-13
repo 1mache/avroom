@@ -6,9 +6,13 @@ Welcome to the Avroom architecture documentation. These docs describe the **curr
 
 What changed in this refresh:
 
-- Backend: documented new `POST /objects/test-3d` and the `/objects` router, and aligned endpoint behavior with the current server.
-- Storage: updated default image storage directory to `fastApi-app/tmp/images/` and updated runtime file layout (background/cutout written on click; debug overlay under `point/`).
-- Frontend: documented `generate3DModel()` and updated stack notes to include Three.js.
+- Backend: added `GET /images/sessions`, `GET /images/{uid}/cache|background|cutout|original`, and `GET /objects/{uid}` to `api-endpoints.md`.
+- Backend: documented `sessions.json`, `get_sessions_file()`, `register_uid()`, and `get_3d_storage_dir()` in `settings-and-storage.md`; updated storage layout tree.
+- Backend: added `UidCacheStatusResponse` to `schemas.md`.
+- Frontend: documented `SessionPicker` and `Model3DFrame` components in `components.md`.
+- Frontend: added `getSessions`, `getUidCacheStatus`, `fetchCached3DModel` to `api-integration.md`.
+- Frontend: added `normalizedClickPos`, `glbData`, `isGenerating3D` state and `UidCacheStatusResponse` type to `state-and-types.md`.
+- Frontend: added session restore sequence diagram to `user-flow.md`.
 
 If you change architecture, run the [`update-avroom-docs`](../.cursor/skills/update-avroom-docs/SKILL.md) skill to keep these files in sync with the code.
 

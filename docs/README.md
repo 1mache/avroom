@@ -6,9 +6,8 @@ Welcome to the Avroom architecture documentation. These docs describe the **curr
 
 What changed in this refresh:
 
-- Backend: documented new `POST /objects/test-3d` and the `/objects` router, and aligned endpoint behavior with the current server.
-- Storage: updated default image storage directory to `fastApi-app/tmp/images/` and updated runtime file layout (background/cutout written on click; debug overlay under `point/`).
-- Frontend: documented `generate3DModel()` and updated stack notes to include Three.js.
+- Segmentation: `predict_mask` / `get_mask_at_point` now returns `(expanded_mask, original_mask)` tuple; updated `conventions.md`, `ai-pipeline/ai-engines/contracts.md`, `segmentation/contracts.md`, `segmentation/components.md`.
+- Core flow: `ObjectRemover` uses `tight_mask` (SAM-dilated) for the inpaint path and `original_mask` (raw SAM) for the BGRA cutout composer; updated `data-flow.md` and `ai-pipeline/core/flow.md`.
 
 If you change architecture, run the [`update-avroom-docs`](../.cursor/skills/update-avroom-docs/SKILL.md) skill to keep these files in sync with the code.
 

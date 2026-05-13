@@ -59,7 +59,7 @@ class BoundaryVarianceRoutingStrategy(SegmentationRoutingStrategy):
 
         # Probe mask - tight, never broad, so we don't grab nearby objects.
         logger.info(f"Fetching probe mask at ({x}, {y}) for Boundary Analysis...")
-        probe_mask = self._segmentation.get_mask_at_point(
+        probe_mask, _ = self._segmentation.get_mask_at_point(
             adapted_depth, x, y, expand_pixels=0, use_broad_mask=False
         )
         if probe_mask.shape[:2] != (h, w):

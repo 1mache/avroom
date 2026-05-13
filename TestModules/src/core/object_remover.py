@@ -147,7 +147,7 @@ class ObjectRemover:
         # background objects. The post-mask uniform dilation handles small
         # edge misses.
         logger.info(f"Requesting TIGHT mask from SAM at ({x}, {y})...")
-        tight_mask = self.segmentation.get_mask_at_point(
+        tight_mask, original_mask = self.segmentation.get_mask_at_point(
             run_context["input_image"],
             x,
             y,
@@ -155,6 +155,7 @@ class ObjectRemover:
             use_broad_mask=run_context["use_broad_mask"],
         )
         tight_mask = _ensure_mask_hw(tight_mask, image.shape[:2])
+        original_mask = _ensure_mask_hw(original_mask, image.shape[:2])
         self.image_saver.save("tight_mask", tight_mask)
 
         logger.info("Generating debug tight mask overlay (Whitened Image, pre-refinement)...")
@@ -191,7 +192,7 @@ class ObjectRemover:
 
         cutout_bgra = BgraCutoutComposer.compose_original_overlap_bgra(
             original_bgr=image,
-            mask=tight_mask,
+            mask=original_mask,
         )
 
         return result_image, cutout_bgra

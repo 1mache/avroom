@@ -80,10 +80,10 @@ sequenceDiagram
 2. **Depth** — `DepthMappingFacade.map_depth(image)` (line 126), backed by `NearFarBlendedDepthMappingStrategy` (V2 + LiheYoung alpha-blend).
 3. **Adapt** — `SamImageAdapter.get_adapted_image(...)` (lines 130–134) caches per `(image_path, x, y)`.
 4. **Route** — `BoundaryVarianceRoutingStrategy.choose_input(...)` (lines 138–144) returns a context dict with `input_image`, `expand_pixels`, `use_broad_mask`, `sd_strength`.
-5. **Tight SAM mask** — `ImageSegmentationFacade.get_mask_at_point(...)` (lines 150–156), routed to `SamSegmentationStrategy.predict_mask`.
-6. **Uniform expand** — `MaskRefiner.expand_mask_uniform(radius=3)` (lines 167–170).
+5. **Tight SAM mask** — `ImageSegmentationFacade.get_mask_at_point(...)` (lines 150–158) returns `(tight_mask, original_mask)`. `tight_mask` is the SAM-side dilated output (used for inpainting); `original_mask` is the raw SAM prediction (used for the cutout).
+6. **Uniform expand** — `MaskRefiner.expand_mask_uniform(radius=3)` (lines 167–170) applied to `tight_mask`.
 7. **Hybrid inpaint** — `ImageInpaintingFacade.inpaint(image, mask, strength=...)` (lines 181–185), backed by `HybridInpaintingStrategy` (LaMa + optional SD).
-8. **Compose cutout** — `BgraCutoutComposer.compose_original_overlap_bgra(image, mask)` (lines 192–195).
+8. **Compose cutout** — `BgraCutoutComposer.compose_original_overlap_bgra(image, original_mask)` (lines 193–196) — uses the raw SAM mask for a tighter cutout boundary.
 
 See [ai-pipeline/core/README.md](ai-pipeline/core/README.md) for the pipeline execution walk.
 

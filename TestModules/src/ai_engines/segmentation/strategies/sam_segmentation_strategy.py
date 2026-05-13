@@ -125,7 +125,7 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         *,
         expand_pixels: int = 0,
         use_broad_mask: bool = False,
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray]:
         predictor = self._predictor
         predictor.set_image(image)
 
@@ -147,9 +147,12 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         # legacy code never actually switched indices on it, so we don't either.
         best_mask = masks[1]
 
+        original_mask = best_mask
         if expand_pixels > 0:
-            best_mask = self._mask_refiner.dilate_mask(best_mask, pixels=expand_pixels)
-            image_saver.save("dilated_mask.png", best_mask)
+            expanded_mask = self._mask_refiner.dilate_mask(best_mask, pixels=expand_pixels)
+            image_saver.save("dilated_mask.png", expanded_mask)
+        else:
+            expanded_mask = best_mask.copy()
 
-        image_saver.save("best_mask.png", best_mask)
-        return best_mask
+        image_saver.save("best_mask.png", expanded_mask)
+        return expanded_mask, original_mask

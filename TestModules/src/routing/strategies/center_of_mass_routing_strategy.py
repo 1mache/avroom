@@ -51,7 +51,7 @@ class CenterOfMassRoutingStrategy(SegmentationRoutingStrategy):
         logger.info(
             f"Router self-fetching PROBE mask at ({x}, {y}) for Center of Mass analysis..."
         )
-        probe_mask = self._segmentation.get_mask_at_point(
+        probe_mask, _ = self._segmentation.get_mask_at_point(
             adapted_depth, x, y, expand_pixels=0, use_broad_mask=True
         )
         if probe_mask.shape[:2] != (h, w):

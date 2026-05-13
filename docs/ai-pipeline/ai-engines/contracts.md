@@ -11,7 +11,7 @@ Replacing a strategy means implementing the matching ABC and passing an instance
 ## Outputs into core
 
 - Depth: single-channel uint8 depth map.
-- Segmentation: 2D mask aligned with image dimensions.
+- Segmentation: `(expanded_mask, original_mask)` tuple of 2D masks aligned with image dimensions. `expanded_mask` is the SAM output after any `expand_pixels` dilation; `original_mask` is the raw model output.
 - Inpainting: BGR image same size as input scene.
 
 Reconstruction 3D returns GLB bytes/path/stream per its strategy — not consumed by FastAPI click handler today.

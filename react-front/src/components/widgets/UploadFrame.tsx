@@ -1,23 +1,41 @@
-import React from "react";
-import { useRef } from "react";
+import React, { forwardRef, useRef } from "react";
 
 export interface UploadFrameProps {
   imageSrc?: string | null;
   clickPosition?: { x: number; y: number } | null;
   onFileSelected: (file: File) => void;
-  onImageClick: (displayPos: { x: number; y: number }, naturalPos: { x: number; y: number }, normalizedPos: { x: number; y: number }) => void;
+  onImageClick: (
+    displayPos: { x: number; y: number },
+    naturalPos: { x: number; y: number },
+    normalizedPos: { x: number; y: number },
+  ) => void;
   disabled?: boolean;
+  clickEnabled?: boolean;
 }
 
-export const UploadFrame: React.FC<UploadFrameProps> = ({
+export const UploadFrame = forwardRef<HTMLInputElement, UploadFrameProps>(({
   imageSrc,
   clickPosition,
   onFileSelected,
   onImageClick,
   disabled,
-}) => {
+  clickEnabled = true,
+}, forwardedRef) => {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
+
+  const setInputRefs = (node: HTMLInputElement | null) => {
+    inputRef.current = node;
+
+    if (typeof forwardedRef === "function") {
+      forwardedRef(node);
+      return;
+    }
+
+    if (forwardedRef) {
+      forwardedRef.current = node;
+    }
+  };
 
   const handleFileInputChange: React.ChangeEventHandler<HTMLInputElement> = (event) => {
     const file = event.target.files?.[0];
@@ -35,40 +53,51 @@ export const UploadFrame: React.FC<UploadFrameProps> = ({
     }
 
     if (!imageSrc) {
-      // No image yet: clicking should open the file picker.
       inputRef.current?.click();
       return;
     }
 
-    // Image is present: clicking records the click position for segmentation.
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    
-    const img = imageRef.current;
-    if (img) {
-      const imgRect = img.getBoundingClientRect();
-      const clickXOnImg = event.clientX - imgRect.left;
-      const clickYOnImg = event.clientY - imgRect.top;
-      
-      const naturalPos = {
-        x: Math.round((clickXOnImg / imgRect.width) * img.naturalWidth),
-        y: Math.round((clickYOnImg / imgRect.height) * img.naturalHeight),
-      };
-
-      const normalizedPos = {
-        x: clickXOnImg / imgRect.width,
-        y: clickYOnImg / imgRect.height,
-      };
-
-      onImageClick({ x, y }, naturalPos, normalizedPos);
-    } else {
-      onImageClick({ x, y }, { x, y }, { x: 0.5, y: 0.5 });
+    if (!clickEnabled) {
+      return;
     }
+
+    const img = imageRef.current;
+    if (!img) {
+      return;
+    }
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const imgRect = img.getBoundingClientRect();
+    const clickXOnImg = event.clientX - imgRect.left;
+    const clickYOnImg = event.clientY - imgRect.top;
+
+    if (
+      clickXOnImg < 0 ||
+      clickYOnImg < 0 ||
+      clickXOnImg > imgRect.width ||
+      clickYOnImg > imgRect.height
+    ) {
+      return;
+    }
+
+    const displayPos = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+    const naturalPos = {
+      x: Math.round((clickXOnImg / imgRect.width) * img.naturalWidth),
+      y: Math.round((clickYOnImg / imgRect.height) * img.naturalHeight),
+    };
+    const normalizedPos = {
+      x: clickXOnImg / imgRect.width,
+      y: clickYOnImg / imgRect.height,
+    };
+
+    onImageClick(displayPos, naturalPos, normalizedPos);
   };
 
   const dotStyle: React.CSSProperties | undefined =
-    imageSrc && clickPosition
+    imageSrc && clickPosition && clickEnabled
       ? {
           left: `${clickPosition.x}px`,
           top: `${clickPosition.y}px`,
@@ -78,7 +107,7 @@ export const UploadFrame: React.FC<UploadFrameProps> = ({
   return (
     <div className="frame upload-frame">
       <input
-        ref={inputRef}
+        ref={setInputRefs}
         type="file"
         accept="image/*"
         className="file-input"
@@ -87,7 +116,10 @@ export const UploadFrame: React.FC<UploadFrameProps> = ({
       />
 
       {imageSrc ? (
-        <div className="image-container" onClick={handleContainerClick}>
+        <div
+          className={`image-container${clickEnabled ? " is-interactive" : " is-locked"}`}
+          onClick={handleContainerClick}
+        >
           <img ref={imageRef} src={imageSrc} alt="Uploaded" className="frame-image" />
           {dotStyle ? <div className="click-dot" style={dotStyle} /> : null}
         </div>
@@ -98,11 +130,12 @@ export const UploadFrame: React.FC<UploadFrameProps> = ({
           onClick={handleContainerClick}
           disabled={disabled}
         >
-          <span className="upload-icon">↑</span>
+          <span className="upload-icon">+</span>
           <span>Upload image</span>
         </button>
       )}
     </div>
   );
-};
+});
 
+UploadFrame.displayName = "UploadFrame";

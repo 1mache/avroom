@@ -50,13 +50,13 @@ If you change any of the above, expect mask bleed, halos, or hallucinations to c
 
 ## Debug artifacts
 
-Every pipeline run writes a constellation of PNGs to `TestModules/outputs/` via [`DebugImageSaver`](../TestModules/src/utils/debug_image_saver.py) and the SAM strategy. See [ai-pipeline/core/README.md](ai-pipeline/core/README.md) for output artifact coverage. The backend writes its own debug image at `{storage_dir}/tmp/{image_id}_debug.png` ([`image_processing.py`](../fastApi-app/core/image_processing.py) lines 32–50) showing the click marker on the input.
+Every pipeline run writes a constellation of PNGs to `TestModules/outputs/` via [`DebugImageSaver`](../TestModules/src/utils/debug_image_saver.py) and the SAM strategy. See [ai-pipeline/core/README.md](ai-pipeline/core/README.md) for output artifact coverage. The backend writes its own debug image at `{storage_dir}/point/{image_id}_debug.png` ([`image_processing.py`](../fastApi-app/core/image_processing.py) lines 33–51) showing the click marker on the input.
 
 These are intentionally left around — they're the project's primary debugging tool.
 
 ## Logging
 
-Every Python module declares a module-level `logger = logging.getLogger(__name__)`. There is no central logging config; the API server uses uvicorn's defaults, and the test scripts call `logging.basicConfig` ad hoc.
+Every Python module declares a module-level `logger = logging.getLogger(__name__)`. The FastAPI service uses a central logging config in [`fastApi-app/logging_config.py`](../fastApi-app/logging_config.py) and calls `setup_logging()` once in [`fastApi-app/main.py`](../fastApi-app/main.py) line 14.
 
 ## Testing posture
 

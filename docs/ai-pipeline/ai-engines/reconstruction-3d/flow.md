@@ -2,9 +2,9 @@
 
 Not invoked inside `ObjectRemover.remove_object`.
 
-## OpenLRM (default)
+## OpenLRM (optional)
 
-Used when `Reconstruction3DFacade()` is constructed with no strategy (or `OpenLrmReconstructionStrategy` explicitly).
+OpenLRM is used when the facade is constructed with `OpenLrmReconstructionStrategy()` explicitly.
 
 1. Normalize arbitrary image input to PIL RGBA (`to_pil_rgba`).
 2. Write a temporary PNG under a private work directory.
@@ -24,3 +24,13 @@ Used when the facade is constructed with `TrellisReconstructionStrategy()` (or a
 5. Return payload according to `output` mode (`bytes`, `path`, file-like).
 
 Space id, auth, and errors: [operations.md](operations.md).
+
+## TripoSR (default)
+
+Used when `Reconstruction3DFacade()` is constructed with no strategy (or `TriposrReconstructionStrategy` explicitly).
+
+1. Normalize arbitrary image input to PIL RGBA (`to_pil_rgba`).
+2. Preprocess RGBA → RGB composited over neutral background (matching upstream TripoSR defaults).
+3. Lazy-load `TSR.from_pretrained("stabilityai/TripoSR")` and run inference on CUDA if available (fallback CPU).
+4. Extract a mesh (marching cubes resolution depends on `ReconstructionQuality`) and export as GLB.
+5. Return according to `output` mode (`bytes`, `path`, file-like).

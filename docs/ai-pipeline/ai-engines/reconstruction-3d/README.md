@@ -4,9 +4,9 @@
 
 **When it runs:** Only when application code calls `Reconstruction3DFacade` directly (smoke tests today). **Not** part of `/images/click`.
 
-**Default backend:** Local **OpenLRM** v1.0 (`OpenLrmReconstructionStrategy`), checkpoint `zxhezexin/openlrm-small-obj-1.0` (see [operations.md](operations.md) for weights cache and dependencies).
+**Default backend:** **TripoSR** (`TriposrReconstructionStrategy`), weights `stabilityai/TripoSR` (downloaded from Hugging Face on first use).
 
-**Alternate backend:** **Trellis 2** on Hugging Face Spaces via `gradio_client` when you construct `Reconstruction3DFacade(TrellisReconstructionStrategy())`.
+**Alternate backends:** OpenLRM (`OpenLrmReconstructionStrategy`) and Trellis 2 (`TrellisReconstructionStrategy`, Hugging Face Space via `gradio_client`) by injecting a strategy into `Reconstruction3DFacade(...)`.
 
 **In one line:** Image in → active strategy → GLB out (`bytes`, `Path`, or `BytesIO`), never wired into the HTTP JSON flow today.
 
@@ -15,7 +15,7 @@ Code: [`TestModules/src/ai_engines/reconstruction_3d/`](../../../../TestModules/
 ## Detail pages
 
 - [components.md](components.md) — facade, strategies, helpers, vendored backend path
-- [flow.md](flow.md) — OpenLRM vs Trellis execution steps
+- [flow.md](flow.md) — TripoSR/OpenLRM/Trellis execution steps (high level)
 - [contracts.md](contracts.md) — flexible inputs, GLB outputs, HTTP boundary
 - [operations.md](operations.md) — model id, caches, presets, errors
 

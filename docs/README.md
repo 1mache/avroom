@@ -2,13 +2,13 @@
 
 Welcome to the Avroom architecture documentation. These docs describe the **current state** of the project as found in the code (not aspirational design).
 
-> Last refresh: 2026-04-30
+> Last refresh: 2026-05-13
 
 What changed in this refresh:
 
-- Document pyramid: added **How detail increases** (below) so root docs stay conceptual and leaf partials stay the deep reference.
-- Aligned **3D reconstruction** docs with code: `Reconstruction3DFacade` defaults to **OpenLRM**; **Trellis** remains an injectable strategy; updated overview, architecture, engine tables, reconstruction-3d partials, `repo-structure.md`, and `tech-stack.md`.
-- Vendored OpenLRM path is `TestModules/src/ai_engines/reconstruction_3d/_backends/openlrm_v10/` (see [reconstruction-3d/operations.md](ai-pipeline/ai-engines/reconstruction-3d/operations.md)).
+- Backend: documented new `POST /objects/test-3d` and the `/objects` router, and aligned endpoint behavior with the current server.
+- Storage: updated default image storage directory to `fastApi-app/tmp/images/` and updated runtime file layout (background/cutout written on click; debug overlay under `point/`).
+- Frontend: documented `generate3DModel()` and updated stack notes to include Three.js.
 
 If you change architecture, run the [`update-avroom-docs`](../.cursor/skills/update-avroom-docs/SKILL.md) skill to keep these files in sync with the code.
 

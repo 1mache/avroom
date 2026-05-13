@@ -1,6 +1,6 @@
 # Frontend Docs
 
-The frontend is a React 19 + Vite 5 single-route SPA in [`react-front/`](../../react-front/). It has no router, no global state, no styling framework, and no HTTP library — just `fetch`, local `useState`, and a single global `style.css`.
+The frontend is a React 19 + Vite 5 single-route SPA in [`react-front/`](../../react-front/). It has no router, no global state, no styling framework, and no HTTP library — just `fetch`, local `useState`, a single global `style.css`, and Three.js for GLB rendering.
 
 ## Pages
 

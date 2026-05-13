@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 IMAGE_STORAGE_DIR = ""
-DEFAULT_IMAGE_STORAGE_SUBDIR = "images"
+DEFAULT_IMAGE_STORAGE_SUBDIR = "tmp/images"
 
 
 def _project_root() -> Path:
@@ -27,7 +27,7 @@ def get_image_storage_dir() -> Path:
 
     The directory is determined as follows:
     - If `IMAGE_STORAGE_DIR` is set here and path exists, that path is used.
-    - Otherwise, a local `images/` directory in project root is used.
+    - Otherwise, a local `tmp/images/` directory in project root is used.
     """
 
     project_root = _project_root()
@@ -47,23 +47,26 @@ def get_image_storage_dir() -> Path:
 `get_image_storage_dir()` returns the first match:
 
 1. If module constant `IMAGE_STORAGE_DIR` is set to a non-empty string AND the resulting path **exists**, use it. Relative paths are resolved against the "project root" (closest ancestor containing a `pyproject.toml`).
-2. Otherwise, return `<project_root>/images`.
+2. Otherwise, return `<project_root>/tmp/images`.
 
-Because the deepest `pyproject.toml` walking up from `settings.py` is [`fastApi-app/pyproject.toml`](../../fastApi-app/pyproject.toml), the **default storage dir is `fastApi-app/images/`**.
+Because the deepest `pyproject.toml` walking up from `settings.py` is [`fastApi-app/pyproject.toml`](../../fastApi-app/pyproject.toml), the **default storage dir is `fastApi-app/tmp/images/`**.
 
 > Caveat: a configured `IMAGE_STORAGE_DIR` is silently ignored if the path doesn't exist. There's no warning logged. If your override isn't picking up, check that the directory is created first.
 
 ## Storage layout at runtime
 
 ```
-fastApi-app/images/
+fastApi-app/tmp/images/
 ├── {image_id}.{ext}             - one per upload (jpg/png/...)
-└── tmp/
+├── {image_id}_background.png    - background result (written on click)
+├── {image_id}_cutout.png        - cutout result (written on click)
+└── point/
     └── {image_id}_debug.png     - click-marker overlay
 ```
 
 - `{image_id}.{ext}` is written by `upload_image` — the suffix comes from the original filename or defaults to `.png` ([`api/routes.py`](../../fastApi-app/api/routes.py) lines 41–48).
-- `tmp/{image_id}_debug.png` is written by `_create_debug_click_image` on every click ([`core/image_processing.py`](../../fastApi-app/core/image_processing.py) lines 32–50).
+- `{image_id}_background.png` and `{image_id}_cutout.png` are written by `handle_click` on every click ([`api/routes.py`](../../fastApi-app/api/routes.py) lines 110–114).
+- `point/{image_id}_debug.png` is written by `_create_debug_click_image` on every click ([`core/image_processing.py`](../../fastApi-app/core/image_processing.py) lines 33–51).
 
 Neither file is ever cleaned up by the service.
 
@@ -71,7 +74,7 @@ Neither file is ever cleaned up by the service.
 
 - CORS origins (hardcoded in [`fastApi-app/main.py`](../../fastApi-app/main.py) lines 16–22).
 - Output format (hardcoded `"png"` in `segment_at_click`).
-- Debug overlay subdir name (`"tmp"` constant inside `_create_debug_click_image`).
+- Debug overlay subdir name (`"point"` constant inside `_create_debug_click_image`).
 - Mask dilation radius, SD strength, depth model IDs — all live in the AI pipeline; see [ai-pipeline/](../ai-pipeline/README.md).
 
 ## Environment variables read elsewhere

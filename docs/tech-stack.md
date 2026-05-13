@@ -18,6 +18,8 @@ From [`react-front/package.json`](../react-front/package.json):
 | `react-dom` | `^19.2.4` | DOM renderer |
 | `@types/react` | `^19.2.14` | Types |
 | `@types/react-dom` | `^19.2.3` | Types |
+| `three` | `^0.184.0` | 3D viewer (GLB in browser) |
+| `@types/three` | `^0.184.0` | Types |
 | `vite` | `^5.4.0` | Dev server + bundler |
 | `typescript` | `~5.9.3` | Type checker |
 
@@ -91,7 +93,8 @@ These are **not** Python packages — they're pulled from Hugging Face / Faceboo
 | `sam_vit_b_01ec64.pth` (SAM ViT-B) | Segmentation | [`SamSegmentationStrategy`](../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) lines 19–20, default URL `https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth` |
 | `runwayml/stable-diffusion-inpainting` | Texture refinement | [`StableDiffusionInpaintingStrategy`](../TestModules/src/ai_engines/inpainting/strategies/stable_diffusion_inpainting_strategy.py) line 16 |
 | LaMa weights (bundled with `simple_lama_inpainting`) | Structural inpainting | [`LamaInpaintingStrategy._load_simple_lama`](../TestModules/src/ai_engines/inpainting/strategies/lama_inpainting_strategy.py) lines 16–25 |
-| `zxhezexin/openlrm-small-obj-1.0` (HF weights + config) | Default 3D reconstruction (not in HTTP path) | [reconstruction-3d/operations.md](ai-pipeline/ai-engines/reconstruction-3d/operations.md) — cache dirs and `OPENLRM_WEIGHT_CACHE` |
+| `stabilityai/TripoSR` (HF weights + config) | Default 3D reconstruction (not in `/images/*` HTTP path) | [`TriposrReconstructionStrategy`](../TestModules/src/ai_engines/reconstruction_3d/strategies/triposr_reconstruction_strategy.py) lines 94–116 |
+| `zxhezexin/openlrm-small-obj-1.0` (HF weights + config) | Optional 3D reconstruction strategy | [reconstruction-3d/operations.md](ai-pipeline/ai-engines/reconstruction-3d/operations.md) — cache dirs and `OPENLRM_WEIGHT_CACHE` |
 | `microsoft/TRELLIS.2` (HF Space, image-to-3D) | Optional 3D reconstruction when using Trellis strategy (not in HTTP path) | [`TrellisReconstructionStrategy.DEFAULT_SPACE_ID`](../TestModules/src/ai_engines/reconstruction_3d/strategies/trellis_reconstruction_strategy.py) line 35 |
 
 SAM checkpoint resolution order is `SAM_CHECKPOINT_PATH` env var → `TestModules/checkpoints/sam_vit_b_01ec64.pth` → auto-download (unless `SAM_AUTO_DOWNLOAD=0`). Heavy model loads (depth pipeline, SAM predictor, LaMa, SD pipe) are each cached behind a module-level `functools.lru_cache(maxsize=1)`/`maxsize=4` factory so they're loaded exactly once per process. The OpenLRM inferrer is also lazy-loaded behind `functools.lru_cache(maxsize=1)` in [`openlrm_reconstruction_strategy.py`](../TestModules/src/ai_engines/reconstruction_3d/strategies/openlrm_reconstruction_strategy.py) lines 40–49.

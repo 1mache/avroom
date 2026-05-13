@@ -9,7 +9,7 @@ sequenceDiagram
     participant Client
     participant Router as "api/routes.py<br/>upload_image"
     participant Settings as "settings.py"
-    participant Disk as "fastApi-app/images/"
+    participant Disk as "fastApi-app/tmp/images/"
 
     Client->>Router: POST /images/upload (multipart file)
     Router->>Settings: get_image_storage_dir()
@@ -22,7 +22,7 @@ sequenceDiagram
     Router-->>Client: ImageUploadResponse
 ```
 
-Code: [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) lines 24–54.
+Code: [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) lines 24–71.
 
 ## Click flow
 
@@ -32,14 +32,14 @@ sequenceDiagram
     participant Router as "api/routes.py<br/>handle_click"
     participant Settings as "settings.py"
     participant Core as "core/image_processing.py"
-    participant Disk as "fastApi-app/images/"
+    participant Disk as "fastApi-app/tmp/images/"
     participant AI as "ObjectRemover"
 
     Client->>Router: POST /images/click (ClickRequest)
     Router->>Settings: get_image_storage_dir()
     Router->>Core: process_click_on_image(image_id, x, y, options)
     Core->>Disk: read image bytes via get_image_path glob
-    Core->>Core: PIL bounds check + debug PNG to images/tmp/
+    Core->>Core: PIL bounds check + debug PNG to point/
     Core->>Core: segment_at_click(bytes, x, y)
     Core->>Core: lazy import ObjectRemover
     Core->>AI: remover.remove_object(image_path, x, y, image_bytes)
@@ -57,14 +57,14 @@ sequenceDiagram
 | Resolve storage dir | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | 35, 66 |
 | Locate file by `image_id.*` | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 53–59 |
 | Load bytes | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 62–70 |
-| PIL open + bounds check | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 125–145 |
-| Debug PNG (`tmp/{id}_debug.png`) | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 32–50, 141 |
-| Lazy import pipeline | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 19–29 |
-| Call `ObjectRemover.remove_object` | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 89–96 |
-| `cv2.imencode` PNG | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 98–106 |
-| Exception → HTTP status | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | 76–84 |
-| Base64 encode | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | 86–87 |
-| Build response | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | 89–94 |
+| PIL open + bounds check | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 142–168 |
+| Debug PNG (`point/{id}_debug.png`) | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 33–51, 166 |
+| Lazy import pipeline | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 19–30 |
+| Call `ObjectRemover.remove_object` | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 91–100 |
+| `cv2.imencode` PNG | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 107–114 |
+| Exception → HTTP status | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | 100–108 |
+| Base64 encode | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | 116–117 |
+| Build response | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | 127–132 |
 
 ## Synchronous, no concurrency
 

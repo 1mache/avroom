@@ -76,5 +76,9 @@ class Reconstruction3DFacade:
                     output_path=output_path,
                     seed=seed,
                 )
-            except Exception:
-                raise main_exc
+            except Exception as fallback_exc:
+                raise RuntimeError(
+                    f"All 3D reconstruction strategies failed. "
+                    f"Primary ({type(self._strategy).__name__}): {main_exc}. "
+                    f"Fallback ({type(self._fallback_strategy).__name__}): {fallback_exc}."
+                ) from main_exc

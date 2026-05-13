@@ -96,3 +96,12 @@ class ClickResultResponse(BaseModel):
         Field(description="Image format used for both returned images (e.g. 'png')."),
     ]
 
+
+class UidCacheStatusResponse(BaseModel):
+    """Indicates which processed artifacts are cached on disk for a given UID."""
+
+    uid: Annotated[str, Field(description="Session UID.")]
+    has_background: Annotated[bool, Field(description="Background PNG is cached.")]
+    has_cutout: Annotated[bool, Field(description="Cutout PNG is cached.")]
+    has_3d: Annotated[bool, Field(description="GLB 3D model is cached.")]
+

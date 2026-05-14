@@ -3,13 +3,16 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
+// Camera tuned for "object on pedestal" framing inside current viewport sizes.
 const CAMERA_FOV = 40;
 const CAMERA_NEAR = 0.1;
 const CAMERA_FAR = 1000;
 const CAMERA_POSITION = { x: 0, y: 1.5, z: 7 };
 
+// Cap device pixel ratio so retina screens do not multiply GPU cost too hard.
 const MAX_PIXEL_RATIO = 2;
 
+// Three-light setup gives soft studio look without needing environment maps.
 const AMBIENT_LIGHT_COLOR = 0xffffff;
 const AMBIENT_LIGHT_INTENSITY = 0.6;
 
@@ -35,12 +38,15 @@ interface NormalizedPos {
 
 interface Props {
   glbData: ArrayBuffer | null;
+  // Reserved hook for putting a guide image behind the WebGL canvas.
   backgroundImage?: string | null;
   clickNormalizedPos?: NormalizedPos | null;
   className?: string;
   style?: React.CSSProperties;
 }
 
+// Re-center camera framing toward original click target so 3D preview feels tied
+// to same object the user selected in the source image.
 function applyClickViewOffset(
   camera: THREE.PerspectiveCamera,
   pos: NormalizedPos | null | undefined,
@@ -79,6 +85,8 @@ export const Model3DFrame: React.FC<Props> = ({
     const width = mount.clientWidth;
     const height = mount.clientHeight;
 
+    // Scene lifecycle is fully local to this effect so cleanup can dispose every
+    // Three.js object when GLB data changes or component unmounts.
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(
       CAMERA_FOV,
@@ -98,6 +106,7 @@ export const Model3DFrame: React.FC<Props> = ({
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
     mount.appendChild(renderer.domElement);
 
+    // Damping keeps orbit motion feeling weighted instead of twitchy.
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
 
@@ -128,6 +137,8 @@ export const Model3DFrame: React.FC<Props> = ({
       const size = box.getSize(new THREE.Vector3());
       const maxDim = Math.max(size.x, size.y, size.z);
 
+      // Normalize imported model so wildly different GLB source scales still fit
+      // same viewer framing.
       obj.position.copy(center).negate();
       group.scale.setScalar(MODEL_TARGET_SIZE / maxDim);
 
@@ -152,8 +163,10 @@ export const Model3DFrame: React.FC<Props> = ({
       const nextWidth = mount.clientWidth;
       const nextHeight = mount.clientHeight;
       camera.aspect = nextWidth / nextHeight;
+      // View offset depends on viewport dimensions, not only camera target.
       applyClickViewOffset(camera, clickNormalizedPos, nextWidth, nextHeight);
       renderer.setSize(nextWidth, nextHeight);
+      camera.updateProjectionMatrix();
     });
     observer.observe(mount);
 

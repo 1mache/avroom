@@ -1,175 +1,105 @@
 # Components
 
-There are five real components, all functional with hooks.
+Current frontend has four important screen components plus one data sidebar widget.
 
 ## `MainPage`
 
 [`react-front/src/components/layout/MainPage.tsx`](../../react-front/src/components/layout/MainPage.tsx)
 
-The screen-level orchestrator. Owns all state, all callbacks, and renders a `SessionPicker`, one `UploadFrame`, two `ResultFrame`s (Background and Cutout), a `Model3DFrame`, and action buttons.
+Screen orchestrator. Owns upload flow, click-to-cutout flow, session restore flow, draggable cutout overlay, and optional 3D overlay.
 
-**Responsibilities:**
+### Responsibilities
 
-- Hold the picked file, the preview object URL, the `image_id` from the backend, the click positions (display + natural + normalized), the result data URLs, and 3D model bytes.
-- Talk to the backend via `uploadImage` / `clickImage` / `getSessions` / `getUidCacheStatus` from [`api/images.ts`](../../react-front/src/api/images.ts).
-- Restore prior session state via `handleSessionSelect` when the user picks a session from `SessionPicker`.
-- Track loading flags (`isUploading`, `isProcessing`, `isGenerating3D`) and show error text under the buttons.
-- Revoke object URLs on unmount and on file replacement to avoid leaks.
+- Hold upload/session/result state.
+- Convert backend `cutout_bounds` metadata into local drag bounds.
+- Measure rendered result viewport and derive the exact contained image rect used by `object-fit: contain`.
+- Translate pointer movement from CSS pixels into natural-image pixels.
+- Clamp cutout movement by visible object bounds, not by full transparent PNG extent.
+- Restore enough metadata from `/images/{uid}/cache` so old sessions can drag immediately without re-running segmentation.
 
-**Render tree:**
+### Result-stage structure
 
-```mermaid
-flowchart TD
-    Page["div.page"]
-    Header["header.page-header"]
-    SessionPicker["SessionPicker"]
-    Top["section.top-frame-section"]
-    Bottom["section.bottom-frame-section"]
-    Upload["UploadFrame"]
-    Bg["ResultFrame (Background)"]
-    Co["ResultFrame (Cutout)"]
-    Actions["div.action-column<br/>Upload + Run buttons"]
-    Model3D["Model3DFrame"]
+When a background exists, `MainPage` no longer renders a plain `<img>`. It renders a measured stage:
 
-    Page --> Header
-    Page --> SessionPicker
-    Page --> Top
-    Page --> Bottom
-    Top --> Upload
-    Bottom --> Bg
-    Bottom --> Actions
-    Bottom --> Co
-    Page --> Model3D
+```tsx
+<div className="frame upload-frame result-main-frame">
+  <div ref={resultStageRef} className="image-container result-image-stage">
+    <img src={backgroundSrc} className="frame-image" onLoad={handleBackgroundLoad} />
+    {showCutout ? <img src={cutoutSrc} className="cutout-overlay" ... /> : null}
+    {show3D ? <Model3DFrame className="overlay-absolute model-overlay" ... /> : null}
+  </div>
+</div>
 ```
 
-**Buttons:**
+Non-trivial point: `cutout-overlay` and `Model3DFrame` are aligned to the inner `image-container`, not the outer `.frame`. This avoids hard-coded padding math and keeps overlays aligned with the real visible image box.
 
-- **Upload** — disabled if `isUploading || !uploadedFile`. On click runs `handleUpload`.
-- **Run** — disabled if `isProcessing || !imageId || !clickPosition`. On click runs `handleRun`.
+### Drag model
 
-See [user-flow.md](user-flow.md) for what each callback does.
+Drag is implemented in three spaces:
+
+1. **Natural image space**
+   `cutoutOffset` and `cutoutAlphaBounds` live here. This is the source of truth.
+2. **Rendered image space**
+   `renderedBackgroundRect` describes where the browser actually painted the background image inside the stage.
+3. **Pointer/screen space**
+   `PointerEvent.clientX/clientY` arrive here.
+
+Conversion path during drag:
+
+1. User presses cutout image.
+2. `handleCutoutPointerDown` stores pointer id, starting mouse coordinates, and starting `cutoutOffset`.
+3. Window-level `pointermove` listener computes screen delta.
+4. Delta is divided by `scaleX/scaleY` derived from `renderedBackgroundRect / backgroundNaturalSize`.
+5. Result becomes a natural-image delta.
+6. `clampCutoutOffset` clamps that natural offset using `cutoutAlphaBounds`.
+7. Render path scales natural offset back into CSS pixels for `left/top`.
+
+Why window-level listeners:
+
+- Native image pointer flow can stop delivering events once pointer leaves image box.
+- Global listeners let drag continue smoothly even when user outruns overlay edge.
+- Refs carry latest geometry into those listeners without forcing re-subscription on every move.
 
 ## `UploadFrame`
 
 [`react-front/src/components/widgets/UploadFrame.tsx`](../../react-front/src/components/widgets/UploadFrame.tsx)
 
-The upload widget. Two visual modes:
+Still responsible only for upload preview and point selection. No drag logic lives here.
 
-1. **Empty** — a placeholder button with an upload icon. Clicking it (or pressing Enter) opens the hidden `<input type="file">`.
-2. **Filled** — shows the image and overlays a red dot at the last click position.
+Important split:
 
-**Props:**
-
-| Prop | Type | Notes |
-|---|---|---|
-| `imageSrc` | `string \| null` | Object URL produced by `MainPage`. |
-| `clickPosition` | `{ x: number; y: number } \| null` | Display-space dot location. |
-| `onFileSelected` | `(file: File) => void` | Called when the user picks a file. |
-| `onImageClick` | `(displayPos, naturalPos) => void` | Called when the user clicks the image. |
-| `disabled` | `boolean` | Disables both file picking and click capture. |
-
-**Coordinate math:**
-
-```43:62:react-front/src/components/widgets/UploadFrame.tsx
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    
-    const img = imageRef.current;
-    if (img) {
-      const imgRect = img.getBoundingClientRect();
-      const clickXOnImg = event.clientX - imgRect.left;
-      const clickYOnImg = event.clientY - imgRect.top;
-      
-      const naturalPos = {
-        x: Math.round((clickXOnImg / imgRect.width) * img.naturalWidth),
-        y: Math.round((clickYOnImg / imgRect.height) * img.naturalHeight),
-      };
-      
-      onImageClick({ x, y }, naturalPos);
-    } else {
-      onImageClick({ x, y }, { x, y });
-    }
-```
-
-The container click handler emits **both** positions:
-
-- **Display position** — for the visual dot overlay (CSS `left` / `top` in container pixels).
-- **Natural position** — `clickXOnImg / imgRect.width * img.naturalWidth` (and same for Y), rounded to integers — this is what gets sent to the backend so segmentation works in real image pixels regardless of how the image is rendered.
-
-If `imageRef` is somehow null, the natural position falls back to display position.
-
-## `ResultFrame`
-
-[`react-front/src/components/widgets/ResultFrame.tsx`](../../react-front/src/components/widgets/ResultFrame.tsx)
-
-A passive display component. Title at the top, then either an `<img>` if `imageSrc` is non-null, or a placeholder.
-
-```1:20:react-front/src/components/widgets/ResultFrame.tsx
-import React from "react";
-
-export interface ResultFrameProps {
-  title: string;
-  imageSrc?: string | null;
-}
-
-export const ResultFrame: React.FC<ResultFrameProps> = ({ title, imageSrc }) => {
-  return (
-    <div className="frame result-frame">
-      <div className="frame-title">{title}</div>
-      {imageSrc ? (
-        <img src={imageSrc} alt={title} className="frame-image" />
-      ) : (
-        <div className="frame-placeholder">Result will appear here</div>
-      )}
-    </div>
-  );
-};
-```
-
-`MainPage` renders two of these, one for Background and one for Cutout, fed by data URLs assembled from the base64 fields of `ClickResultResponse`.
+- `UploadFrame` handles **where user clicked on original image**.
+- `MainPage` handles **how returned cutout can later move on top of processed background**.
 
 ## `SessionPicker`
 
 [`react-front/src/components/widgets/SessionPicker.tsx`](../../react-front/src/components/widgets/SessionPicker.tsx)
 
-Displays the list of past sessions so the user can restore the app to a prior state.
+No structural change, but session restore now matters more:
 
-**Props:**
+- `MainPage.handleSessionSelect(...)` restores `backgroundSrc`.
+- It also restores `cutoutSrc`.
+- It now also restores `cutoutAlphaBounds` from `GET /images/{uid}/cache`.
 
-| Prop | Type | Notes |
-|---|---|---|
-| `onSessionSelect` | `(uid: string) => void` | Called when the user clicks a session entry. |
-
-**Internal state:**
-
-```typescript
-interface SessionMeta {
-  uid: string;
-  hasResults: boolean;
-}
-sessions: SessionMeta[] | null
-```
-
-On mount the component calls `getSessions()` to get all UIDs, then fans out `getUidCacheStatus(uid)` in parallel for each, setting `hasResults = has_background || has_cutout`. Sessions without results are still shown (the user can re-run segmentation).
-
-**Session restore in `MainPage.handleSessionSelect`** ([`MainPage.tsx`](../../react-front/src/components/layout/MainPage.tsx) lines 65–84):
-
-1. Sets `imageId` to the selected UID.
-2. Clears `uploadedFile` and all click positions.
-3. Points `uploadedImageUrl` at `GET /images/{uid}/original`.
-4. Calls `getUidCacheStatus(uid)` — if background/cutout exist, sets `backgroundSrc` / `cutoutSrc` to the corresponding `GET /images/{uid}/background|cutout` URLs so results render immediately.
+That extra metadata is what lets an old cutout drag with correct clamping even though the original segmentation request is long gone.
 
 ## `Model3DFrame`
 
 [`react-front/src/components/widgets/Model3DFrame.tsx`](../../react-front/src/components/widgets/Model3DFrame.tsx)
 
-Three.js viewer for the generated GLB model. Renders a canvas with a three-point lighting rig and `OrbitControls`. A `ResizeObserver` keeps the canvas sized to its container.
+No behavioral change, but z-index contract changed:
 
-**Props:**
+- `.model-overlay` sits below `.cutout-overlay`.
+- This lets cutout stay visually draggable above 3D overlay if both are enabled.
 
-| Prop | Type | Notes |
-|---|---|---|
-| `glbData` | `ArrayBuffer \| null` | Raw GLB bytes from `generate3DModel`. Null renders a placeholder. |
-| `backgroundImage` | `string \| null` | Optional background image URL (unused visually, reserved). |
-| `clickNormalizedPos` | `NormalizedPos \| null` | Normalized `(x, y)` used to offset the camera view toward the clicked object. |
+## CSS roles
+
+[`react-front/src/style.css`](../../react-front/src/style.css)
+
+New classes tied to drag feature:
+
+- `body.cutout-dragging`: global `grabbing` cursor during active drag.
+- `.result-image-stage`: isolated overlay stage that owns measurement and stacking context.
+- `.cutout-overlay`: absolute positioned draggable image with `touch-action: none`.
+- `.model-overlay`: z-index layer for 3D viewer.
+- `.overlay-absolute`: now fills stage exactly. Old fixed `14px` inset was removed because stage already sits inside padded frame.

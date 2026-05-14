@@ -5,6 +5,8 @@ export interface ResultFrameProps {
   imageSrc?: string | null;
 }
 
+// Passive renderer used by older background/cutout panels. Main result stage in
+// `MainPage` handles overlays separately because it needs drag and 3D stacking.
 export const ResultFrame: React.FC<ResultFrameProps> = ({ title, imageSrc }) => {
   return (
     <div className="frame result-frame">

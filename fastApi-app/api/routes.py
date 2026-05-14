@@ -7,6 +7,8 @@ import logging
 import base64
 
 import json
+import cv2
+import numpy as np
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -16,6 +18,7 @@ from core.image_processing import get_image_path, process_click_on_image
 from schemas.image import (
     ClickRequest,
     ClickResultResponse,
+    CutoutBounds,
     ImageUploadResponse,
     UidCacheStatusResponse,
 )
@@ -23,6 +26,53 @@ from settings import get_3d_storage_dir, get_image_storage_dir, get_sessions_fil
 
 router = APIRouter(prefix="/images", tags=["images"])
 logger = logging.getLogger(__name__)
+
+
+def _extract_cutout_bounds_from_png_bytes(image_bytes: bytes) -> CutoutBounds | None:
+    """Return tight alpha bounds for a BGRA cutout PNG."""
+
+    decoded = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    if decoded is None:
+        logger.warning("Failed to decode cutout bytes for bounds extraction")
+        return None
+
+    if decoded.ndim != 3 or decoded.shape[2] < 4:
+        logger.warning("Cutout image missing alpha channel: shape=%s", decoded.shape)
+        height, width = decoded.shape[:2]
+        return CutoutBounds(
+            left=0,
+            top=0,
+            right=width,
+            bottom=height,
+            natural_width=width,
+            natural_height=height,
+        )
+
+    alpha = decoded[:, :, 3]
+    non_zero_points = cv2.findNonZero(alpha)
+    height, width = alpha.shape
+
+    # Empty alpha should not crash cache/session restore. Fall back to full image
+    # box so frontend can still treat the cutout as bounded.
+    if non_zero_points is None:
+        return CutoutBounds(
+            left=0,
+            top=0,
+            right=width,
+            bottom=height,
+            natural_width=width,
+            natural_height=height,
+        )
+
+    x, y, w, h = cv2.boundingRect(non_zero_points)
+    return CutoutBounds(
+        left=int(x),
+        top=int(y),
+        right=int(x + w),
+        bottom=int(y + h),
+        natural_width=int(width),
+        natural_height=int(height),
+    )
 
 
 @router.get("/sessions")
@@ -133,6 +183,9 @@ async def handle_click(request: ClickRequest) -> ClickResultResponse:
 
     background_b64 = base64.b64encode(background_bytes).decode("ascii")
     cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")
+    # Frontend uses these bounds to clamp drag by visible object, not by the
+    # transparent padding that exists around most cutouts.
+    cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_bytes)
 
     logger.info(
         "Click processed: image_id=%s background_bytes=%d cutout_bytes=%d format=%s",
@@ -147,6 +200,7 @@ async def handle_click(request: ClickRequest) -> ClickResultResponse:
         background_b64=background_b64,
         cutout_b64=cutout_b64,
         format=image_format,
+        cutout_bounds=cutout_bounds,
     )
 
 
@@ -155,11 +209,18 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     """Return which processed artifacts are cached on disk for the given UID."""
     logger.info("Cache status requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
+    cutout_path = storage_dir / f"{uid}_cutout.png"
+    cutout_bounds = None
+    if cutout_path.exists():
+        # Session restore should not need to re-run segmentation just to recover
+        # drag bounds, so cache metadata derives from stored PNG on demand.
+        cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_path.read_bytes())
     status = UidCacheStatusResponse(
         uid=uid,
         has_background=(storage_dir / f"{uid}_background.png").exists(),
-        has_cutout=(storage_dir / f"{uid}_cutout.png").exists(),
+        has_cutout=cutout_path.exists(),
         has_3d=(get_3d_storage_dir() / f"{uid}.glb").exists(),
+        cutout_bounds=cutout_bounds,
     )
     logger.info(
         "Cache status: uid=%s background=%s cutout=%s 3d=%s",

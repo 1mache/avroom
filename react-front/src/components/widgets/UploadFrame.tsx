@@ -4,6 +4,8 @@ export interface UploadFrameProps {
   imageSrc?: string | null;
   clickPosition?: { x: number; y: number } | null;
   onFileSelected: (file: File) => void;
+  // Emits same click in three spaces so caller can use each one for a different
+  // job: dot overlay, backend segmentation, and 3D camera bias.
   onImageClick: (
     displayPos: { x: number; y: number },
     naturalPos: { x: number; y: number },
@@ -24,6 +26,8 @@ export const UploadFrame = forwardRef<HTMLInputElement, UploadFrameProps>(({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
 
+  // Component keeps local ref for hidden input while still exposing it to parent
+  // so MainPage can trigger "Upload other" from outside this widget.
   const setInputRefs = (node: HTMLInputElement | null) => {
     inputRef.current = node;
 
@@ -84,6 +88,8 @@ export const UploadFrame = forwardRef<HTMLInputElement, UploadFrameProps>(({
       x: event.clientX - rect.left,
       y: event.clientY - rect.top,
     };
+    // Natural coordinates are what backend expects. Display coordinates alone
+    // would drift whenever preview size differs from original image size.
     const naturalPos = {
       x: Math.round((clickXOnImg / imgRect.width) * img.naturalWidth),
       y: Math.round((clickYOnImg / imgRect.height) * img.naturalHeight),

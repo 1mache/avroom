@@ -72,6 +72,18 @@ class ClickRequest(BaseModel):
         Field(description="Optional processing options associated with the click action."),
     ] = None
 
+
+class CutoutBounds(BaseModel):
+    """Tight visible-object bounds inside the cutout image."""
+
+    left: Annotated[int, Field(ge=0, description="Left-most visible pixel, inclusive.")]
+    top: Annotated[int, Field(ge=0, description="Top-most visible pixel, inclusive.")]
+    right: Annotated[int, Field(ge=0, description="Right-most visible bound, exclusive.")]
+    bottom: Annotated[int, Field(ge=0, description="Bottom-most visible bound, exclusive.")]
+    natural_width: Annotated[int, Field(gt=0, description="Full cutout image width in pixels.")]
+    natural_height: Annotated[int, Field(gt=0, description="Full cutout image height in pixels.")]
+
+
 class ClickResultResponse(BaseModel):
     """Segmentation result returned from a click on an image.
 
@@ -95,6 +107,10 @@ class ClickResultResponse(BaseModel):
         str,
         Field(description="Image format used for both returned images (e.g. 'png')."),
     ]
+    cutout_bounds: Annotated[
+        CutoutBounds | None,
+        Field(default=None, description="Tight visible-object bounds inside the cutout PNG."),
+    ]
 
 
 class UidCacheStatusResponse(BaseModel):
@@ -104,4 +120,8 @@ class UidCacheStatusResponse(BaseModel):
     has_background: Annotated[bool, Field(description="Background PNG is cached.")]
     has_cutout: Annotated[bool, Field(description="Cutout PNG is cached.")]
     has_3d: Annotated[bool, Field(description="GLB 3D model is cached.")]
+    cutout_bounds: Annotated[
+        CutoutBounds | None,
+        Field(default=None, description="Tight visible-object bounds for cached cutout PNG."),
+    ]
 

@@ -22,7 +22,7 @@ class ImageSegmentationStrategy(ABC):
         *,
         expand_pixels: int = 0,
         use_broad_mask: bool = False,
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Predict an object mask containing pixel ``(x, y)``.
 
         Args:
@@ -37,6 +37,10 @@ class ImageSegmentationStrategy(ABC):
                 generous mask candidate (e.g., SAM's "broad" output index).
 
         Returns:
-            A 2-D ``uint8`` mask (0 / 255) sized to match ``image``.
+            A ``(expanded_mask, original_mask)`` tuple of 2-D ``uint8`` masks
+            (0 / 255) sized to match ``image``. ``original_mask`` is the raw
+            model output; ``expanded_mask`` is ``original_mask`` after any
+            ``expand_pixels`` dilation. When ``expand_pixels == 0`` the two
+            arrays are distinct (non-aliased) copies.
         """
         raise NotImplementedError

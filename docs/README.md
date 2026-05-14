@@ -6,6 +6,8 @@ Welcome to the Avroom architecture documentation. These docs describe the **curr
 
 What changed in this refresh:
 
+- Segmentation: `predict_mask` / `get_mask_at_point` now returns `(expanded_mask, original_mask)` tuple; updated `conventions.md`, `ai-pipeline/ai-engines/contracts.md`, `segmentation/contracts.md`, `segmentation/components.md`.
+- Core flow: `ObjectRemover` uses `tight_mask` (SAM-dilated) for the inpaint path and `original_mask` (raw SAM) for the BGRA cutout composer; updated `data-flow.md` and `ai-pipeline/core/flow.md`.
 - Backend: added `GET /images/sessions`, `GET /images/{uid}/cache|background|cutout|original`, and `GET /objects/{uid}` to `api-endpoints.md`.
 - Backend: documented `sessions.json`, `get_sessions_file()`, `register_uid()`, and `get_3d_storage_dir()` in `settings-and-storage.md`; updated storage layout tree.
 - Backend: added `UidCacheStatusResponse` to `schemas.md`.
@@ -59,10 +61,10 @@ AI pipeline docs: each subsystem folder has a short **README** (overview); deepe
 
 ## Per-component docs
 
-| Component | Code root | Docs |
-|---|---|---|
-| Frontend SPA | [react-front/](../react-front/) | [frontend/README.md](frontend/README.md) |
-| FastAPI backend | [fastApi-app/](../fastApi-app/) | [backend/README.md](backend/README.md) |
+| Component                             | Code root                       | Docs                                           |
+| ------------------------------------- | ------------------------------- | ---------------------------------------------- |
+| Frontend SPA                          | [react-front/](../react-front/) | [frontend/README.md](frontend/README.md)       |
+| FastAPI backend                       | [fastApi-app/](../fastApi-app/) | [backend/README.md](backend/README.md)         |
 | AI pipeline (`avroom_object_removal`) | [TestModules/](../TestModules/) | [ai-pipeline/README.md](ai-pipeline/README.md) |
 
 ## Source of truth

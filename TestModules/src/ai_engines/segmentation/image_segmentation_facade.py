@@ -34,8 +34,11 @@ class ImageSegmentationFacade:
         y: int,
         expand_pixels: int = 0,
         use_broad_mask: bool = False,
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Predict a mask at ``(x, y)`` via the active segmentation strategy.
+
+        Returns ``(expanded_mask, original_mask)`` — see
+        :meth:`ImageSegmentationStrategy.predict_mask` for the full contract.
 
         Method name preserved from the legacy ``SamFacadeSingleton`` to keep
         the routing strategies straightforward to migrate.

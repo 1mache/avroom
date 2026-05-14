@@ -22,7 +22,7 @@ The AI pipeline leans on a strict Facade + Strategy split per AI domain; the web
 There is no longer a single `interfaces.py` — each AI domain owns its own ABC alongside its Facade:
 
 - [`DepthMappingStrategy.map_depth(image) -> ndarray`](../TestModules/src/ai_engines/depth/depth_mapping_strategy.py)
-- [`ImageSegmentationStrategy.predict_mask(image, x, y, *, expand_pixels, use_broad_mask) -> ndarray`](../TestModules/src/ai_engines/segmentation/image_segmentation_strategy.py)
+- [`ImageSegmentationStrategy.predict_mask(image, x, y, *, expand_pixels, use_broad_mask) -> tuple[ndarray, ndarray]`](../TestModules/src/ai_engines/segmentation/image_segmentation_strategy.py) — returns `(expanded_mask, original_mask)`; `original_mask` is the raw SAM output, `expanded_mask` is that mask after any `expand_pixels` dilation (or a copy when `expand_pixels == 0`).
 - [`ImageInpaintingStrategy.inpaint(image, mask, **kwargs) -> ndarray`](../TestModules/src/ai_engines/inpainting/image_inpainting_strategy.py)
 - [`Reconstruction3DStrategy.generate(image, *, quality, output, output_path, seed) -> bytes | Path | BinaryIO`](../TestModules/src/ai_engines/reconstruction_3d/reconstruction_3d_strategy.py)
 - [`SegmentationRoutingStrategy.choose_input(rgb_image, raw_depth, adapted_depth, x, y) -> dict`](../TestModules/src/routing/segmentation_routing_strategy.py)

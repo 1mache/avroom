@@ -81,11 +81,10 @@ def test_sam_models() -> None:
             except Exception:
                 # Fallback: just one prediction at the center.
                 h, w = adapted_image.shape[:2]
-                masks = [
-                    sam_strategy.predict_mask(
-                        adapted_image, x=w // 2, y=h // 2, expand_pixels=0
-                    )
-                ]
+                predicted, _ = sam_strategy.predict_mask(
+                    adapted_image, x=w // 2, y=h // 2, expand_pixels=0
+                )
+                masks = [predicted]
 
             combined_mask_img = np.zeros_like(orig_image)
             for mask in masks:

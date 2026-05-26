@@ -3,6 +3,8 @@ import type { ClickRequest, ClickResultResponse, ImageUploadResponse, UidCacheSt
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000";
 
+// Central JSON error mapping so screens can treat backend text bodies as useful
+// user-facing errors instead of generic network failures.
 async function handleJsonResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const text = await response.text();
@@ -63,7 +65,7 @@ export async function getUidCacheStatus(uid: string): Promise<UidCacheStatusResp
   return handleJsonResponse<UidCacheStatusResponse>(response);
 }
 
-/** Returns the cached GLB as ArrayBuffer, or null if not yet generated (404). */
+// 404 means "model not generated yet", not an exceptional transport failure.
 export async function fetchCached3DModel(uid: string): Promise<ArrayBuffer | null> {
   const response = await fetch(`${API_BASE_URL}/objects/${uid}`);
   if (response.status === 404) return null;

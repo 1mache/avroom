@@ -3,6 +3,7 @@ import { getSessions, getUidCacheStatus } from "../../api/images";
 
 interface SessionMeta {
   uid: string;
+  // Precomputed summary bit so render path does not need to know cache schema.
   hasResults: boolean;
 }
 
@@ -20,6 +21,8 @@ export const SessionPicker: React.FC<SessionPickerProps> = ({ onSessionSelect })
       .then(async (uids) => {
         if (cancelled) return;
 
+        // Enrich raw session ids with cheap cache metadata so UI can hint whether
+        // a session already has background/cutout artifacts ready.
         const metas = await Promise.all(
           uids.map(async (uid): Promise<SessionMeta> => {
             try {

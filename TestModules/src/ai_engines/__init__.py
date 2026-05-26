@@ -14,6 +14,8 @@ from .inpainting import (
     StableDiffusionInpaintingStrategy,
 )
 from .reconstruction_3d import (
+    Hunyuan3D2GenerationError,
+    Hunyuan3D2ReconstructionStrategy,
     OpenLrmReconstructionStrategy,
     Reconstruction3DFacade,
     Reconstruction3DStrategy,
@@ -38,6 +40,8 @@ __all__ = [
     "ImageSegmentationStrategy",
     "LamaInpaintingStrategy",
     "NearFarBlendedDepthMappingStrategy",
+    "Hunyuan3D2GenerationError",
+    "Hunyuan3D2ReconstructionStrategy",
     "OpenLrmReconstructionStrategy",
     "Reconstruction3DFacade",
     "Reconstruction3DStrategy",

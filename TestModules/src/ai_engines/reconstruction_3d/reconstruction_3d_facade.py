@@ -13,6 +13,7 @@ from .strategies.openlrm_reconstruction_strategy import OpenLrmReconstructionStr
 from .strategies.trellis_reconstruction_strategy import TrellisReconstructionStrategy
 from .strategies.vfusion3d_reconstruction_strategy import Vfusion3dReconstructionStrategy
 from .strategies.triposr_reconstruction_strategy import TriposrReconstructionStrategy
+from .strategies.hunyuan3d2_reconstruction_strategy import Hunyuan3D2ReconstructionStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ class Reconstruction3DFacade:
     """
 
     def __init__(self, strategy: Reconstruction3DStrategy | None = None) -> None:
-        self._strategy: Reconstruction3DStrategy = strategy or TrellisReconstructionStrategy()
+        self._strategy: Reconstruction3DStrategy = strategy or Hunyuan3D2ReconstructionStrategy()
         self._fallback_strategy: Reconstruction3DStrategy = TriposrReconstructionStrategy()
         logger.info(
             f"Reconstruction3DFacade ready (strategy={type(self._strategy).__name__}, "

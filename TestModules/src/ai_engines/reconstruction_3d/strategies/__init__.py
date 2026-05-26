@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from .hunyuan3d2_reconstruction_strategy import (
+    Hunyuan3D2GenerationError,
+    Hunyuan3D2ReconstructionStrategy,
+)
 from .openlrm_reconstruction_strategy import (
     OpenLrmReconstructionError,
     OpenLrmReconstructionStrategy,
@@ -18,6 +22,8 @@ from .vfusion3d_reconstruction_strategy import (
 )
 
 __all__ = [
+    "Hunyuan3D2GenerationError",
+    "Hunyuan3D2ReconstructionStrategy",
     "OpenLrmReconstructionError",
     "OpenLrmReconstructionStrategy",
     "Trellis3DGenerationError",

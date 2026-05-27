@@ -1,18 +1,22 @@
 # Core
 
-**What this is:** One entry point (`ObjectRemover`) that runs the click-to-remove pipeline end to end and returns the two images FastAPI expects.
+**What this is:** Three focused entry points covering the full click-to-remove pipeline and its composable sub-steps.
 
-**When it runs:** On every `/images/click` through [`image_processing.segment_at_click`](../../../fastApi-app/core/image_processing.py), and from manual test scripts.
+| Class | Responsibility |
+|---|---|
+| `ObjectRemover` | End-to-end orchestrator. Runs all 7 stages and returns `(background_bgr, cutout_bgra)`. Used by FastAPI. |
+| `ObjectSegmentor` | Stages 1–3 + 5–7 (no inpainting). Returns every SAM candidate as `(refined_mask, cutout_bgra)` pairs. |
+| `BackgroundInpainter` | Stage 4 only. Accepts an original image + mask and returns the inpainted background. |
 
-**In one line:** Decode image, map depth, adapt for SAM, route parameters, segment, refine mask, inpaint, build BGRA cutout.
+**When it runs:** `ObjectRemover` — on every `/images/click` via [`image_processing.segment_at_click`](../../../fastApi-app/core/image_processing.py) and manual test scripts. `ObjectSegmentor` and `BackgroundInpainter` — from test scripts or future API routes that need deferred or selective inpainting.
 
 Code: [`TestModules/src/core/`](../../../TestModules/src/core/).
 
 ## Detail pages
 
-- [components.md](components.md) — orchestrator, helpers, wiring, coupling
-- [flow.md](flow.md) — stage order and data threading
-- [contracts.md](contracts.md) — `remove_object` inputs and return tuple
+- [components.md](components.md) — orchestrators, helpers, wiring, coupling
+- [flow.md](flow.md) — stage order and data threading for each entry point
+- [contracts.md](contracts.md) — signatures and return types
 - [operations.md](operations.md) — knobs, caches, debug files, failure notes
 
 Related: [AI engines](../ai-engines/README.md) (depth, segmentation, inpainting), [routing](../routing/README.md), [utils](../utils/README.md).

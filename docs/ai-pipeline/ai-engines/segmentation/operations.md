@@ -13,7 +13,18 @@ SAM predictor constructed once per process (`lru_cache(maxsize=1)` pattern in st
 
 ## Debug files (`TestModules/outputs/`)
 
-Typical artifacts include `mask_0.png` … `mask_2.png`, optional `dilated_mask.png`, `best_mask.png`. Probe + final passes overwrite same names during one click.
+**`get_mask_at_point` / `predict_mask` pass:**
+
+- `mask_0.png` … `mask_2.png` — raw SAM candidates.
+- `dilated_mask.png` — routing-expanded best candidate (when `expand_pixels > 0`).
+- `best_mask.png` — final output of `predict_mask` (index 1, possibly dilated).
+
+**`get_all_masks_for_position` / `predict_all_masks` pass:**
+
+- `mask_0.png` … `mask_2.png` — same raw SAM candidates (shared SAM call).
+- `dilated_mask_0.png` … `dilated_mask_2.png` — per-candidate dilated versions (when `expand_pixels > 0`).
+
+Probe + final passes overwrite same names during one click.
 
 ## Operational notes
 

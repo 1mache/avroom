@@ -117,15 +117,18 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
     def _predictor(self) -> Any:
         return _load_sam_predictor(self._checkpoint_path, self._model_type, self._device)
 
-    def predict_mask(
+    def _run_sam_predict(
         self,
         image: np.ndarray,
         x: int,
         y: int,
-        *,
-        expand_pixels: int = 0,
-        use_broad_mask: bool = False,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[Any, DebugImageSaver]:
+        """Run SAM multimask prediction and save per-candidate debug images.
+
+        Returns the raw ``masks`` array from SAM alongside a ``DebugImageSaver``
+        that already has ``mask_0`` … ``mask_N`` written, so callers do not need
+        to repeat the save loop.
+        """
         predictor = self._predictor
         predictor.set_image(image)
 
@@ -142,6 +145,19 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         for i, mask in enumerate(masks):
             image_saver.save(f"mask_{i}.png", mask)
 
+        return masks, image_saver
+
+    def predict_mask(
+        self,
+        image: np.ndarray,
+        x: int,
+        y: int,
+        *,
+        expand_pixels: int = 0,
+        use_broad_mask: bool = False,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        masks, image_saver = self._run_sam_predict(image, x, y)
+
         # Index 1 is SAM's "tight" candidate - good for flat objects (TVs,
         # windows). use_broad_mask is accepted for interface symmetry; the
         # legacy code never actually switched indices on it, so we don't either.
@@ -156,3 +172,34 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
 
         image_saver.save("best_mask.png", expanded_mask)
         return expanded_mask, original_mask
+
+    def predict_all_masks(
+        self,
+        image: np.ndarray,
+        x: int,
+        y: int,
+        *,
+        expand_pixels: int = 0,
+        use_broad_mask: bool = False,
+    ) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+        """Return one ``(expanded_mask, original_mask)`` pair per SAM candidate.
+
+        SAM's ``multimask_output=True`` mode yields three candidates (indices
+        0, 1, 2 — roughly small, tight, broad). This method returns all three
+        so callers can pick or compare them without running SAM multiple times.
+        Each candidate is independently dilated by ``expand_pixels`` when
+        non-zero; otherwise a distinct copy is returned.
+        """
+        masks, image_saver = self._run_sam_predict(image, x, y)
+
+        candidate_pairs: list[tuple[np.ndarray, np.ndarray]] = []
+        for i, raw_mask in enumerate(masks):
+            original_mask = raw_mask
+            if expand_pixels > 0:
+                expanded_mask = self._mask_refiner.dilate_mask(raw_mask, pixels=expand_pixels)
+                image_saver.save(f"dilated_mask_{i}.png", expanded_mask)
+            else:
+                expanded_mask = raw_mask.copy()
+            candidate_pairs.append((expanded_mask, original_mask))
+
+        return tuple(candidate_pairs)

@@ -50,3 +50,26 @@ class ImageSegmentationFacade:
             expand_pixels=expand_pixels,
             use_broad_mask=use_broad_mask,
         )
+
+    def get_all_masks_for_position(
+        self,
+        image: np.ndarray,
+        x: int,
+        y: int,
+        expand_pixels: int = 0,
+        use_broad_mask: bool = False,
+    ) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+        """Return every candidate mask the strategy produces at ``(x, y)``.
+
+        Delegates to :meth:`ImageSegmentationStrategy.predict_all_masks`.
+        Returns a tuple of ``(expanded_mask, original_mask)`` pairs — one per
+        model candidate. Callers that need only the best candidate should
+        prefer :meth:`get_mask_at_point`.
+        """
+        return self._strategy.predict_all_masks(
+            image,
+            x,
+            y,
+            expand_pixels=expand_pixels,
+            use_broad_mask=use_broad_mask,
+        )

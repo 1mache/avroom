@@ -16,25 +16,9 @@ from ..routing.strategies.boundary_variance_routing_strategy import (
 from ..utils.bgra_cutout_composer import BgraCutoutComposer
 from ..utils.debug_image_saver import DebugImageSaver
 from ..utils.mask_refiner import MaskRefiner
+from ._mask_utils import ensure_mask_hw as _ensure_mask_hw
 
 logger = logging.getLogger(__name__)
-
-
-def _ensure_mask_hw(mask: np.ndarray, target_hw: tuple[int, int]) -> np.ndarray:
-    """Resize ``mask`` to ``target_hw`` with nearest-neighbor; keep binary semantics."""
-    h, w = target_hw
-
-    if mask.ndim == 3:
-        mask = mask[:, :, 0]
-
-    if mask.shape[:2] != (h, w):
-        mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
-
-    if mask.dtype == bool:
-        return mask
-
-    thresh = 0.5 if float(mask.max()) <= 1.0 else 127
-    return (mask > thresh).astype(np.uint8) * 255
 
 
 class ObjectRemover:

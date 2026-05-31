@@ -122,7 +122,7 @@ def load_canvas_bytes(image_id: str, base_dir: Path) -> bytes:
     canvas_path = current_background_path(base_dir, image_id)
     if canvas_path.exists():
         canvas_bytes = canvas_path.read_bytes()
-        logger.info(
+        logger.debug(
             "Loaded canvas bytes: image_id=%s source=background bytes=%d",
             image_id,
             len(canvas_bytes),
@@ -130,7 +130,7 @@ def load_canvas_bytes(image_id: str, base_dir: Path) -> bytes:
         return canvas_bytes
 
     original_bytes = load_image_bytes(image_id=image_id, base_dir=base_dir)
-    logger.info(
+    logger.debug(
         "Loaded canvas bytes: image_id=%s source=original bytes=%d",
         image_id,
         len(original_bytes),
@@ -288,7 +288,6 @@ def segment_candidates_on_image(
 
     del options  # TODO: parameter not used. legacy click options. remove it or use
     image_bytes = load_canvas_bytes(image_id=image_id, base_dir=base_dir)
-    logger.debug("Loaded canvas bytes for segmentation: image_id=%s bytes=%d", image_id, len(image_bytes))
     _validate_click_coordinates(image_bytes, x, y, base_dir, image_id)
 
     # New segmentation invalidates any older unchosen candidates for this image.

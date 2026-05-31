@@ -456,9 +456,14 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
     """
     logger.info("Objects list requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
+    # TODO: validate uid against sessions.json and return 404 for unknown sessions.
+    # Currently returns 200 + empty list for unknown UIDs, consistent with /{uid}/cache.
     obj_ids = list_object_ids(storage_dir, uid)
     three_d_dir = get_3d_storage_dir()
 
+    # TODO: this loop performs blocking I/O per object synchronously on the async event loop.
+    # For MVP session sizes this is acceptable; move to a thread pool executor if sessions
+    # grow to many large objects.
     objects_list: list[ObjectInfo] = []
     for oid in obj_ids:
         try:

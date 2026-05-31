@@ -34,7 +34,7 @@ class Test3DRequest(BaseModel):
     ]
     object_id: Annotated[
         int,
-        Field(default=0, ge=0, description="Zero-based object id within the session to generate 3D from."),
+        Field(ge=0, description="Zero-based object id within the session to generate 3D from."),
     ] = 0
 
 

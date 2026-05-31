@@ -10,7 +10,7 @@ import json
 import cv2
 import numpy as np
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pathlib import Path
 
@@ -36,11 +36,13 @@ from schemas.image import (
     UidCacheStatusResponse,
 )
 from settings import (
+    deregister_uid,
     get_3d_storage_dir,
     get_image_storage_dir,
     get_sessions_file,
     load_names,
     register_uid,
+    remove_session_name,
     set_session_name,
 )
 
@@ -338,6 +340,54 @@ async def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
         format=image_format,
         cutout_bounds=cutout_bounds,
     )
+
+
+@router.delete("/{uid}", status_code=204)
+async def delete_session(uid: str) -> Response:
+    """Delete a session and all its associated files from disk.
+
+    Removes the uid from sessions.json, removes its name from names.json if
+    present, and deletes every file associated with that uid: the original
+    uploaded image, processed background and cutout PNGs, candidate mask
+    files, debug overlay, and any cached 3D model.  Missing files are
+    silently ignored so the endpoint is safe to call more than once.
+    """
+    logger.info("Session delete requested: uid=%s", uid)
+    storage_dir = get_image_storage_dir()
+    removed = 0
+
+    try:
+        deregister_uid(uid)
+        remove_session_name(uid)
+
+        for path in storage_dir.glob(f"{uid}.*"):
+            path.unlink(missing_ok=True)
+            removed += 1
+
+        for suffix in ("_background.png", "_cutout.png"):
+            p = storage_dir / f"{uid}{suffix}"
+            if p.exists():
+                p.unlink()
+                removed += 1
+
+        delete_candidates(storage_dir, uid)
+
+        debug_path = storage_dir / "point" / f"{uid}_debug.png"
+        if debug_path.exists():
+            debug_path.unlink()
+            removed += 1
+
+        glb_path = get_3d_storage_dir() / f"{uid}.glb"
+        if glb_path.exists():
+            glb_path.unlink()
+            removed += 1
+
+    except Exception as exc:
+        logger.error("Session delete failed: uid=%s error=%s", uid, exc)
+        raise HTTPException(status_code=500, detail=f"Session delete failed: {exc}") from exc
+
+    logger.info("Session deleted: uid=%s files_removed=%d", uid, removed)
+    return Response(status_code=204)
 
 
 @router.post("/{uid}/name", response_model=SessionInfo)

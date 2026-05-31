@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   API_BASE_URL,
+  deleteSession,
   fetchCached3DModel,
   generate3DModel,
   getUidCacheStatus,
@@ -120,6 +121,8 @@ const toCutoutAlphaBounds = (bounds: CutoutBounds | null | undefined): CutoutAlp
   };
 };
 
+const DELETE_CONFIRM_SECONDS = 2;
+
 export const MainPage: React.FC = () => {
   const frameInputRef = useRef<HTMLInputElement>(null);
   const uploadOtherInputRef = useRef<HTMLInputElement>(null);
@@ -155,6 +158,9 @@ export const MainPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [sessionName, setSessionName] = useState<string>("");
   const [sessionsRefreshKey, setSessionsRefreshKey] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteConfirming, setDeleteConfirming] = useState(false);
+  const deleteConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const replaceUploadedImageUrl = useCallback((nextUrl: string | null) => {
     setUploadedImageUrl((previousUrl) => {
@@ -185,6 +191,11 @@ export const MainPage: React.FC = () => {
     dragStateRef.current = null;
     setGlbData(null);
     setError(null);
+    if (deleteConfirmTimerRef.current) {
+      clearTimeout(deleteConfirmTimerRef.current);
+      deleteConfirmTimerRef.current = null;
+    }
+    setDeleteConfirming(false);
   }, []);
 
   useEffect(() => {
@@ -423,6 +434,51 @@ export const MainPage: React.FC = () => {
       setError(message);
     }
   }, [imageId, sessionName]);
+
+  const handleDeleteSession = useCallback(async () => {
+    if (!imageId) {
+      return;
+    }
+
+    if (!deleteConfirming) {
+      setDeleteConfirming(true);
+      deleteConfirmTimerRef.current = setTimeout(() => {
+        setDeleteConfirming(false);
+      }, DELETE_CONFIRM_SECONDS * 1000);
+      return;
+    }
+
+    if (deleteConfirmTimerRef.current) {
+      clearTimeout(deleteConfirmTimerRef.current);
+      deleteConfirmTimerRef.current = null;
+    }
+    setDeleteConfirming(false);
+    setIsDeleting(true);
+
+    try {
+      await deleteSession(imageId);
+      setImageId(null);
+      setUploadedFile(null);
+      replaceUploadedImageUrl(null);
+      resetWorkspaceState();
+      setSessionName("");
+      setSessionsRefreshKey((k) => k + 1);
+    } catch (deleteError) {
+      const message =
+        deleteError instanceof Error ? deleteError.message : "Failed to delete session.";
+      setError(message);
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [deleteConfirming, imageId, replaceUploadedImageUrl, resetWorkspaceState]);
+
+  useEffect(() => {
+    return () => {
+      if (deleteConfirmTimerRef.current) {
+        clearTimeout(deleteConfirmTimerRef.current);
+      }
+    };
+  }, []);
 
   const triggerFileInput = useCallback(() => {
     if (frameInputRef.current) {
@@ -790,6 +846,18 @@ export const MainPage: React.FC = () => {
               {isProcessing ? "Segmenting..." : isInpainting ? "Inpainting..." : "Cut Out"}
             </button>
           </div>
+          {imageId ? (
+            <div className="delete-row">
+              <button
+                type="button"
+                className={`primary-button danger${deleteConfirming ? " confirming" : ""}`}
+                onClick={handleDeleteSession}
+                disabled={isDeleting || isUploading || isProcessing || isInpainting || isGenerating3D}
+              >
+                {isDeleting ? "Deleting..." : deleteConfirming ? "Confirm delete?" : "Delete session"}
+              </button>
+            </div>
+          ) : null}
         </section>
       </main>
     </div>

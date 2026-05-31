@@ -101,6 +101,39 @@ def set_session_name(uid: str, name: str) -> None:
     names_file.write_text(json.dumps(names, indent=2), encoding="utf-8")
 
 
+def deregister_uid(uid: str) -> None:
+    """Remove uid from sessions.json. No-op if uid is not present."""
+    import json
+
+    sessions_file = get_sessions_file()
+    if not sessions_file.exists():
+        return
+
+    try:
+        uids: list[str] = json.loads(sessions_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError):
+        return
+
+    filtered = [u for u in uids if u != uid]
+    if len(filtered) == len(uids):
+        return
+
+    sessions_file.write_text(json.dumps(filtered, indent=2), encoding="utf-8")
+
+
+def remove_session_name(uid: str) -> None:
+    """Remove uid's name entry from names.json. No-op if uid has no name."""
+    import json
+
+    names = load_names()
+    if names.pop(uid, None) is None:
+        return
+
+    names_file = get_names_file()
+    names_file.parent.mkdir(parents=True, exist_ok=True)
+    names_file.write_text(json.dumps(names, indent=2), encoding="utf-8")
+
+
 def register_uid(uid: str) -> None:
     """Append uid to sessions.json, creating the file if absent."""
     import json

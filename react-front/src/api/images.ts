@@ -111,6 +111,17 @@ export async function inpaintMask(payload: InpaintMaskRequest): Promise<InpaintM
   return handleJsonResponse<InpaintMaskResponse>(response);
 }
 
+export async function deleteSession(uid: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/images/${uid}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Delete failed with status ${response.status}`);
+  }
+}
+
 // 404 means "model not generated yet", not an exceptional transport failure.
 export async function fetchCached3DModel(uid: string): Promise<ArrayBuffer | null> {
   const response = await fetch(`${API_BASE_URL}/objects/${uid}`);

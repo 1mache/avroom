@@ -384,6 +384,21 @@ input {
   box-shadow: 0 16px 30px rgba(217, 139, 39, 0.24);
 }
 
+.primary-button.danger {
+  background: linear-gradient(180deg, #e05252, #b91c1c);
+  box-shadow: 0 16px 30px rgba(185, 28, 28, 0.22);
+}
+
+.primary-button.danger.confirming {
+  background: linear-gradient(180deg, #ef4444, #991b1b);
+}
+
+.delete-row {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--gap-sm);
+}
+
 .primary-button.ghost {
   background: rgba(255, 255, 255, 0.86);
   border-color: rgba(16, 35, 67, 0.14);

@@ -1,3 +1,8 @@
+export interface SessionInfo {
+  uid: string;
+  name: string | null;
+}
+
 export interface ImageUploadResponse {
   image_id: string;
   original_filename?: string | null;
@@ -50,6 +55,7 @@ export type InpaintMaskResponse = ClickResultResponse;
 
 export interface UidCacheStatusResponse {
   uid: string;
+  name?: string | null;
   has_background: boolean;
   has_cutout: boolean;
   has_3d: boolean;

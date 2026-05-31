@@ -17,6 +17,7 @@ Screen orchestrator. Owns upload flow, segmentation mask choice, selected-mask i
 - Translate pointer movement from CSS pixels into natural-image pixels.
 - Clamp cutout movement by visible object bounds, not by full transparent PNG extent.
 - Restore enough metadata from `/images/{uid}/cache` so old sessions can drag immediately without re-running segmentation.
+- Manage session naming: editable name field above frame visible whenever `imageId` is set; Enter key calls `POST /images/{uid}/name`; 409 conflicts surface in error modal.
 
 ### Result-stage structure
 
@@ -87,13 +88,18 @@ Renders segmentation candidates after `POST /images/segment`.
 
 [`react-front/src/components/widgets/SessionPicker.tsx`](../../react-front/src/components/widgets/SessionPicker.tsx)
 
-No structural change, but session restore now matters more:
+Props:
 
-- `MainPage.handleSessionSelect(...)` restores `backgroundSrc`.
-- It also restores `cutoutSrc`.
-- It now also restores `cutoutAlphaBounds` from `GET /images/{uid}/cache`.
+| Prop | Type | Purpose |
+|---|---|---|
+| `onSessionSelect` | `(uid: string) => void` | Called when user clicks a chip. |
+| `refreshKey` | `number` | Increment to force a re-fetch of session list. |
 
-That extra metadata is what lets an old cutout drag with correct clamping even though the original segmentation request is long gone.
+Fetches `GET /images/sessions` (returns `SessionInfo[]`) on mount and whenever `refreshKey` changes. Enriches each session with a `hasResults` flag from `GET /images/{uid}/cache`.
+
+Chip label: displays `name` if set, otherwise truncated uid (`uid.slice(0,8)+"..."`). `title` attribute always shows full uid.
+
+`MainPage` increments `sessionsRefreshKey` after upload (so new session appears without page reload) and after a name is saved successfully (so chip label updates immediately).
 
 ## `Model3DFrame`
 

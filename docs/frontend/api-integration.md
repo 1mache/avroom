@@ -49,6 +49,12 @@ Response mirrors legacy final result:
 
 `MainPage` turns base64 strings into `data:image/png;base64,...` URLs and drops them into existing result rendering.
 
+## Sessions
+
+`getSessions()` fetches `GET /images/sessions` and returns `SessionInfo[]`. Each entry has `uid` and `name` (nullable). Previously returned bare `string[]`; updated after session naming was added.
+
+`setSessionName(uid, name)` posts `{name}` to `POST /images/{uid}/name` and returns the updated `SessionInfo`. Backend enforces uniqueness — on collision the backend returns 409 and `handleJsonResponse` throws with the body text, which `MainPage` routes to the error modal.
+
 ## 3D
 
 `generate3DModel(uid)` still posts to `POST /objects/test-3d`. Backend expects final `{uid}_cutout.png`, now written by `/images/inpaint`.

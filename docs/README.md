@@ -2,19 +2,16 @@
 
 Welcome to the Avroom architecture documentation. These docs describe the **current state** of the project as found in the code (not aspirational design).
 
-> Last refresh: 2026-05-13
+> Last refresh: 2026-06-01
 
 What changed in this refresh:
 
-- Segmentation: `predict_mask` / `get_mask_at_point` now returns `(expanded_mask, original_mask)` tuple; updated `conventions.md`, `ai-pipeline/ai-engines/contracts.md`, `segmentation/contracts.md`, `segmentation/components.md`.
-- Core flow: `ObjectRemover` uses `tight_mask` (SAM-dilated) for the inpaint path and `original_mask` (raw SAM) for the BGRA cutout composer; updated `data-flow.md` and `ai-pipeline/core/flow.md`.
-- Backend: added `GET /images/sessions`, `GET /images/{uid}/cache|background|cutout|original`, and `GET /objects/{uid}` to `api-endpoints.md`.
-- Backend: documented `sessions.json`, `get_sessions_file()`, `register_uid()`, and `get_3d_storage_dir()` in `settings-and-storage.md`; updated storage layout tree.
-- Backend: added `UidCacheStatusResponse` to `schemas.md`.
-- Frontend: documented `SessionPicker` and `Model3DFrame` components in `components.md`.
-- Frontend: added `getSessions`, `getUidCacheStatus`, `fetchCached3DModel` to `api-integration.md`.
-- Frontend: added `normalizedClickPos`, `glbData`, `isGenerating3D` state and `UidCacheStatusResponse` type to `state-and-types.md`.
-- Frontend: added session restore sequence diagram to `user-flow.md`.
+- Backend: new `POST /images/{uid}/name` endpoint; `GET /images/sessions` now returns `list[SessionInfo]` (was `list[str]`); `GET /images/{uid}/cache` now includes `name` field — updated `api-endpoints.md`.
+- Backend: added `SessionInfo`, `SetNameRequest` models; added `name` field to `UidCacheStatusResponse` — updated `schemas.md`.
+- Backend: added `get_names_file()`, `load_names()`, `set_session_name()` to `settings.py`; documented `names.json` storage layout; fixed `register_uid` line reference (104–121) — updated `settings-and-storage.md`.
+- Frontend: `getSessions()` returns `SessionInfo[]`; added `setSessionName()` API function — updated `api-integration.md`.
+- Frontend: added `sessionName` and `sessionsRefreshKey` state; added `SessionInfo` type; updated `UidCacheStatusResponse` with `name?` — updated `state-and-types.md`.
+- Frontend: `SessionPicker` now accepts `refreshKey` prop and shows custom names on chips; `MainPage` has editable session name field — updated `components.md`.
 
 If you change architecture, run the [`update-avroom-docs`](../.cursor/skills/update-avroom-docs/SKILL.md) skill to keep these files in sync with the code.
 

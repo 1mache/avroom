@@ -4,11 +4,12 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 
 | Method | Path | Request | Response |
 |---|---|---|---|
-| `GET` | `/images/sessions` | none | `list[str]` |
+| `GET` | `/images/sessions` | none | `list[SessionInfo]` |
 | `POST` | `/images/upload` | multipart file | `ImageUploadResponse` |
 | `POST` | `/images/segment` | `SegmentRequest` | `SegmentResponse` |
 | `POST` | `/images/inpaint` | `InpaintMaskRequest` | `InpaintMaskResponse` |
 | `POST` | `/images/click` | `ClickRequest` | `ClickResultResponse` legacy one-step flow |
+| `POST` | `/images/{uid}/name` | `SetNameRequest` | `SessionInfo` |
 | `GET` | `/images/{uid}/cache` | path `uid` | `UidCacheStatusResponse` |
 | `GET` | `/images/{uid}/background` | path `uid` | PNG file |
 | `GET` | `/images/{uid}/cutout` | path `uid` | PNG file |
@@ -51,9 +52,25 @@ If `mask_id` is unknown or candidate cache is gone, endpoint returns `404`.
 
 Legacy one-step endpoint. It still runs old `ObjectRemover` pipeline and returns final background/cutout directly. Frontend no longer uses it for normal flow.
 
+## `POST /images/{uid}/name`
+
+Assigns a human-readable label to a session.
+
+Behavior:
+
+1. Call `set_session_name(uid, name)` in `settings.py`.
+2. If `name` already belongs to a different uid, raise `409 Conflict` with error text.
+3. On success, write `{uid: name}` entry to `tmp/names.json` and return `SessionInfo`.
+
+Names are unique across all sessions. Renaming a uid to its current name is a no-op (allowed).
+
+## `GET /images/sessions`
+
+Returns all registered UIDs enriched with human-readable names from `names.json`. Uids without a saved name have `name: null`.
+
 ## `GET /images/{uid}/cache`
 
-Returns final artifact existence flags and derives `cutout_bounds` from cached final cutout PNG when present. Session restore uses this to recover drag bounds without re-running segmentation.
+Returns final artifact existence flags, derives `cutout_bounds` from cached final cutout PNG when present, and includes the saved `name` from `names.json`. Session restore uses this to recover drag bounds and display the session label without re-running segmentation.
 
 ## Bounds Extraction
 

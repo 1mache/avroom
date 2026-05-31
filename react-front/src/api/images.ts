@@ -6,6 +6,7 @@ import type {
   InpaintMaskResponse,
   SegmentRequest,
   SegmentResponse,
+  SessionInfo,
   UidCacheStatusResponse,
 } from "../types/api";
 
@@ -64,9 +65,21 @@ export async function generate3DModel(uid: string): Promise<ArrayBuffer> {
   return response.arrayBuffer();
 }
 
-export async function getSessions(): Promise<string[]> {
+export async function getSessions(): Promise<SessionInfo[]> {
   const response = await fetch(`${API_BASE_URL}/images/sessions`);
-  return handleJsonResponse<string[]>(response);
+  return handleJsonResponse<SessionInfo[]>(response);
+}
+
+export async function setSessionName(uid: string, name: string): Promise<SessionInfo> {
+  const response = await fetch(`${API_BASE_URL}/images/${uid}/name`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name }),
+  });
+
+  return handleJsonResponse<SessionInfo>(response);
 }
 
 export async function getUidCacheStatus(uid: string): Promise<UidCacheStatusResponse> {

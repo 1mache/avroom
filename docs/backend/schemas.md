@@ -2,6 +2,21 @@
 
 All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.py).
 
+## Sessions
+
+`SessionInfo` is returned by `GET /images/sessions` and `POST /images/{uid}/name`.
+
+| Field | Type | Description |
+|---|---|---|
+| `uid` | `str` | Session UUID. |
+| `name` | `str \| null` | Human-readable label, or `null` if unnamed. |
+
+`SetNameRequest` is the body of `POST /images/{uid}/name`.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `str` | Desired label (min length 1). |
+
 ## Upload
 
 `ImageUploadResponse` is returned by `POST /images/upload`.
@@ -57,6 +72,15 @@ All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.
 | `natural_height` | `int` | Full cutout PNG height. |
 
 `UidCacheStatusResponse` reports final cached artifacts and `cutout_bounds` for restored sessions.
+
+| Field | Type | Description |
+|---|---|---|
+| `uid` | `str` | Session UUID. |
+| `name` | `str \| null` | Human-readable label from `names.json`, or `null`. |
+| `has_background` | `bool` | Background PNG cached on disk. |
+| `has_cutout` | `bool` | Cutout PNG cached on disk. |
+| `has_3d` | `bool` | GLB model cached on disk. |
+| `cutout_bounds` | `CutoutBounds \| null` | Tight visible-object bounds from cached cutout. |
 
 ## Legacy
 

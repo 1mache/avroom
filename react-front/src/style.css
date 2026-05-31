@@ -675,6 +675,29 @@ input {
   font-style: italic;
 }
 
+.session-name-row {
+  display: flex;
+  justify-content: center;
+}
+
+.session-name-input {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: var(--font-sm);
+  text-align: center;
+  padding: 4px 8px;
+  outline: none;
+  width: 260px;
+  transition: border-color 0.15s;
+}
+
+.session-name-input:focus {
+  border-bottom-color: var(--accent);
+}
+
 .session-chip-skeleton {
   flex-shrink: 0;
   width: 90px;

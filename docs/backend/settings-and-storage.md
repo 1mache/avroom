@@ -61,13 +61,34 @@ Because the deepest `pyproject.toml` walking up from `settings.py` is [`fastApi-
 <image_storage_dir>/../sessions.json   →   fastApi-app/tmp/sessions.json
 ```
 
-`register_uid(uid)` ([`settings.py`](../../fastApi-app/settings.py) lines 57–74) appends a UID string to that file. The file contains a plain JSON array of UUID strings:
+`register_uid(uid)` ([`settings.py`](../../fastApi-app/settings.py) lines 104–121) appends a UID string to that file. The file contains a plain JSON array of UUID strings:
 
 ```json
 ["f5e0edc4-fe7a-48bf-bd76-d706d32b61c1", "a1b2c3d4-..."]
 ```
 
-Every `POST /images/upload` calls `register_uid` after writing the image. `GET /images/sessions` reads and returns this array. The file is created on first write; if it doesn't exist yet, `GET /images/sessions` returns `[]`.
+Every `POST /images/upload` calls `register_uid` after writing the image. `GET /images/sessions` reads the array, enriches each uid with its name from `names.json`, and returns `list[SessionInfo]`. The file is created on first write; if it doesn't exist yet, `GET /images/sessions` returns `[]`.
+
+## Names file
+
+`get_names_file()` ([`settings.py`](../../fastApi-app/settings.py) lines 57–59) returns:
+
+```
+<image_storage_dir>/../names.json   →   fastApi-app/tmp/names.json
+```
+
+The file is a JSON object mapping uid strings to human-readable names:
+
+```json
+{
+  "f5e0edc4-fe7a-48bf-bd76-d706d32b61c1": "living room before",
+  "a1b2c3d4-...": "kitchen test"
+}
+```
+
+`load_names()` ([`settings.py`](../../fastApi-app/settings.py) lines 62–79) reads this file and returns a `dict[str, str]`. Returns `{}` if file absent or malformed — callers never need to handle a missing-file case.
+
+`set_session_name(uid, name)` ([`settings.py`](../../fastApi-app/settings.py) lines 82–101) writes a new entry. Raises `ValueError` if `name` is already assigned to a *different* uid (uniqueness enforced here, not at the HTTP layer). Called by `POST /images/{uid}/name`.
 
 ## 3D model storage
 
@@ -78,10 +99,13 @@ Every `POST /images/upload` calls `register_uid` after writing the image. `GET /
 ```
 fastApi-app/tmp/
 ├── sessions.json                    - array of all registered UIDs
+├── names.json                       - uid → human-readable name map
 ├── images/
 │   ├── {image_id}.{ext}             - one per upload (jpg/png/...)
-│   ├── {image_id}_background.png    - background result (written on click)
-│   ├── {image_id}_cutout.png        - cutout result (written on click)
+│   ├── {image_id}_background.png    - background result (written on inpaint)
+│   ├── {image_id}_cutout.png        - cutout result (written on inpaint)
+│   ├── {image_id}_mask_{n}_refined.npy   - candidate refined mask (segmentation)
+│   ├── {image_id}_mask_{n}_cutout.png    - candidate cutout preview (segmentation)
 │   └── point/
 │       └── {image_id}_debug.png     - click-marker overlay
 └── 3d/

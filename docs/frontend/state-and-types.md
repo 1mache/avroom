@@ -30,6 +30,8 @@ The frontend still keeps all screen state inside [`react-front/src/components/la
 | `isGenerating3D` | `boolean` | `handleToggle3D` | 3D toggle busy/disabled state. |
 | `glbData` | `ArrayBuffer \| null` | 3D API responses | Raw GLB bytes for `Model3DFrame`. |
 | `error` | `string \| null` | async handlers | Error modal contents. |
+| `sessionName` | `string` | upload / session restore / name input | Current value of editable session name field. Prefilled with uid on upload; prefilled with `status.name ?? uid` on session restore. |
+| `sessionsRefreshKey` | `number` | upload / name save | Incremented after upload or after name saved. Passed as `refreshKey` prop to `SessionPicker` to trigger re-fetch. |
 
 ## Drag refs
 
@@ -67,6 +69,11 @@ These refs are part of drag implementation but are intentionally not state:
 All API types live in [`react-front/src/types/api.ts`](../../react-front/src/types/api.ts). They mirror backend Pydantic models in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.py).
 
 ```ts
+export interface SessionInfo {
+  uid: string;
+  name: string | null;
+}
+
 export interface ClickResultResponse {
   image_id: string;
   background_b64: string;
@@ -94,6 +101,7 @@ export interface InpaintMaskRequest {
 
 export interface UidCacheStatusResponse {
   uid: string;
+  name?: string | null;
   has_background: boolean;
   has_cutout: boolean;
   has_3d: boolean;

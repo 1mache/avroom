@@ -8,6 +8,7 @@ import {
   getUidCacheStatus,
   inpaintMask,
   segmentImage,
+  setSessionName as saveSessionName,
   uploadImage,
 } from "../../api/images";
 import avroomLogo from "../../assets/avroom.png";
@@ -152,6 +153,8 @@ export const MainPage: React.FC = () => {
   const [isGenerating3D, setIsGenerating3D] = useState(false);
   const [glbData, setGlbData] = useState<ArrayBuffer | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sessionName, setSessionName] = useState<string>("");
+  const [sessionsRefreshKey, setSessionsRefreshKey] = useState(0);
 
   const replaceUploadedImageUrl = useCallback((nextUrl: string | null) => {
     setUploadedImageUrl((previousUrl) => {
@@ -249,6 +252,7 @@ export const MainPage: React.FC = () => {
 
     try {
       const status = await getUidCacheStatus(uid);
+      setSessionName(status.name ?? uid);
       if (status.has_background && status.has_cutout) {
         setBackgroundSrc(`${API_BASE_URL}/images/${uid}/background`);
         setCutoutSrc(`${API_BASE_URL}/images/${uid}/cutout`);
@@ -257,6 +261,7 @@ export const MainPage: React.FC = () => {
       }
     } catch {
       // Non-fatal. User can rerun cutout.
+      setSessionName(uid);
     }
   }, [replaceUploadedImageUrl, resetWorkspaceState]);
 
@@ -272,7 +277,9 @@ export const MainPage: React.FC = () => {
     try {
       const response = await uploadImage(uploadedFile);
       setImageId(response.image_id);
+      setSessionName(response.image_id);
       setUploadedFile(null);
+      setSessionsRefreshKey((k) => k + 1);
     } catch (uploadError) {
       const message =
         uploadError instanceof Error ? uploadError.message : "Unexpected upload error.";
@@ -399,6 +406,23 @@ export const MainPage: React.FC = () => {
       setIsGenerating3D(false);
     }
   }, [glbData, imageId, show3D]);
+
+  const handleNameKeyDown = useCallback(async (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter" || !imageId || !sessionName.trim()) {
+      return;
+    }
+
+    event.currentTarget.blur();
+
+    try {
+      await saveSessionName(imageId, sessionName.trim());
+      setSessionsRefreshKey((k) => k + 1);
+    } catch (nameError) {
+      const message =
+        nameError instanceof Error ? nameError.message : "Failed to save session name.";
+      setError(message);
+    }
+  }, [imageId, sessionName]);
 
   const triggerFileInput = useCallback(() => {
     if (frameInputRef.current) {
@@ -658,10 +682,24 @@ export const MainPage: React.FC = () => {
 
       <main className="page-main">
         <section className="workspace-rail">
-          <SessionPicker onSessionSelect={handleSessionSelect} />
+          <SessionPicker onSessionSelect={handleSessionSelect} refreshKey={sessionsRefreshKey} />
         </section>
 
         <section className="workspace-panel">
+          {imageId ? (
+            <div className="session-name-row">
+              <input
+                type="text"
+                className="session-name-input"
+                value={sessionName}
+                onChange={(e) => setSessionName(e.target.value)}
+                onKeyDown={handleNameKeyDown}
+                placeholder="Session name (Enter to save)"
+                aria-label="Session name"
+              />
+            </div>
+          ) : null}
+
           <div className="main-frame-container">
             {!backgroundSrc ? (
               <UploadFrame

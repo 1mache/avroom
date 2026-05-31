@@ -5,6 +5,22 @@ from typing import Annotated
 from pydantic import BaseModel, Field
 
 
+class SessionInfo(BaseModel):
+    """Lightweight session descriptor returned by the sessions list endpoint."""
+
+    uid: Annotated[str, Field(description="Session UID.")]
+    name: Annotated[
+        str | None,
+        Field(default=None, description="Human-readable label set by the user, or None if unnamed."),
+    ]
+
+
+class SetNameRequest(BaseModel):
+    """Request payload for assigning a human-readable name to a session."""
+
+    name: Annotated[str, Field(min_length=1, description="Desired session name.")]
+
+
 class ImageProcessingOptions(BaseModel):
     """Optional knobs for image processing.
 
@@ -172,6 +188,10 @@ class UidCacheStatusResponse(BaseModel):
     """Indicates which processed artifacts are cached on disk for a given UID."""
 
     uid: Annotated[str, Field(description="Session UID.")]
+    name: Annotated[
+        str | None,
+        Field(default=None, description="Human-readable session name, if one was set."),
+    ]
     has_background: Annotated[bool, Field(description="Background PNG is cached.")]
     has_cutout: Annotated[bool, Field(description="Cutout PNG is cached.")]
     has_3d: Annotated[bool, Field(description="GLB 3D model is cached.")]

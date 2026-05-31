@@ -31,9 +31,18 @@ from schemas.image import (
     SegmentMaskOption,
     SegmentRequest,
     SegmentResponse,
+    SessionInfo,
+    SetNameRequest,
     UidCacheStatusResponse,
 )
-from settings import get_3d_storage_dir, get_image_storage_dir, get_sessions_file, register_uid
+from settings import (
+    get_3d_storage_dir,
+    get_image_storage_dir,
+    get_sessions_file,
+    load_names,
+    register_uid,
+    set_session_name,
+)
 
 router = APIRouter(prefix="/images", tags=["images"])
 logger = logging.getLogger(__name__)
@@ -87,15 +96,21 @@ def _extract_cutout_bounds_from_png_bytes(image_bytes: bytes) -> CutoutBounds | 
 
 
 @router.get("/sessions")
-async def get_sessions() -> list[str]:
-    """Return all image UIDs registered via upload."""
+async def get_sessions() -> list[SessionInfo]:
+    """Return all image UIDs registered via upload, with optional human-readable names."""
+    logger.info("Sessions list requested")
     sessions_file = get_sessions_file()
-    if not sessions_file.exists():
-        return []
-    try:
-        return json.loads(sessions_file.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, ValueError):
-        return []
+    uids: list[str] = []
+    if sessions_file.exists():
+        try:
+            uids = json.loads(sessions_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, ValueError):
+            uids = []
+
+    names = load_names()
+    result = [SessionInfo(uid=u, name=names.get(u)) for u in uids]
+    logger.info("Sessions list returned: count=%d", len(result))
+    return result
 
 
 @router.post("/upload", response_model=ImageUploadResponse)
@@ -325,6 +340,24 @@ async def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
     )
 
 
+@router.post("/{uid}/name", response_model=SessionInfo)
+async def set_name(uid: str, request: SetNameRequest) -> SessionInfo:
+    """Assign a human-readable name to a session.
+
+    Names are unique across all sessions.  Returns 409 if the name is already
+    taken by a different session.
+    """
+    logger.info("Set name requested: uid=%s name=%r", uid, request.name)
+    try:
+        set_session_name(uid, request.name)
+    except ValueError as exc:
+        logger.error("Name conflict: uid=%s name=%r reason=%s", uid, request.name, exc)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    logger.info("Name set: uid=%s name=%r", uid, request.name)
+    return SessionInfo(uid=uid, name=request.name)
+
+
 @router.get("/{uid}/cache", response_model=UidCacheStatusResponse)
 async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     """Return which processed artifacts are cached on disk for the given UID."""
@@ -336,8 +369,10 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
         # Session restore should not need to re-run segmentation just to recover
         # drag bounds, so cache metadata derives from stored PNG on demand.
         cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_path.read_bytes())
+    names = load_names()
     status = UidCacheStatusResponse(
         uid=uid,
+        name=names.get(uid),
         has_background=(storage_dir / f"{uid}_background.png").exists(),
         has_cutout=cutout_path.exists(),
         has_3d=(get_3d_storage_dir() / f"{uid}.glb").exists(),

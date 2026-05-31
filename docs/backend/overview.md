@@ -72,9 +72,9 @@ Things to notice:
 |---|---|---|
 | Entry / app factory | [`fastApi-app/main.py`](../../fastApi-app/main.py) | `FastAPI()` instance, CORS, mount router. |
 | Settings | [`fastApi-app/settings.py`](../../fastApi-app/settings.py) | `get_image_storage_dir()` — see [settings-and-storage.md](settings-and-storage.md). |
-| Routes | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | `/images/upload` and `/images/click`. |
+| Routes | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | `/images/upload`, `/images/segment`, `/images/inpaint`, and legacy `/images/click`. |
 | Routes (3D test) | [`fastApi-app/api/objects.py`](../../fastApi-app/api/objects.py) | `/objects/test-3d` (returns GLB bytes). |
-| Core | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | Bridges HTTP requests to `ObjectRemover.remove_object`. |
+| Core | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | Bridges HTTP requests to `ObjectSegmentor`, `BackgroundInpainter`, and legacy `ObjectRemover`. |
 | Schemas | [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.py) | Pydantic models. |
 
 ## Project metadata — [`fastApi-app/pyproject.toml`](../../fastApi-app/pyproject.toml)
@@ -107,5 +107,5 @@ pip install -e ./TestModules
 - No authentication / sessions / users.
 - No image cleanup — uploads accumulate in `fastApi-app/tmp/images/` (and `point/` for debug overlays).
 - No background workers; processing is synchronous within the request.
-- No streaming; `/images/click` returns the full base64 payload in one JSON response.
-- No options pass-through to the pipeline yet (the `options` field on `ClickRequest` is parsed but not currently used inside `ObjectRemover.remove_object` — see [core-image-processing.md](core-image-processing.md)).
+- No streaming; `/images/segment` and `/images/inpaint` return full JSON payloads after each synchronous model phase.
+- No options pass-through to the new split pipeline yet; `options` is parsed but reserved.

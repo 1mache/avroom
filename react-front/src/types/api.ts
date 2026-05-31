@@ -18,6 +18,8 @@ export interface ClickRequest {
   options?: ClickRequestOptions;
 }
 
+export type SegmentRequest = ClickRequest;
+
 export interface ClickResultResponse {
   image_id: string;
   background_b64: string;
@@ -26,6 +28,25 @@ export interface ClickResultResponse {
   // Tight visible-object bounds inside full cutout PNG. Used by drag clamp.
   cutout_bounds?: CutoutBounds | null;
 }
+
+export interface SegmentMaskOption {
+  mask_id: string;
+  cutout_b64: string;
+  format: string;
+  cutout_bounds?: CutoutBounds | null;
+}
+
+export interface SegmentResponse {
+  image_id: string;
+  masks: SegmentMaskOption[];
+}
+
+export interface InpaintMaskRequest {
+  image_id: string;
+  mask_id: string;
+}
+
+export type InpaintMaskResponse = ClickResultResponse;
 
 export interface UidCacheStatusResponse {
   uid: string;

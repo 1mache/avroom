@@ -73,6 +73,10 @@ class ClickRequest(BaseModel):
     ] = None
 
 
+class SegmentRequest(ClickRequest):
+    """Request payload for segmentation-only candidate generation."""
+
+
 class CutoutBounds(BaseModel):
     """Tight visible-object bounds inside the cutout image."""
 
@@ -111,6 +115,57 @@ class ClickResultResponse(BaseModel):
         CutoutBounds | None,
         Field(default=None, description="Tight visible-object bounds inside the cutout PNG."),
     ]
+
+
+class SegmentMaskOption(BaseModel):
+    """One user-selectable segmentation candidate."""
+
+    mask_id: Annotated[
+        str,
+        Field(pattern=r"^\d+$", description="Identifier for the cached refined mask and cutout candidate."),
+    ]
+    cutout_b64: Annotated[
+        str,
+        Field(description="Base64-encoded BGRA cutout preview for this candidate."),
+    ]
+    format: Annotated[
+        str,
+        Field(description="Preview image format, currently 'png'."),
+    ]
+    cutout_bounds: Annotated[
+        CutoutBounds | None,
+        Field(default=None, description="Tight visible-object bounds inside this cutout PNG."),
+    ]
+
+
+class SegmentResponse(BaseModel):
+    """Segmentation-only response with all candidate masks."""
+
+    image_id: Annotated[
+        str,
+        Field(description="Identifier of the image that was segmented."),
+    ]
+    masks: Annotated[
+        list[SegmentMaskOption],
+        Field(description="User-selectable mask candidates in model return order."),
+    ]
+
+
+class InpaintMaskRequest(BaseModel):
+    """Request payload for inpainting one selected cached mask."""
+
+    image_id: Annotated[
+        str,
+        Field(description="Identifier of the image whose mask candidate should be inpainted."),
+    ]
+    mask_id: Annotated[
+        str,
+        Field(min_length=1, pattern=r"^\d+$", description="Identifier of the selected cached mask candidate."),
+    ]
+
+
+class InpaintMaskResponse(ClickResultResponse):
+    """Final result returned after selected-mask inpainting."""
 
 
 class UidCacheStatusResponse(BaseModel):

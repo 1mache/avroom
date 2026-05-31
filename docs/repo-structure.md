@@ -26,7 +26,7 @@ fastApi-app/
 ├── pyproject.toml      - tool.fastapi.entrypoint = "main:app"
 ├── api/
 │   ├── __init__.py
-│   └── routes.py       - /images/upload and /images/click
+│   └── routes.py       - /images/upload, /images/segment, /images/inpaint, legacy /images/click
 ├── core/
 │   ├── __init__.py
 │   └── image_processing.py - bridge to the AI pipeline + debug PNG

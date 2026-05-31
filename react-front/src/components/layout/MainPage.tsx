@@ -3,14 +3,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   API_BASE_URL,
-  clickImage,
   fetchCached3DModel,
   generate3DModel,
   getUidCacheStatus,
+  inpaintMask,
+  segmentImage,
   uploadImage,
 } from "../../api/images";
 import avroomLogo from "../../assets/avroom.png";
-import type { ClickRequest, CutoutBounds } from "../../types/api";
+import type { CutoutBounds, SegmentMaskOption, SegmentRequest } from "../../types/api";
+import { MaskPickerModal } from "../widgets/MaskPickerModal";
 import { Model3DFrame } from "../widgets/Model3DFrame";
 import { SessionPicker } from "../widgets/SessionPicker";
 import { UploadFrame } from "../widgets/UploadFrame";
@@ -141,9 +143,12 @@ export const MainPage: React.FC = () => {
   const [sessionLocked, setSessionLocked] = useState(false);
   const [showCutout, setShowCutout] = useState(false);
   const [show3D, setShow3D] = useState(false);
+  const [maskOptions, setMaskOptions] = useState<SegmentMaskOption[]>([]);
+  const [selectedMaskId, setSelectedMaskId] = useState<string | null>(null);
   const [isDraggingCutout, setIsDraggingCutout] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isInpainting, setIsInpainting] = useState(false);
   const [isGenerating3D, setIsGenerating3D] = useState(false);
   const [glbData, setGlbData] = useState<ArrayBuffer | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -171,6 +176,8 @@ export const MainPage: React.FC = () => {
     setSessionLocked(false);
     setShowCutout(false);
     setShow3D(false);
+    setMaskOptions([]);
+    setSelectedMaskId(null);
     setIsDraggingCutout(false);
     dragStateRef.current = null;
     setGlbData(null);
@@ -286,7 +293,7 @@ export const MainPage: React.FC = () => {
       return;
     }
 
-    const payload: ClickRequest = {
+    const payload: SegmentRequest = {
       image_id: imageId,
       x: naturalClickPos.x,
       y: naturalClickPos.y,
@@ -296,15 +303,15 @@ export const MainPage: React.FC = () => {
     setError(null);
 
     try {
-      const result = await clickImage(payload);
-      const base64Prefix = `data:image/${result.format};base64,`;
-      setBackgroundSrc(`${base64Prefix}${result.background_b64}`);
-      setCutoutSrc(`${base64Prefix}${result.cutout_b64}`);
-      setCutoutAlphaBounds(toCutoutAlphaBounds(result.cutout_bounds));
-      setSessionLocked(true);
-      setShowCutout(false);
-      setShow3D(false);
-      setGlbData(null);
+      const result = await segmentImage(payload);
+      if (result.masks.length === 0) {
+        throw new Error("No mask candidates returned.");
+      }
+
+      // Processing now has two phases: segmentation stops here so user can
+      // decide subjective best mask before expensive inpainting runs.
+      setMaskOptions(result.masks);
+      setSelectedMaskId(null);
     } catch (processError) {
       const message =
         processError instanceof Error ? processError.message : "Unexpected processing error.";
@@ -313,6 +320,45 @@ export const MainPage: React.FC = () => {
       setIsProcessing(false);
     }
   }, [imageId, naturalClickPos]);
+
+  const handleMaskPickerClose = useCallback(() => {
+    if (isInpainting) {
+      return;
+    }
+
+    setMaskOptions([]);
+    setSelectedMaskId(null);
+  }, [isInpainting]);
+
+  const handleMaskSelected = useCallback(async (maskId: string) => {
+    if (!imageId || isInpainting) {
+      return;
+    }
+
+    setSelectedMaskId(maskId);
+    setIsInpainting(true);
+    setError(null);
+
+    try {
+      const result = await inpaintMask({ image_id: imageId, mask_id: maskId });
+      const base64Prefix = `data:image/${result.format};base64,`;
+      setBackgroundSrc(`${base64Prefix}${result.background_b64}`);
+      setCutoutSrc(`${base64Prefix}${result.cutout_b64}`);
+      setCutoutAlphaBounds(toCutoutAlphaBounds(result.cutout_bounds));
+      setSessionLocked(true);
+      setShowCutout(false);
+      setShow3D(false);
+      setGlbData(null);
+      setMaskOptions([]);
+      setSelectedMaskId(null);
+    } catch (processError) {
+      const message =
+        processError instanceof Error ? processError.message : "Unexpected inpainting error.";
+      setError(message);
+    } finally {
+      setIsInpainting(false);
+    }
+  }, [imageId, isInpainting]);
 
   const handleToggle3D = useCallback(async () => {
     if (show3D) {
@@ -538,13 +584,18 @@ export const MainPage: React.FC = () => {
         }
       : undefined;
 
+  const isChoosingMask = maskOptions.length > 0;
   const uploadBusy = Boolean(imageId && !uploadedFile);
   const clickEnabled = Boolean(imageId && !sessionLocked);
-  const sessionStatus = backgroundSrc
-    ? "Results ready"
-    : imageId
-      ? "Image uploaded"
-      : "Awaiting upload";
+  const sessionStatus = isInpainting
+    ? "Inpainting"
+    : isChoosingMask
+      ? "Choose mask"
+      : backgroundSrc
+        ? "Results ready"
+        : imageId
+          ? "Image uploaded"
+          : "Awaiting upload";
 
   return (
     <div className="page">
@@ -571,6 +622,16 @@ export const MainPage: React.FC = () => {
             <pre className="error-modal-body">{error}</pre>
           </div>
         </div>
+      ) : null}
+
+      {isChoosingMask ? (
+        <MaskPickerModal
+          masks={maskOptions}
+          selectedMaskId={selectedMaskId}
+          isInpainting={isInpainting}
+          onSelect={handleMaskSelected}
+          onClose={handleMaskPickerClose}
+        />
       ) : null}
 
       <input
@@ -609,7 +670,7 @@ export const MainPage: React.FC = () => {
                 clickPosition={clickPosition}
                 onFileSelected={handleFileSelected}
                 onImageClick={handleImageClick}
-                disabled={isUploading || isProcessing || isGenerating3D}
+                disabled={isUploading || isProcessing || isChoosingMask || isInpainting || isGenerating3D}
                 clickEnabled={clickEnabled}
               />
             ) : (
@@ -677,7 +738,7 @@ export const MainPage: React.FC = () => {
               type="button"
               className={`primary-button${uploadBusy ? " ghost" : ""}`}
               onClick={uploadBusy ? triggerFileInput : handleUpload}
-              disabled={isUploading || isProcessing || isGenerating3D || (!uploadBusy && !uploadedFile)}
+              disabled={isUploading || isProcessing || isChoosingMask || isInpainting || isGenerating3D || (!uploadBusy && !uploadedFile)}
             >
               {isUploading ? "Uploading..." : uploadBusy ? "Upload other" : "Upload"}
             </button>
@@ -686,9 +747,9 @@ export const MainPage: React.FC = () => {
               type="button"
               className="primary-button secondary"
               onClick={handleCutOut}
-              disabled={!imageId || !clickPosition || sessionLocked || isProcessing}
+              disabled={!imageId || !clickPosition || sessionLocked || isProcessing || isChoosingMask || isInpainting}
             >
-              {isProcessing ? "Running..." : "Cut Out"}
+              {isProcessing ? "Segmenting..." : isInpainting ? "Inpainting..." : "Cut Out"}
             </button>
           </div>
         </section>

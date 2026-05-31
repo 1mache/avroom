@@ -12,18 +12,21 @@ The frontend still keeps all screen state inside [`react-front/src/components/la
 | `clickPosition` | `{ x; y } \| null` | `handleImageClick` | Display-space dot overlay in `UploadFrame`. |
 | `naturalClickPos` | `{ x; y } \| null` | `handleImageClick` | Natural-image click coordinate sent to backend. |
 | `normalizedClickPos` | `{ x; y } \| null` | `handleImageClick` | Camera bias input for `Model3DFrame`. |
-| `backgroundSrc` | `string \| null` | `clickImage` / session restore | Background result image URL. |
-| `cutoutSrc` | `string \| null` | `clickImage` / session restore | Cutout result image URL. |
+| `backgroundSrc` | `string \| null` | `inpaintMask` / session restore | Background result image URL. |
+| `cutoutSrc` | `string \| null` | `inpaintMask` / session restore | Cutout result image URL. |
 | `backgroundNaturalSize` | `{ width; height } \| null` | `handleBackgroundLoad` | Natural size of background image. Used to convert drag between CSS pixels and image pixels. |
 | `resultStageSize` | `{ width; height } \| null` | `measureResultStage` | Actual size of rendered result viewport. |
 | `cutoutAlphaBounds` | `CutoutAlphaBounds \| null` | backend responses | Tight visible-object bounds inside full cutout PNG. |
 | `cutoutOffset` | `{ x; y }` | pointer drag lifecycle | Current cutout translation in natural-image pixels. |
-| `sessionLocked` | `boolean` | `clickImage` / reset / session restore | Prevents re-clicking source image after segmentation result is active. |
+| `sessionLocked` | `boolean` | `inpaintMask` / reset / session restore | Prevents re-clicking source image after final result is active. |
 | `showCutout` | `boolean` | dashboard toggle | Whether draggable cutout overlay is rendered. |
 | `show3D` | `boolean` | dashboard toggle | Whether 3D overlay is rendered. |
+| `maskOptions` | `SegmentMaskOption[]` | `segmentImage` / reset / modal close | Candidate cutouts shown in mask picker modal. |
+| `selectedMaskId` | `string \| null` | mask picker selection | Busy-state marker for selected candidate. |
 | `isDraggingCutout` | `boolean` | pointer drag lifecycle | Keeps window-level pointer listeners alive and sets drag cursor. |
 | `isUploading` | `boolean` | `handleUpload` | Upload button busy state. |
-| `isProcessing` | `boolean` | `handleCutOut` | Cut Out button busy state. |
+| `isProcessing` | `boolean` | `handleCutOut` | Segmentation busy state. |
+| `isInpainting` | `boolean` | `handleMaskSelected` | Selected-mask inpainting busy state. |
 | `isGenerating3D` | `boolean` | `handleToggle3D` | 3D toggle busy/disabled state. |
 | `glbData` | `ArrayBuffer \| null` | 3D API responses | Raw GLB bytes for `Model3DFrame`. |
 | `error` | `string \| null` | async handlers | Error modal contents. |
@@ -53,7 +56,7 @@ These refs are part of drag implementation but are intentionally not state:
 
 ## State invariants
 
-- Picking a new file resets click state, result state, drag state, 3D state, and any cached bounds. User must upload again before Cut Out is available.
+- Picking a new file resets click state, result state, mask options, drag state, 3D state, and any cached bounds. User must upload again before Cut Out is available.
 - Session restore may load `cutoutAlphaBounds` before background image metrics exist. `cutoutOffset` is therefore re-clamped when either bounds or background size changes.
 - `cutoutOffset` always lives in natural-image pixels. Pointer movement is converted from screen pixels into natural pixels during drag.
 - If backend does not provide `cutout_bounds`, drag still renders, but clamping falls back to full-image bounds.
@@ -70,6 +73,23 @@ export interface ClickResultResponse {
   cutout_b64: string;
   format: string;
   cutout_bounds?: CutoutBounds | null;
+}
+
+export interface SegmentMaskOption {
+  mask_id: string;
+  cutout_b64: string;
+  format: string;
+  cutout_bounds?: CutoutBounds | null;
+}
+
+export interface SegmentResponse {
+  image_id: string;
+  masks: SegmentMaskOption[];
+}
+
+export interface InpaintMaskRequest {
+  image_id: string;
+  mask_id: string;
 }
 
 export interface UidCacheStatusResponse {

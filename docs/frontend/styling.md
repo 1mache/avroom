@@ -29,7 +29,7 @@ The frontend uses **plain global CSS** — no Tailwind, no CSS modules, no style
 }
 ```
 
-- Component classes are utility-ish but not strict: `.page`, `.page-header`, `.page-subtitle`, `.frame`, `.frame-title`, `.frame-image`, `.frame-placeholder`, `.upload-frame`, `.upload-placeholder`, `.upload-icon`, `.image-container`, `.click-dot`, `.action-column`, `.primary-button`, `.primary-button.secondary`, `.error-text`, `.file-input`.
+- Component classes are utility-ish but not strict. Mask picker styles also live here: `.mask-modal-backdrop`, `.mask-modal`, `.mask-option-grid`, `.mask-option-card`, and `.mask-option-preview`.
 - Responsive layout for small screens uses a single `@media (max-width: 768px)` block.
 
 ## Where each class is used

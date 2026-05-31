@@ -1,4 +1,13 @@
-import type { ClickRequest, ClickResultResponse, ImageUploadResponse, UidCacheStatusResponse } from "../types/api";
+import type {
+  ClickRequest,
+  ClickResultResponse,
+  ImageUploadResponse,
+  InpaintMaskRequest,
+  InpaintMaskResponse,
+  SegmentRequest,
+  SegmentResponse,
+  UidCacheStatusResponse,
+} from "../types/api";
 
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000";
@@ -63,6 +72,30 @@ export async function getSessions(): Promise<string[]> {
 export async function getUidCacheStatus(uid: string): Promise<UidCacheStatusResponse> {
   const response = await fetch(`${API_BASE_URL}/images/${uid}/cache`);
   return handleJsonResponse<UidCacheStatusResponse>(response);
+}
+
+export async function segmentImage(payload: SegmentRequest): Promise<SegmentResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/segment`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  return handleJsonResponse<SegmentResponse>(response);
+}
+
+export async function inpaintMask(payload: InpaintMaskRequest): Promise<InpaintMaskResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/inpaint`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  return handleJsonResponse<InpaintMaskResponse>(response);
 }
 
 // 404 means "model not generated yet", not an exceptional transport failure.

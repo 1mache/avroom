@@ -14,9 +14,9 @@ flowchart LR
     outputs[("debug outputs<br/>TestModules/outputs/")]
 
     user -->|HTTP| spa
-    spa -->|"POST /images/upload<br/>POST /images/click<br/>POST /objects/test-3d"| api
+    spa -->|"POST /images/upload<br/>POST /images/segment<br/>POST /images/inpaint<br/>POST /objects/test-3d"| api
     api -->|read/write files| storage
-    api -->|"in-process import<br/>ObjectRemover.remove_object"| pipeline
+    api -->|"in-process import<br/>ObjectSegmentor / BackgroundInpainter"| pipeline
     pipeline -->|debug PNGs| outputs
 ```
 
@@ -43,7 +43,7 @@ flowchart LR
 - Distributed as Python package `avroom_object_removal` (sources under `TestModules/src/`, imported as `avroom_object_removal.*`).
 - Installed editable via the root [`requirements.txt`](../requirements.txt) line 1: `-e ./TestModules`.
 - Public surface is `ObjectRemover` plus four per-domain Facades (`DepthMappingFacade`, `ImageSegmentationFacade`, `ImageInpaintingFacade`, `Reconstruction3DFacade`) and their Strategy ABCs — all re-exported from [`TestModules/src/__init__.py`](../TestModules/src/__init__.py).
-- `ObjectRemover.remove_object` orchestrates depth mapping → adapter → router → SAM → mask refinement → hybrid inpainting → BGRA cutout composition.
+- `ObjectRemover.remove_object` still supports the legacy one-step path. Normal app flow now uses `ObjectSegmentor` for candidate masks, then `BackgroundInpainter` after user chooses one.
 - `Reconstruction3DFacade` is a separate, optional surface for image-to-3D (GLB). By default it uses **TripoSR** (`TriposrReconstructionStrategy`); other strategies (OpenLRM, Trellis, etc.) can be injected. It is **not** invoked by `ObjectRemover` or by the `/images/*` HTTP endpoints today.
 - See [ai-pipeline/](ai-pipeline/README.md) for details.
 
@@ -54,25 +54,21 @@ HTTP endpoints (MVP):
 | Endpoint | Request | Response |
 |---|---|---|
 | `POST /images/upload` | `multipart/form-data` with `file` | `ImageUploadResponse` (`image_id`, `original_filename`, `stored_path`) |
-| `POST /images/click` | `ClickRequest` (`image_id`, `x`, `y`, optional `options`) | `ClickResultResponse` (`background_b64`, `cutout_b64`, `format`) |
+| `POST /images/segment` | `SegmentRequest` (`image_id`, `x`, `y`, optional `options`) | `SegmentResponse` (`masks[]` with `mask_id`, `cutout_b64`, `cutout_bounds`) |
+| `POST /images/inpaint` | `InpaintMaskRequest` (`image_id`, `mask_id`) | `InpaintMaskResponse` (`background_b64`, `cutout_b64`, `format`) |
+| `POST /images/click` | `ClickRequest` | Legacy `ClickResultResponse` |
 | `POST /objects/test-3d` | `{"uid": "..."}` | raw GLB bytes (`model/gltf-binary`) |
 
 Schemas in [`fastApi-app/schemas/image.py`](../fastApi-app/schemas/image.py); frontend mirrors them in [`react-front/src/types/api.ts`](../react-front/src/types/api.ts).
 
-The backend ↔ pipeline contract is the single Python call:
+The backend ↔ pipeline contract is now split:
 
 ```89:96:fastApi-app/core/image_processing.py
-    remover = _get_object_remover_class()()
-    image_key = f"memory://{hashlib.sha256(image_bytes).hexdigest()}"
-    background_bgr, cutout_bgra = remover.remove_object(
-        image_path=image_key,
-        x=x,
-        y=y,
-        image_bytes=image_bytes,
-    )
+    candidates = segmentor.get_mask_for_object_at_position(...)
+    background_bgr = inpainter.cut_mask_from_image(original_bgr, selected_refined_mask)
 ```
 
-`remove_object` accepts `image_path`, `x`, `y`, an optional `image_bytes` (used in the API path so it never needs to re-read from disk), and returns `(background_bgr, cutout_bgra)` numpy arrays which the backend PNG-encodes.
+`ObjectSegmentor` returns `(refined_mask, cutout_bgra)` candidates. Backend caches refined masks as `.npy` files and sends cutout previews to frontend. `BackgroundInpainter` receives selected refined mask after user choice.
 
 ## Process / deployment model
 
@@ -82,6 +78,6 @@ The backend ↔ pipeline contract is the single Python call:
 
 ## Where to read next
 
-- [data-flow.md](data-flow.md) — full request lifecycle, click → result.
+- [data-flow.md](data-flow.md) — full request lifecycle, segment → choose mask → inpaint.
 - [tech-stack.md](tech-stack.md) — concrete versions of every dependency.
 - [conventions.md](conventions.md) — design patterns and project-wide rules.

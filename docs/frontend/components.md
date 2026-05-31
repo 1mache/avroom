@@ -1,16 +1,17 @@
 # Components
 
-Current frontend has four important screen components plus one data sidebar widget.
+Current frontend has five important screen components plus one data sidebar widget.
 
 ## `MainPage`
 
 [`react-front/src/components/layout/MainPage.tsx`](../../react-front/src/components/layout/MainPage.tsx)
 
-Screen orchestrator. Owns upload flow, click-to-cutout flow, session restore flow, draggable cutout overlay, and optional 3D overlay.
+Screen orchestrator. Owns upload flow, segmentation mask choice, selected-mask inpainting, session restore flow, draggable cutout overlay, and optional 3D overlay.
 
 ### Responsibilities
 
 - Hold upload/session/result state.
+- Hold temporary `maskOptions` state while user chooses segmentation candidate.
 - Convert backend `cutout_bounds` metadata into local drag bounds.
 - Measure rendered result viewport and derive the exact contained image rect used by `object-fit: contain`.
 - Translate pointer movement from CSS pixels into natural-image pixels.
@@ -70,6 +71,17 @@ Important split:
 
 - `UploadFrame` handles **where user clicked on original image**.
 - `MainPage` handles **how returned cutout can later move on top of processed background**.
+
+## `MaskPickerModal`
+
+[`react-front/src/components/widgets/MaskPickerModal.tsx`](../../react-front/src/components/widgets/MaskPickerModal.tsx)
+
+Renders segmentation candidates after `POST /images/segment`.
+
+- Shows cutout previews, not black-white masks.
+- Uses horizontal grid/scroll so several candidates can be compared.
+- Locks close/select buttons while selected mask is being inpainted.
+- Emits only `mask_id`; `MainPage` owns API call and final result state.
 
 ## `SessionPicker`
 

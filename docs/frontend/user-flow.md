@@ -1,8 +1,6 @@
 # User Flow
 
-This document covers both original upload/cutout flow and new cutout-drag flow.
-
-## Primary sequence
+Primary flow: pick image → upload → click object → segment → choose mask → inpaint → optional cutout overlay.
 
 ```mermaid
 sequenceDiagram
@@ -14,97 +12,39 @@ sequenceDiagram
 
     User->>UF: choose file
     UF->>MP: onFileSelected(file)
-    MP->>MP: reset derived state + make object URL
-
-    User->>MP: click "Upload"
+    User->>MP: click Upload
     MP->>API: uploadImage(file)
     API->>Backend: POST /images/upload
     Backend-->>API: ImageUploadResponse
     API-->>MP: image_id
 
-    User->>UF: click original image
-    UF->>UF: compute display/natural/normalized coords
-    UF->>MP: onImageClick(...)
+    User->>UF: click object point
+    UF->>MP: display/natural/normalized coords
+    User->>MP: click Cut Out
+    MP->>API: segmentImage({image_id,x,y})
+    API->>Backend: POST /images/segment
+    Backend-->>API: SegmentResponse(masks[])
+    MP-->>User: MaskPickerModal
 
-    User->>MP: click "Cut Out"
-    MP->>API: clickImage({ image_id, x, y })
-    API->>Backend: POST /images/click
-    Backend-->>API: background_b64, cutout_b64, cutout_bounds
-    API-->>MP: ClickResultResponse
-    MP->>MP: build data URLs + store drag bounds
-
-    User->>MP: toggle "Show cutout"
-    MP->>MP: render cutout overlay on measured stage
+    User->>MP: select mask option
+    MP->>API: inpaintMask({image_id,mask_id})
+    API->>Backend: POST /images/inpaint
+    Backend-->>API: InpaintMaskResponse
+    API-->>MP: background + selected cutout
+    MP-->>User: result stage
 ```
 
-## Drag sequence
+## Mask Picker
 
-```mermaid
-sequenceDiagram
-    actor User
-    participant MP as MainPage
-    participant Win as window
+- Modal appears over current UI after segmentation completes.
+- Cards show cutout images with original object pixels and transparent background.
+- Clicking card starts inpainting.
+- Modal cannot close while inpainting is running because backend may remove temporary candidate files after selection.
 
-    User->>MP: pointerdown on cutout
-    MP->>MP: store pointer id + start mouse pos + start cutout offset
-    MP->>Win: attach pointermove/up/cancel listeners
+## Drag Sequence
 
-    User->>Win: move mouse
-    Win->>MP: pointermove
-    MP->>MP: convert screen delta -> natural-image delta
-    MP->>MP: clamp by cutoutAlphaBounds
-    MP->>MP: update cutoutOffset
+Drag behavior is unchanged after inpaint: cutout offset lives in natural image pixels, pointer delta converts through rendered background rect, and `cutout_bounds` clamps visible object inside frame.
 
-    User->>Win: release mouse
-    Win->>MP: pointerup
-    MP->>MP: clear drag state + remove listeners
-```
+## Session Restore
 
-## Non-trivial flow details
-
-### 1. Display click and drag use different coordinate systems
-
-- `UploadFrame` click selection sends natural image pixels to backend segmentation.
-- Dragging later also stores movement in natural image pixels.
-- Rendering converts that natural offset back into CSS pixels each frame.
-
-Reason: if offset lived in CSS pixels, the cutout would drift when stage size changes.
-
-### 2. `object-fit: contain` creates hidden margins
-
-Background image does not necessarily fill the whole frame. It may be letterboxed horizontally or vertically.
-
-`MainPage` therefore computes `renderedBackgroundRect` from:
-
-- `resultStageSize`
-- `backgroundNaturalSize`
-
-Both cutout and 3D overlay must align to that rect, not to whole frame.
-
-### 3. Window listeners instead of image-local listeners
-
-Drag listeners live on `window` while drag is active.
-
-Reason:
-
-- pointer can leave overlay while user is still dragging
-- image-local move events become unreliable at edges
-- global listeners keep drag continuous
-
-### 4. Session restore now carries drag metadata
-
-`GET /images/{uid}/cache` now returns `cutout_bounds`.
-
-Reason:
-
-- old sessions already have PNG files on disk
-- frontend should not need to re-run `POST /images/click`
-- restored cutouts need same drag clamp quality as fresh ones
-
-## UI edge cases
-
-- Cutout hidden: drag state is cleared.
-- Background size unknown: cutout renders only after background `onLoad` gives natural dimensions.
-- Missing `cutout_bounds`: clamp falls back to full image.
-- Pointer cancel: same cleanup path as pointer up.
-- Replacing upload/session: drag state and cutout offset reset to zero.
+Restored sessions still load final `/images/{uid}/background`, `/images/{uid}/cutout`, and bounds from `/images/{uid}/cache`. They do not restore temporary mask candidates.

@@ -6,7 +6,9 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 |---|---|---|---|
 | `GET` | `/images/sessions` | none | `list[str]` |
 | `POST` | `/images/upload` | multipart file | `ImageUploadResponse` |
-| `POST` | `/images/click` | `ClickRequest` | `ClickResultResponse` |
+| `POST` | `/images/segment` | `SegmentRequest` | `SegmentResponse` |
+| `POST` | `/images/inpaint` | `InpaintMaskRequest` | `InpaintMaskResponse` |
+| `POST` | `/images/click` | `ClickRequest` | `ClickResultResponse` legacy one-step flow |
 | `GET` | `/images/{uid}/cache` | path `uid` | `UidCacheStatusResponse` |
 | `GET` | `/images/{uid}/background` | path `uid` | PNG file |
 | `GET` | `/images/{uid}/cutout` | path `uid` | PNG file |
@@ -14,89 +16,45 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `POST` | `/objects/test-3d` | `{"uid":"..."}` | GLB bytes |
 | `GET` | `/objects/{uid}` | path `uid` | GLB file |
 
-## `POST /images/click`
+## `POST /images/segment`
 
-This endpoint gained one important piece of metadata: `cutout_bounds`.
-
-### Behavior
-
-1. Run segmentation/inpainting pipeline through `process_click_on_image(...)`.
-2. Persist `{uid}_background.png` and `{uid}_cutout.png`.
-3. Base64-encode both images for frontend.
-4. Decode the cutout PNG again and inspect its alpha channel.
-5. Build a tight visible-object bounding box from non-zero alpha pixels.
-6. Return that box as `cutout_bounds` inside `ClickResultResponse`.
-
-### Why extra decode pass exists
-
-Segmentation already returns a full-size PNG aligned to original image. That PNG usually contains a lot of transparent padding around the real object.
-
-Frontend drag clamp must answer:
-
-- where does visible object start?
-- where does it end?
-
-Base64 alone is not enough. Returning `cutout_bounds` lets frontend clamp by actual visible object instead of full-image extent.
-
-### Response shape
-
-```json
-{
-  "image_id": "uuid",
-  "background_b64": "...",
-  "cutout_b64": "...",
-  "format": "png",
-  "cutout_bounds": {
-    "left": 214,
-    "top": 133,
-    "right": 602,
-    "bottom": 701,
-    "natural_width": 1280,
-    "natural_height": 960
-  }
-}
-```
-
-## `GET /images/{uid}/cache`
-
-This endpoint also changed.
-
-Old role:
-
-- only answer whether background/cutout/3D artifacts exist
-
-New role:
-
-- answer existence flags
-- also derive `cutout_bounds` from cached cutout PNG when present
-
-### Why cache endpoint now returns geometry
-
-Session restore path already uses `/cache` before rendering cached result assets. Adding `cutout_bounds` here means old sessions can drag immediately without forcing a new click/segmentation request.
-
-### Cost model
-
-- Reads cached cutout PNG from disk
-- Decodes PNG with OpenCV
-- Computes bounding rectangle from alpha channel
-
-This work happens on demand and only when cached cutout exists.
-
-## Bounds extraction helper
-
-[`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) defines `_extract_cutout_bounds_from_png_bytes(...)`.
+Runs segmentation only and returns every candidate mask as a visible BGRA cutout preview.
 
 Behavior:
 
-1. Decode image bytes with `cv2.imdecode(..., IMREAD_UNCHANGED)` so alpha channel survives.
-2. If decode fails, return `None`.
-3. If image has no alpha channel, fall back to full-image bounds.
-4. Use `cv2.findNonZero(alpha)` to locate visible pixels.
-5. If alpha is entirely empty, also fall back to full-image bounds.
-6. Use `cv2.boundingRect(...)` to return tight rectangle.
+1. Validate `image_id`, natural-image `x/y`, and stored image bytes.
+2. Delete stale temporary candidates for this `image_id`.
+3. Run `ObjectSegmentor.get_mask_for_object_at_position(...)`.
+4. Cache each `refined_mask` as `{uid}_mask_{mask_id}_refined.npy`.
+5. Cache each cutout preview as `{uid}_mask_{mask_id}_cutout.png`.
+6. Return candidate ids plus base64 cutout previews and `cutout_bounds`.
 
-Fallback-to-full-image rule is deliberate. It keeps API predictable even if cutout metadata is imperfect.
+The raw refined mask is not sent to frontend. It is model input for inpainting, while the cutout is user-facing preview.
 
-## `POST /images/upload`, asset file endpoints, and object endpoints
+## `POST /images/inpaint`
 
-No semantic changes in these handlers. They still behave as before. Main difference is that frontend now depends on `/images/click` and `/images/{uid}/cache` returning the extra geometry field described above.
+Runs inpainting for the one mask selected by user.
+
+Behavior:
+
+1. Load original uploaded image.
+2. Load selected cached `{uid}_mask_{mask_id}_refined.npy`.
+3. Load matching cached `{uid}_mask_{mask_id}_cutout.png`.
+4. Run `BackgroundInpainter.cut_mask_from_image(...)`.
+5. Promote result to final `{uid}_background.png` and `{uid}_cutout.png`.
+6. Delete all temporary candidate files for that `image_id`.
+7. Return same final response fields as legacy click flow.
+
+If `mask_id` is unknown or candidate cache is gone, endpoint returns `404`.
+
+## `POST /images/click`
+
+Legacy one-step endpoint. It still runs old `ObjectRemover` pipeline and returns final background/cutout directly. Frontend no longer uses it for normal flow.
+
+## `GET /images/{uid}/cache`
+
+Returns final artifact existence flags and derives `cutout_bounds` from cached final cutout PNG when present. Session restore uses this to recover drag bounds without re-running segmentation.
+
+## Bounds Extraction
+
+`_extract_cutout_bounds_from_png_bytes(...)` decodes PNG with alpha, finds non-zero alpha pixels, and returns tight visible-object bounds. If decode or alpha is missing, it falls back to full-image bounds where possible.

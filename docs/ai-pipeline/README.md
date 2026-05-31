@@ -3,7 +3,7 @@
 The pipeline is the Python package `avroom_object_removal` ([`TestModules/src/`](../../TestModules/src/)). Its main job is **click-based object removal** in one pass over the image.
 
 **At a glance:** `image → depth → adapt → route → segment → refine mask → inpaint → BGRA cutout`  
-FastAPI only loads bytes and calls `ObjectRemover.remove_object`; it does not embed model logic.
+FastAPI only loads bytes and calls pipeline facades; it does not embed model logic. Normal UI flow calls `ObjectSegmentor` first and `BackgroundInpainter` after user chooses a mask.
 
 ## How these docs are organized
 

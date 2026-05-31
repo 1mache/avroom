@@ -183,6 +183,49 @@ class InpaintMaskRequest(BaseModel):
 class InpaintMaskResponse(ClickResultResponse):
     """Final result returned after selected-mask inpainting."""
 
+    object_id: Annotated[
+        int,
+        Field(ge=0, description="Zero-based integer id assigned to this newly created object within the session."),
+    ]
+
+
+class ObjectInfo(BaseModel):
+    """Descriptor for one processed object within a session."""
+
+    object_id: Annotated[
+        int,
+        Field(ge=0, description="Zero-based integer id for this object within the session."),
+    ]
+    cutout_b64: Annotated[
+        str,
+        Field(description="Base64-encoded BGRA cutout PNG for this object."),
+    ]
+    format: Annotated[
+        str,
+        Field(description="Image format, currently 'png'."),
+    ]
+    cutout_bounds: Annotated[
+        CutoutBounds | None,
+        Field(default=None, description="Tight visible-object bounds inside the cutout PNG."),
+    ]
+    has_3d: Annotated[
+        bool,
+        Field(description="Whether a GLB 3D model has been generated for this object."),
+    ]
+
+
+class ObjectListResponse(BaseModel):
+    """All processed objects for a session, ordered by object id."""
+
+    uid: Annotated[
+        str,
+        Field(description="Session UID."),
+    ]
+    objects: Annotated[
+        list[ObjectInfo],
+        Field(description="Objects in ascending object_id order."),
+    ]
+
 
 class UidCacheStatusResponse(BaseModel):
     """Indicates which processed artifacts are cached on disk for a given UID."""

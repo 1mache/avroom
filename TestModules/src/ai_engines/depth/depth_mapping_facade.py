@@ -5,9 +5,7 @@ import logging
 import numpy as np
 
 from .depth_mapping_strategy import DepthMappingStrategy
-from .strategies.near_far_blended_depth_mapping_strategy import (
-    NearFarBlendedDepthMappingStrategy,
-)
+from .strategies.enhanced_edge_depth_mapping_strategy import EnhancedEdgeDepthMappingStrategy
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +19,7 @@ class DepthMappingFacade:
     """
 
     def __init__(self, strategy: DepthMappingStrategy | None = None) -> None:
-        self._strategy: DepthMappingStrategy = strategy or NearFarBlendedDepthMappingStrategy()
+        self._strategy: DepthMappingStrategy = strategy or EnhancedEdgeDepthMappingStrategy()
         logger.info(
             f"DepthMappingFacade ready (strategy={type(self._strategy).__name__})"
         )

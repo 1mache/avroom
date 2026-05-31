@@ -28,6 +28,8 @@ from schemas.image import (
     ImageUploadResponse,
     InpaintMaskRequest,
     InpaintMaskResponse,
+    ObjectInfo,
+    ObjectListResponse,
     SegmentMaskOption,
     SegmentRequest,
     SegmentResponse,
@@ -442,6 +444,56 @@ async def set_name(uid: str, request: SetNameRequest) -> SessionInfo:
 
     logger.info("Name set: uid=%s name=%r", uid, request.name)
     return SessionInfo(uid=uid, name=request.name)
+
+
+@router.get("/{uid}/objects", response_model=ObjectListResponse)
+async def get_session_objects(uid: str) -> ObjectListResponse:
+    """Return all processed objects for a session with cutout thumbnails.
+
+    Scans the storage directory for finalized per-object cutout PNGs and
+    returns them as base64 thumbnails alongside their tight alpha bounds and
+    a flag indicating whether a GLB 3D model has been generated.
+    """
+    logger.info("Objects list requested: uid=%s", uid)
+    storage_dir = get_image_storage_dir()
+    obj_ids = list_object_ids(storage_dir, uid)
+    three_d_dir = get_3d_storage_dir()
+
+    objects_list: list[ObjectInfo] = []
+    for oid in obj_ids:
+        try:
+            cutout_path = resolve_object_cutout_path(storage_dir, uid, oid)
+            if not cutout_path.exists():
+                logger.warning(
+                    "Objects list: cutout missing for uid=%s object_id=%d path=%s — skipping",
+                    uid,
+                    oid,
+                    cutout_path,
+                )
+                continue
+            cutout_bytes = cutout_path.read_bytes()
+            cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")
+            cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_bytes)
+            has_3d = resolve_object_glb_path(three_d_dir, uid, oid).exists()
+            objects_list.append(
+                ObjectInfo(
+                    object_id=oid,
+                    cutout_b64=cutout_b64,
+                    format="png",
+                    cutout_bounds=cutout_bounds,
+                    has_3d=has_3d,
+                )
+            )
+        except FileNotFoundError as exc:
+            logger.warning(
+                "Objects list: file not found for uid=%s object_id=%d error=%s — skipping",
+                uid,
+                oid,
+                exc,
+            )
+
+    logger.info("Objects list returned: uid=%s count=%d", uid, len(objects_list))
+    return ObjectListResponse(uid=uid, objects=objects_list)
 
 
 @router.get("/{uid}/cache", response_model=UidCacheStatusResponse)

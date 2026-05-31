@@ -13,6 +13,7 @@ from avroom_object_removal.ai_engines.reconstruction_3d import (
     ReconstructionQuality,
 )
 
+from core.object_storage import object_glb_path, resolve_object_cutout_path, resolve_object_glb_path
 from settings import get_3d_storage_dir, get_image_storage_dir
 
 router = APIRouter(prefix="/objects", tags=["objects"])
@@ -31,6 +32,10 @@ class Test3DRequest(BaseModel):
         str,
         Field(min_length=1, description="Image uid used to locate the cutout PNG."),
     ]
+    object_id: Annotated[
+        int,
+        Field(default=0, ge=0, description="Zero-based object id within the session to generate 3D from."),
+    ] = 0
 
 
 def _get_facade() -> Reconstruction3DFacade:
@@ -50,7 +55,12 @@ async def generate_test_3d(request: Test3DRequest) -> Response:
     Returns raw GLB bytes (model/gltf-binary). Intended for Three.js consumption
     via GLTFLoader.load() or GLTFLoader.parse().
     """
-    logger.info("test-3d called: uid=%s debug_mode=%s", request.uid, _DEBUG_MODE)
+    logger.info(
+        "test-3d called: uid=%s object_id=%d debug_mode=%s",
+        request.uid,
+        request.object_id,
+        _DEBUG_MODE,
+    )
 
     if _DEBUG_MODE:
         if not _DEBUG_MODEL_PATH.exists():
@@ -67,14 +77,21 @@ async def generate_test_3d(request: Test3DRequest) -> Response:
             headers={"Content-Disposition": "inline; filename=debug_toilet.glb"},
         )
 
-    cutout_image_path = get_image_storage_dir() / f"{request.uid}_cutout.png"
+    cutout_image_path = resolve_object_cutout_path(
+        get_image_storage_dir(), request.uid, request.object_id
+    )
     if not cutout_image_path.exists():
-        logger.error("Cutout image not found: %s", cutout_image_path)
+        logger.error(
+            "Cutout image not found: uid=%s object_id=%d path=%s",
+            request.uid,
+            request.object_id,
+            cutout_image_path,
+        )
         raise HTTPException(
             status_code=404,
             detail=(
                 f"Cutout image not found at {cutout_image_path}. "
-                f"Run object removal first so {request.uid}_cutout.png exists."
+                f"Run object removal first so the cutout for object {request.object_id} exists."
             ),
         )
 
@@ -92,22 +109,50 @@ async def generate_test_3d(request: Test3DRequest) -> Response:
 
     glb_dir = get_3d_storage_dir()
     glb_dir.mkdir(parents=True, exist_ok=True)
-    glb_path = glb_dir / f"{request.uid}.glb"
+    glb_path = object_glb_path(glb_dir, request.uid, request.object_id)
     glb_path.write_bytes(glb_bytes)
-    logger.info("test-3d complete: uid=%s glb_bytes=%d saved=%s", request.uid, len(glb_bytes), glb_path)
+    logger.info(
+        "test-3d complete: uid=%s object_id=%d glb_bytes=%d saved=%s",
+        request.uid,
+        request.object_id,
+        len(glb_bytes),
+        glb_path,
+    )
 
     return Response(
         content=glb_bytes,
         media_type="model/gltf-binary",
-        headers={"Content-Disposition": f'inline; filename="{request.uid}.glb"'},
+        headers={"Content-Disposition": f'inline; filename="{request.uid}_{request.object_id}.glb"'},
+    )
+
+
+@router.get("/{uid}/{object_id}")
+async def get_3d_model_by_object(uid: str, object_id: int) -> FileResponse:
+    """Serve the cached GLB 3D model for a specific object within a session."""
+    logger.info("3D model by object requested: uid=%s object_id=%d", uid, object_id)
+    path = resolve_object_glb_path(get_3d_storage_dir(), uid, object_id)
+    if not path.exists():
+        logger.warning(
+            "3D model not found: uid=%s object_id=%d path=%s", uid, object_id, path
+        )
+        raise HTTPException(status_code=404, detail="3D model not found")
+    logger.info("3D model by object served: uid=%s object_id=%d path=%s", uid, object_id, path)
+    return FileResponse(
+        path,
+        media_type="model/gltf-binary",
+        headers={"Content-Disposition": f'inline; filename="{uid}_{object_id}.glb"'},
     )
 
 
 @router.get("/{uid}")
 async def get_3d_model(uid: str) -> FileResponse:
-    """Serve the cached GLB 3D model for the given UID."""
+    """Serve the cached GLB 3D model for the given UID.
+
+    Legacy fallback: serves object id 0's model (or the legacy ``{uid}.glb``
+    file for sessions created before the numbered-object scheme).
+    """
     logger.info("3D model requested: uid=%s", uid)
-    path = get_3d_storage_dir() / f"{uid}.glb"
+    path = resolve_object_glb_path(get_3d_storage_dir(), uid, 0)
     if not path.exists():
         logger.warning("3D model not found: uid=%s path=%s", uid, path)
         raise HTTPException(status_code=404, detail="3D model not found")

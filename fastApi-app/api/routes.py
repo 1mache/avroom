@@ -35,6 +35,15 @@ from schemas.image import (
     SetNameRequest,
     UidCacheStatusResponse,
 )
+from core.object_storage import (
+    current_background_path,
+    list_object_ids,
+    next_object_id,
+    object_cutout_path,
+    object_glb_path,
+    resolve_object_cutout_path,
+    resolve_object_glb_path,
+)
 from settings import (
     deregister_uid,
     get_3d_storage_dir,
@@ -312,9 +321,15 @@ async def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
         logger.exception("Inpainting failed")
         raise HTTPException(status_code=500, detail=f"Inpainting failed: {exc}") from exc
 
-    background_image_path = storage_dir / f"{request.image_id}_background.png"
+    # Allocate next sequential object id for this session.
+    object_id = next_object_id(storage_dir, request.image_id)
+
+    # Background always written to the single cumulative canvas path (overwrites → becomes new canvas).
+    background_image_path = current_background_path(storage_dir, request.image_id)
     background_image_path.write_bytes(background_bytes)
-    cutout_image_path = storage_dir / f"{request.image_id}_cutout.png"
+
+    # Cutout written to the per-object numbered path (never overwrites a prior object).
+    cutout_image_path = object_cutout_path(storage_dir, request.image_id, object_id)
     cutout_image_path.write_bytes(cutout_bytes)
 
     # Selected candidate is now promoted to final artifacts. Remove all
@@ -326,11 +341,12 @@ async def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
     cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_bytes)
 
     logger.info(
-        "Inpainting complete: image_id=%s mask_id=%s background_bytes=%d cutout_bytes=%d",
+        "Inpainting complete: image_id=%s mask_id=%s background_bytes=%d cutout_bytes=%d object_id=%d",
         request.image_id,
         request.mask_id,
         len(background_bytes),
         len(cutout_bytes),
+        object_id,
     )
 
     return InpaintMaskResponse(
@@ -339,6 +355,7 @@ async def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
         cutout_b64=cutout_b64,
         format=image_format,
         cutout_bounds=cutout_bounds,
+        object_id=object_id,
     )
 
 
@@ -372,15 +389,34 @@ async def delete_session(uid: str) -> Response:
 
         delete_candidates(storage_dir, uid)
 
+        # Collect per-object ids before deleting files (list_object_ids scans disk).
+        obj_ids = list_object_ids(storage_dir, uid)
+
+        # Remove all numbered per-object cutouts.
+        for oid in obj_ids:
+            p = object_cutout_path(storage_dir, uid, oid)
+            if p.exists():
+                p.unlink()
+                removed += 1
+
         debug_path = storage_dir / "point" / f"{uid}_debug.png"
         if debug_path.exists():
             debug_path.unlink()
             removed += 1
 
+        # Legacy single GLB (written by earlier backend versions).
         glb_path = get_3d_storage_dir() / f"{uid}.glb"
         if glb_path.exists():
             glb_path.unlink()
             removed += 1
+
+        # Remove all numbered per-object GLB files.
+        three_d_dir = get_3d_storage_dir()
+        for oid in obj_ids:
+            p = object_glb_path(three_d_dir, uid, oid)
+            if p.exists():
+                p.unlink()
+                removed += 1
 
     except Exception as exc:
         logger.error("Session delete failed: uid=%s error=%s", uid, exc)
@@ -413,19 +449,33 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     """Return which processed artifacts are cached on disk for the given UID."""
     logger.info("Cache status requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
-    cutout_path = storage_dir / f"{uid}_cutout.png"
+    obj_ids = list_object_ids(storage_dir, uid)
+
+    # Derive cutout bounds from the latest (highest-id) object.
+    latest_object_id = max(obj_ids) if obj_ids else None
+    cutout_path_to_check = (
+        resolve_object_cutout_path(storage_dir, uid, latest_object_id)
+        if latest_object_id is not None
+        else None
+    )
     cutout_bounds = None
-    if cutout_path.exists():
+    if cutout_path_to_check is not None and cutout_path_to_check.exists():
         # Session restore should not need to re-run segmentation just to recover
         # drag bounds, so cache metadata derives from stored PNG on demand.
-        cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_path.read_bytes())
+        cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_path_to_check.read_bytes())
+
+    three_d_dir = get_3d_storage_dir()
+    has_3d = any(
+        resolve_object_glb_path(three_d_dir, uid, oid).exists() for oid in obj_ids
+    )
+
     names = load_names()
     status = UidCacheStatusResponse(
         uid=uid,
         name=names.get(uid),
         has_background=(storage_dir / f"{uid}_background.png").exists(),
-        has_cutout=cutout_path.exists(),
-        has_3d=(get_3d_storage_dir() / f"{uid}.glb").exists(),
+        has_cutout=bool(obj_ids),
+        has_3d=has_3d,
         cutout_bounds=cutout_bounds,
     )
     logger.info(
@@ -452,9 +502,19 @@ async def get_background(uid: str) -> FileResponse:
 
 @router.get("/{uid}/cutout")
 async def get_cutout(uid: str) -> FileResponse:
-    """Serve the cached cutout PNG for the given UID."""
+    """Serve the cached cutout PNG for the given UID.
+
+    Returns the latest (highest-id) object cutout for the session, falling back
+    to the legacy ``{uid}_cutout.png`` file for sessions created before the
+    numbered-object scheme was introduced.
+    """
     logger.info("Cutout requested: uid=%s", uid)
-    path = get_image_storage_dir() / f"{uid}_cutout.png"
+    storage_dir = get_image_storage_dir()
+    obj_ids = list_object_ids(storage_dir, uid)
+    if not obj_ids:
+        logger.warning("Cutout not found: uid=%s (no object ids)", uid)
+        raise HTTPException(status_code=404, detail="Cutout not found")
+    path = resolve_object_cutout_path(storage_dir, uid, max(obj_ids))
     if not path.exists():
         logger.warning("Cutout not found: uid=%s path=%s", uid, path)
         raise HTTPException(status_code=404, detail="Cutout not found")

@@ -188,8 +188,7 @@ class InpaintMaskResponse(ClickResultResponse):
         Field(
             default=0,
             ge=0,
-            description="Zero-based integer id assigned to this newly created object within the session. "
-            "Defaults to 0 until the inpaint route is updated (Task 3) to supply the allocated id.",
+            description="Zero-based integer id assigned to this newly created object within the session.",
         ),
     ]
 

@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw, UnidentifiedImageError
 
 from schemas.image import ImageProcessingOptions
 from core.mask_cache import delete_candidates, load_cutout_bytes, load_refined_mask, mask_id_from_index, save_candidate
+from core.object_storage import current_background_path
 
 
 logger = logging.getLogger(__name__)
@@ -99,6 +100,42 @@ def load_image_bytes(image_id: str, base_dir: Path) -> bytes:
 
     image_path = get_image_path(image_id=image_id, base_dir=base_dir)
     return image_path.read_bytes()
+
+
+def load_canvas_bytes(image_id: str, base_dir: Path) -> bytes:
+    """Load the cumulative background canvas bytes for progressive removal.
+
+    For progressive removal, each subsequent segmentation/inpainting operation
+    should work on the latest state of the room — i.e., the canvas that already
+    has previously removed objects replaced by inpainted background. If such a
+    canvas exists (``{image_id}_background.png``), it is returned; otherwise the
+    original upload is used as the starting point.
+
+    Args:
+        image_id: Session image identifier.
+        base_dir: Directory that contains session artifacts.
+
+    Returns:
+        Raw PNG/image bytes of the canvas (background if available, original otherwise).
+    """
+
+    canvas_path = current_background_path(base_dir, image_id)
+    if canvas_path.exists():
+        canvas_bytes = canvas_path.read_bytes()
+        logger.info(
+            "Loaded canvas bytes: image_id=%s source=background bytes=%d",
+            image_id,
+            len(canvas_bytes),
+        )
+        return canvas_bytes
+
+    original_bytes = load_image_bytes(image_id=image_id, base_dir=base_dir)
+    logger.info(
+        "Loaded canvas bytes: image_id=%s source=original bytes=%d",
+        image_id,
+        len(original_bytes),
+    )
+    return original_bytes
 
 
 def _validate_click_coordinates(image_bytes: bytes, x: int, y: int, base_dir: Path, image_id: str) -> None:
@@ -250,8 +287,8 @@ def segment_candidates_on_image(
     """
 
     del options  # TODO: parameter not used. legacy click options. remove it or use
-    image_bytes = load_image_bytes(image_id=image_id, base_dir=base_dir)
-    logger.debug("Loaded image bytes for segmentation: image_id=%s bytes=%d", image_id, len(image_bytes))
+    image_bytes = load_canvas_bytes(image_id=image_id, base_dir=base_dir)
+    logger.debug("Loaded canvas bytes for segmentation: image_id=%s bytes=%d", image_id, len(image_bytes))
     _validate_click_coordinates(image_bytes, x, y, base_dir, image_id)
 
     # New segmentation invalidates any older unchosen candidates for this image.
@@ -287,8 +324,8 @@ def inpaint_selected_mask_on_image(
 ) -> tuple[bytes, bytes, str]:
     """Run background inpainting for one previously cached mask candidate."""
 
-    image_bytes = load_image_bytes(image_id=image_id, base_dir=base_dir)
-    original_bgr = _decode_original_bgr(image_bytes, image_id)
+    image_bytes = load_canvas_bytes(image_id=image_id, base_dir=base_dir)
+    source_bgr = _decode_original_bgr(image_bytes, image_id)
     refined_mask = load_refined_mask(base_dir, image_id, mask_id)
     cutout_bytes = load_cutout_bytes(base_dir, image_id, mask_id)
 
@@ -297,10 +334,10 @@ def inpaint_selected_mask_on_image(
         "Running BackgroundInpainter: image_id=%s mask_id=%s image_shape=%s mask_shape=%s",
         image_id,
         mask_id,
-        original_bgr.shape,
+        source_bgr.shape,
         refined_mask.shape,
     )
-    background_bgr = inpainter.cut_mask_from_image(original_image=original_bgr, mask=refined_mask)
+    background_bgr = inpainter.cut_mask_from_image(original_image=source_bgr, mask=refined_mask)
     logger.info("BackgroundInpainter finished: image_id=%s mask_id=%s bg_shape=%s", image_id, mask_id, background_bgr.shape)
 
     background_bytes = _encode_png(background_bgr, "background")

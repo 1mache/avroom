@@ -51,7 +51,9 @@ export interface InpaintMaskRequest {
   mask_id: string;
 }
 
-export type InpaintMaskResponse = ClickResultResponse;
+export interface InpaintMaskResponse extends ClickResultResponse {
+  object_id: number;
+}
 
 export interface UidCacheStatusResponse {
   uid: string;
@@ -71,5 +73,18 @@ export interface CutoutBounds {
   // map drag/clamp math back to original image space.
   natural_width: number;
   natural_height: number;
+}
+
+export interface ObjectInfo {
+  object_id: number;
+  cutout_b64: string;
+  format: string;
+  cutout_bounds?: CutoutBounds | null;
+  has_3d: boolean;
+}
+
+export interface ObjectListResponse {
+  uid: string;
+  objects: ObjectInfo[];
 }
 

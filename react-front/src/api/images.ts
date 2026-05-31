@@ -4,6 +4,7 @@ import type {
   ImageUploadResponse,
   InpaintMaskRequest,
   InpaintMaskResponse,
+  ObjectListResponse,
   SegmentRequest,
   SegmentResponse,
   SessionInfo,
@@ -48,13 +49,13 @@ export async function clickImage(payload: ClickRequest): Promise<ClickResultResp
   return handleJsonResponse<ClickResultResponse>(response);
 }
 
-export async function generate3DModel(uid: string): Promise<ArrayBuffer> {
+export async function generate3DModel(uid: string, objectId: number): Promise<ArrayBuffer> {
   const response = await fetch(`${API_BASE_URL}/objects/test-3d`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ uid }),
+    body: JSON.stringify({ uid, object_id: objectId }),
   });
 
   if (!response.ok) {
@@ -123,13 +124,18 @@ export async function deleteSession(uid: string): Promise<void> {
 }
 
 // 404 means "model not generated yet", not an exceptional transport failure.
-export async function fetchCached3DModel(uid: string): Promise<ArrayBuffer | null> {
-  const response = await fetch(`${API_BASE_URL}/objects/${uid}`);
+export async function fetchCached3DModel(uid: string, objectId: number): Promise<ArrayBuffer | null> {
+  const response = await fetch(`${API_BASE_URL}/objects/${uid}/${objectId}`);
   if (response.status === 404) return null;
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `Request failed with status ${response.status}`);
   }
   return response.arrayBuffer();
+}
+
+export async function getSessionObjects(uid: string): Promise<ObjectListResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/${uid}/objects`);
+  return handleJsonResponse<ObjectListResponse>(response);
 }
 

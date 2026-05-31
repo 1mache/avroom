@@ -398,14 +398,14 @@ export const MainPage: React.FC = () => {
     setError(null);
 
     try {
-      const cached = await fetchCached3DModel(imageId);
+      const cached = await fetchCached3DModel(imageId, 0);
       if (cached) {
         setGlbData(cached);
         setShow3D(true);
         return;
       }
 
-      const buffer = await generate3DModel(imageId);
+      const buffer = await generate3DModel(imageId, 0);
       setGlbData(buffer);
       setShow3D(true);
     } catch (genError) {

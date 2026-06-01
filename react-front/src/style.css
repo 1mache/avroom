@@ -194,10 +194,13 @@ input {
 
 .main-frame-container {
   display: flex;
+  gap: var(--gap-sm);
+  align-items: stretch;
 }
 
-.main-frame-container > * {
-  width: 100%;
+.main-frame-image-area {
+  flex: 1;
+  min-width: 0;
 }
 
 .result-main-frame {
@@ -731,6 +734,159 @@ input {
   100% {
     background-position: -200% 0;
   }
+}
+
+/* Object Panel — right slide-in rail */
+
+.object-panel-container {
+  /* Positioned container that holds both the toggle handle and the panel body */
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  flex-shrink: 0;
+}
+
+.object-panel-toggle {
+  /* Narrow vertical handle visible even when collapsed */
+  width: 28px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 11px;
+  transition: background 0.15s, color 0.15s;
+  writing-mode: vertical-lr;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  text-transform: uppercase;
+  user-select: none;
+}
+
+.object-panel-toggle:hover {
+  background: var(--accent-hover);
+  color: var(--accent-strong);
+}
+
+.object-panel-body {
+  /* The expandable panel */
+  width: 150px;
+  overflow: hidden;
+  transition: width 0.2s ease, opacity 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+  padding: var(--gap-sm);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-left: var(--gap-xs);
+}
+
+.object-panel-body.is-collapsed {
+  width: 0;
+  opacity: 0;
+  padding: 0;
+  border-width: 0;
+  pointer-events: none;
+  margin-left: 0;
+}
+
+.object-panel-label {
+  font-size: var(--font-xs);
+  font-weight: 700;
+  color: var(--ink-soft);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.object-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-xs);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.object-thumbnail-btn {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  overflow: hidden;
+  background:
+    linear-gradient(45deg, rgba(16, 35, 67, 0.06) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(16, 35, 67, 0.06) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(16, 35, 67, 0.06) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(16, 35, 67, 0.06) 75%),
+    white;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+  padding: 4px;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.object-thumbnail-btn:hover:not(:disabled) {
+  transform: scale(1.04);
+  border-color: var(--accent-soft);
+}
+
+.object-thumbnail-btn.is-active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.object-thumbnail-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.object-thumbnail-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.object-panel-add-btn {
+  flex-shrink: 0;
+  width: 100%;
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  border: 1.5px dashed rgba(11, 127, 130, 0.35);
+  background: transparent;
+  color: var(--accent-strong);
+  font-size: 18px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.object-panel-add-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+  border-color: var(--accent);
+}
+
+.object-panel-add-btn.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  border-style: solid;
+}
+
+.object-panel-add-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 @media (max-width: 768px) {

@@ -17,6 +17,7 @@ import avroomLogo from "../../assets/avroom.png";
 import type { CutoutBounds, SegmentMaskOption, SegmentRequest } from "../../types/api";
 import { MaskPickerModal } from "../widgets/MaskPickerModal";
 import { Model3DFrame } from "../widgets/Model3DFrame";
+import { ObjectPanel } from "../widgets/ObjectPanel";
 import { SessionPicker } from "../widgets/SessionPicker";
 import { UploadFrame } from "../widgets/UploadFrame";
 
@@ -170,6 +171,7 @@ export const MainPage: React.FC = () => {
   const [objects, setObjects] = useState<CutoutObject[]>([]);
   const [activeObjectId, setActiveObjectId] = useState<number | null>(null);
   const [isAddingObject, setIsAddingObject] = useState(false);
+  const [objectPanelCollapsed, setObjectPanelCollapsed] = useState(false);
 
   const replaceUploadedImageUrl = useCallback((nextUrl: string | null) => {
     setUploadedImageUrl((previousUrl) => {
@@ -834,48 +836,63 @@ export const MainPage: React.FC = () => {
           ) : null}
 
           <div className="main-frame-container">
-            {!backgroundSrc || isAddingObject ? (
-              <UploadFrame
-                ref={frameInputRef}
-                imageSrc={isAddingObject ? backgroundSrc : uploadedImageUrl}
-                clickPosition={clickPosition}
-                onFileSelected={handleFileSelected}
-                onImageClick={handleImageClick}
-                disabled={isUploading || isProcessing || isChoosingMask || isInpainting || isGenerating3D}
-                clickEnabled={clickEnabled}
-              />
-            ) : (
-              <div className="frame upload-frame result-main-frame">
-                <div ref={resultStageRef} className="image-container result-image-stage">
-                  <img
-                    src={backgroundSrc}
-                    alt="Background result"
-                    className="frame-image"
-                    onLoad={handleBackgroundLoad}
-                  />
-
-                  {showCutout && cutoutSrc ? (
+            <div className="main-frame-image-area">
+              {!backgroundSrc || isAddingObject ? (
+                <UploadFrame
+                  ref={frameInputRef}
+                  imageSrc={isAddingObject ? backgroundSrc : uploadedImageUrl}
+                  clickPosition={clickPosition}
+                  onFileSelected={handleFileSelected}
+                  onImageClick={handleImageClick}
+                  disabled={isUploading || isProcessing || isChoosingMask || isInpainting || isGenerating3D}
+                  clickEnabled={clickEnabled}
+                />
+              ) : (
+                <div className="frame upload-frame result-main-frame">
+                  <div ref={resultStageRef} className="image-container result-image-stage">
                     <img
-                      src={cutoutSrc}
-                      alt="Cutout result"
-                      className="cutout-overlay"
-                      style={cutoutOverlayStyle}
-                      onPointerDown={handleCutoutPointerDown}
-                      onDragStart={(event) => event.preventDefault()}
+                      src={backgroundSrc}
+                      alt="Background result"
+                      className="frame-image"
+                      onLoad={handleBackgroundLoad}
                     />
-                  ) : null}
 
-                  {show3D && glbData ? (
-                    <Model3DFrame
-                      glbData={glbData}
-                      clickNormalizedPos={activeObject?.normalizedClickPos ?? null}
-                      className="overlay-absolute model-overlay"
-                      backgroundImage={null}
-                    />
-                  ) : null}
+                    {showCutout && cutoutSrc ? (
+                      <img
+                        src={cutoutSrc}
+                        alt="Cutout result"
+                        className="cutout-overlay"
+                        style={cutoutOverlayStyle}
+                        onPointerDown={handleCutoutPointerDown}
+                        onDragStart={(event) => event.preventDefault()}
+                      />
+                    ) : null}
+
+                    {show3D && glbData ? (
+                      <Model3DFrame
+                        glbData={glbData}
+                        clickNormalizedPos={activeObject?.normalizedClickPos ?? null}
+                        className="overlay-absolute model-overlay"
+                        backgroundImage={null}
+                      />
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+
+            {imageId && objects.length > 0 ? (
+              <ObjectPanel
+                objects={objects}
+                activeObjectId={activeObjectId}
+                isAddingObject={isAddingObject}
+                disabled={isInpainting || isGenerating3D}
+                onSelectObject={handleSelectObject}
+                onAddObject={handleAddObject}
+                collapsed={objectPanelCollapsed}
+                onToggleCollapsed={() => setObjectPanelCollapsed((c) => !c)}
+              />
+            ) : null}
           </div>
 
           {backgroundSrc && !isAddingObject && objects.length > 0 ? (
@@ -901,31 +918,6 @@ export const MainPage: React.FC = () => {
                 />
                 <span>{isGenerating3D ? "Generating..." : "Show 3D model"}</span>
               </label>
-
-              <button
-                type="button"
-                className="primary-button secondary"
-                onClick={handleAddObject}
-                disabled={isUploading || isProcessing || isChoosingMask || isInpainting || isGenerating3D}
-              >
-                Add object
-              </button>
-            </div>
-          ) : null}
-
-          {backgroundSrc && !isAddingObject && objects.length > 1 ? (
-            <div className="object-list">
-              {objects.map((obj) => (
-                <button
-                  key={obj.objectId}
-                  type="button"
-                  className={`primary-button secondary${obj.objectId === activeObjectId ? " active" : ""}`}
-                  onClick={() => handleSelectObject(obj.objectId)}
-                  disabled={isInpainting || isGenerating3D}
-                >
-                  Object {obj.objectId}
-                </button>
-              ))}
             </div>
           ) : null}
 

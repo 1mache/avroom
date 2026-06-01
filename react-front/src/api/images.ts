@@ -50,7 +50,7 @@ export async function clickImage(payload: ClickRequest): Promise<ClickResultResp
 }
 
 export async function generate3DModel(uid: string, objectId: number): Promise<ArrayBuffer> {
-  const response = await fetch(`${API_BASE_URL}/objects/test-3d`, {
+  const response = await fetch(`${API_BASE_URL}/3d/test-3d`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -125,7 +125,7 @@ export async function deleteSession(uid: string): Promise<void> {
 
 // 404 means "model not generated yet", not an exceptional transport failure.
 export async function fetchCached3DModel(uid: string, objectId: number): Promise<ArrayBuffer | null> {
-  const response = await fetch(`${API_BASE_URL}/objects/${uid}/${objectId}`);
+  const response = await fetch(`${API_BASE_URL}/3d/${uid}/${objectId}`);
   if (response.status === 404) return null;
   if (!response.ok) {
     const text = await response.text();

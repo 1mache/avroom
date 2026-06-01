@@ -16,7 +16,7 @@ from avroom_object_removal.ai_engines.reconstruction_3d import (
 from core.object_storage import object_glb_path, resolve_object_cutout_path, resolve_object_glb_path
 from settings import get_3d_storage_dir, get_image_storage_dir
 
-router = APIRouter(prefix="/objects", tags=["objects"])
+router = APIRouter(prefix="/3d", tags=["3d"])
 logger = logging.getLogger(__name__)
 
 _DEBUG_MODE = False

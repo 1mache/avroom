@@ -1,23 +1,29 @@
 # Components
 
-Current frontend has five important screen components plus one data sidebar widget.
+Current frontend has six important screen components plus one data sidebar widget.
 
 ## `MainPage`
 
 [`react-front/src/components/layout/MainPage.tsx`](../../react-front/src/components/layout/MainPage.tsx)
 
-Screen orchestrator. Owns upload flow, segmentation mask choice, selected-mask inpainting, session restore flow, draggable cutout overlay, and optional 3D overlay.
+Screen orchestrator. Owns upload flow, segmentation mask choice, selected-mask inpainting, session restore flow, multi-object management, draggable cutout overlay, and optional 3D overlay.
 
 ### Responsibilities
 
-- Hold upload/session/result state.
+- Hold upload/session state. Manage `objects: CutoutObject[]` array and `activeObjectId`.
+- Enable `isAddingObject` mode so `UploadFrame` reappears over the latest background for subsequent object selections.
 - Hold temporary `maskOptions` state while user chooses segmentation candidate.
 - Convert backend `cutout_bounds` metadata into local drag bounds.
 - Measure rendered result viewport and derive the exact contained image rect used by `object-fit: contain`.
 - Translate pointer movement from CSS pixels into natural-image pixels.
 - Clamp cutout movement by visible object bounds, not by full transparent PNG extent.
-- Restore enough metadata from `/images/{uid}/cache` so old sessions can drag immediately without re-running segmentation.
+- Restore full `objects[]` array from `/images/{uid}/objects` on session restore; fall back gracefully when no objects exist.
 - Manage session naming: editable name field above frame visible whenever `imageId` is set; Enter key calls `POST /images/{uid}/name`; 409 conflicts surface in error modal.
+- Render `ObjectPanel` when at least one object exists; toggle panel collapse.
+
+### Result-stage note
+
+`cutoutSrc` used in the JSX cutout overlay is derived from the active `CutoutObject`, not direct state — see [state-and-types.md](state-and-types.md) for the derivation.
 
 ### Result-stage structure
 
@@ -110,14 +116,45 @@ No behavioral change, but z-index contract changed:
 - `.model-overlay` sits below `.cutout-overlay`.
 - This lets cutout stay visually draggable above 3D overlay if both are enabled.
 
+## `ObjectPanel`
+
+[`react-front/src/components/widgets/ObjectPanel.tsx`](../../react-front/src/components/widgets/ObjectPanel.tsx)
+
+Right-side collapsible rail that shows all processed objects for the active session and provides a way to add a new one.
+
+Props:
+
+| Prop | Type | Purpose |
+|---|---|---|
+| `objects` | `ObjectEntry[]` | Minimal `{ objectId, cutoutSrc }` array — structural subset of `CutoutObject`. |
+| `activeObjectId` | `number \| null` | Which thumbnail is highlighted. |
+| `isAddingObject` | `boolean` | Highlights the `+` button when add mode is active. |
+| `disabled` | `boolean` | Disables thumbnails and add button while inpainting or generating 3D. |
+| `onSelectObject` | `(objectId: number) => void` | Called when user clicks a thumbnail. |
+| `onAddObject` | `() => void` | Called when user clicks the `+` button. |
+| `collapsed` | `boolean` | Controls collapsed/expanded state. |
+| `onToggleCollapsed` | `() => void` | Toggle handler from `MainPage`. |
+
+Structure: a narrow always-visible side column (28px) containing the collapse toggle and a permanently-visible `+` button; plus a 150px expandable body with a scrollable thumbnail list. The `+` button lives in the side column so it remains accessible even when the body is collapsed.
+
 ## CSS roles
 
 [`react-front/src/style.css`](../../react-front/src/style.css)
 
-New classes tied to drag feature:
+Classes tied to drag feature:
 
 - `body.cutout-dragging`: global `grabbing` cursor during active drag.
 - `.result-image-stage`: isolated overlay stage that owns measurement and stacking context.
 - `.cutout-overlay`: absolute positioned draggable image with `touch-action: none`.
 - `.model-overlay`: z-index layer for 3D viewer.
-- `.overlay-absolute`: now fills stage exactly. Old fixed `14px` inset was removed because stage already sits inside padded frame.
+- `.overlay-absolute`: fills stage exactly.
+- `.main-frame-image-area`: `flex: 1; min-width: 0` wrapper inside `.main-frame-container` so `ObjectPanel` can sit alongside the image frame without squishing it.
+
+Classes for `ObjectPanel`:
+
+- `.object-panel-container`: outer flex row, `flex-shrink: 0`.
+- `.object-panel-side`: 28px always-visible column.
+- `.object-panel-toggle`: collapse/expand arrow button.
+- `.object-panel-add-side`: permanently-visible `+` button in the side column.
+- `.object-panel-body`: 150px expandable panel; `is-collapsed` collapses via `width: 0; opacity: 0; pointer-events: none`.
+- `.object-thumbnail-btn`: square thumbnail with checkerboard transparency background; `is-active` adds accent border.

@@ -56,7 +56,30 @@ All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.
 | `image_id` | `str` | Uploaded image id. |
 | `mask_id` | `str` | Selected candidate id from segmentation response. |
 
-`InpaintMaskResponse` has same fields as `ClickResultResponse`: `image_id`, `background_b64`, `cutout_b64`, `format`, `cutout_bounds`.
+`InpaintMaskResponse` extends `ClickResultResponse` (`image_id`, `background_b64`, `cutout_b64`, `format`, `cutout_bounds`) and adds:
+
+| Field | Type | Description |
+|---|---|---|
+| `object_id` | `int` | Zero-based integer id assigned to the newly created object within the session. Defaults to `0` if the inpaint route does not supply one (legacy behavior). |
+
+## Object List
+
+`ObjectInfo` describes one finalized object within a session. Returned inside `ObjectListResponse` by `GET /images/{uid}/objects`.
+
+| Field | Type | Description |
+|---|---|---|
+| `object_id` | `int` | Zero-based integer id. |
+| `cutout_b64` | `str` | Base64-encoded BGRA cutout PNG. |
+| `format` | `str` | Currently `png`. |
+| `cutout_bounds` | `CutoutBounds \| null` | Tight visible-object bounds inside the cutout PNG. |
+| `has_3d` | `bool` | Whether a GLB 3D model has been generated for this object. |
+
+`ObjectListResponse` is returned by `GET /images/{uid}/objects`.
+
+| Field | Type | Description |
+|---|---|---|
+| `uid` | `str` | Session UID. |
+| `objects` | `list[ObjectInfo]` | Objects in ascending `object_id` order. |
 
 ## Final Result Metadata
 

@@ -26,18 +26,20 @@ sequenceDiagram
     User->>UI: choose cutout option
     UI->>API: POST /images/inpaint {image_id,mask_id}
     API->>Cache: load selected refined mask
-    API->>Inpainter: cut_mask_from_image(...)
+    API->>API: load_canvas_bytes (background if exists, else original)
+    API->>Inpainter: cut_mask_from_image(canvas, selected_mask)
     Inpainter-->>API: inpainted background
-    API-->>UI: background_b64 + selected cutout_b64
-    UI-->>User: final background + optional cutout overlay
+    API-->>UI: InpaintMaskResponse (background_b64 + cutout_b64 + object_id)
+    UI-->>User: updated background + ObjectPanel with new object thumbnail
 ```
 
 ## Frontend
 
-- `UploadFrame` still converts display click into natural image pixels.
+- `UploadFrame` converts display click into natural image pixels. When `isAddingObject` is true, it shows the latest background instead of the original upload.
 - `MainPage.handleCutOut` calls `segmentImage(...)` and opens `MaskPickerModal`.
 - `MaskPickerModal` shows returned cutout previews, not raw masks.
-- `MainPage.handleMaskSelected` calls `inpaintMask(...)` and reuses existing final result state: `backgroundSrc`, `cutoutSrc`, and `cutoutAlphaBounds`.
+- `MainPage.handleMaskSelected` calls `inpaintMask(...)`, builds a new `CutoutObject` from the response (including `object_id`), and appends it to `objects[]`. `backgroundSrc` is updated to the new background. The active-object derived values (`cutoutSrc`, `cutoutAlphaBounds`, `glbData`) update automatically.
+- `ObjectPanel` renders alongside the image frame when `objects.length > 0`. The `+` button in the panel side column enters add-object mode.
 
 ## Backend
 
@@ -54,5 +56,6 @@ Runtime files under `fastApi-app/tmp/images/`:
 | `{uid}.{ext}` | Original upload. |
 | `{uid}_mask_{mask_id}_refined.npy` | Temporary selected-mask model input. |
 | `{uid}_mask_{mask_id}_cutout.png` | Temporary user-facing candidate preview. |
-| `{uid}_background.png` | Final inpainted background. |
-| `{uid}_cutout.png` | Final selected cutout. |
+| `{uid}_background.png` | Cumulative inpainted canvas (overwritten on each inpaint). |
+| `{uid}_{object_id}_cutout.png` | Per-object cutout (numbered, never overwritten). |
+| `{uid}_cutout.png` | Legacy flat cutout (sessions before per-object numbering). |

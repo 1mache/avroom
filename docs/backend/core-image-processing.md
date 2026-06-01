@@ -15,15 +15,33 @@
 | Function | Signature | Used by |
 |---|---|---|
 | `get_image_path` | `(image_id, base_dir) -> Path` | `load_image_bytes` |
-| `load_image_bytes` | `(image_id, base_dir) -> bytes` | `process_click_on_image` |
-| `segment_at_click` | `(image_bytes, x, y, options=None) -> (bg_bytes, cutout_bytes, "png")` | `process_click_on_image` (also a pure entry point if you have bytes already) |
-| `process_click_on_image` | `(image_id, base_dir, x, y, options=None) -> (bg_bytes, cutout_bytes, "png")` | `api/routes.handle_click` |
+| `load_image_bytes` | `(image_id, base_dir) -> bytes` | `process_click_on_image` (original upload only) |
+| `load_canvas_bytes` | `(image_id, base_dir) -> bytes` | `segment_candidates_on_image`, `inpaint_selected_mask_on_image` |
+| `segment_at_click` | `(image_bytes, x, y, options=None) -> (bg_bytes, cutout_bytes, "png")` | `process_click_on_image` |
+| `process_click_on_image` | `(image_id, base_dir, x, y, options=None) -> (bg_bytes, cutout_bytes, "png")` | `api/routes.handle_click` (legacy) |
+| `segment_candidates_on_image` | `(image_id, base_dir, x, y, options=None) -> list[(mask_id, cutout_bytes)]` | `api/routes.segment_image` |
+| `inpaint_selected_mask_on_image` | `(image_id, mask_id, base_dir) -> (bg_bytes, cutout_bytes, "png")` | `api/routes.inpaint_mask` |
 
-`_get_object_remover_class` and `_create_debug_click_image` are private helpers.
+`_get_object_remover_class`, `_get_object_segmentor_class`, `_get_background_inpainter_class`, and `_create_debug_click_image` are private helpers.
+
+## Progressive canvas — `load_canvas_bytes`
+
+`load_canvas_bytes` (lines 105–138) is the image loader used by the two-step pipeline (`segment_candidates_on_image` and `inpaint_selected_mask_on_image`). It enables **progressive removal**: if `{uid}_background.png` already exists, it loads that canvas (the accumulated result of all prior removals) rather than the original upload. If no background exists yet (first object), it falls back to `load_image_bytes`.
+
+This means each new segmentation and inpainting operates on the already-cleaned room image, not on the original with prior objects still visible.
+
+```python
+canvas_path = current_background_path(base_dir, image_id)   # {uid}_background.png
+if canvas_path.exists():
+    return canvas_path.read_bytes()          # progressive: use latest inpainted state
+return load_image_bytes(image_id, base_dir)  # first object: use original upload
+```
+
+`current_background_path` is imported from [`core/object_storage.py`](../../fastApi-app/core/object_storage.py). `process_click_on_image` (legacy) still calls `load_image_bytes` directly and is not part of the progressive canvas path.
 
 ## Lazy import of the AI pipeline
 
-```19:29:fastApi-app/core/image_processing.py
+```22:33:fastApi-app/core/image_processing.py
 def _get_object_remover_class():
     try:
         from avroom_object_removal import ObjectRemover
@@ -43,7 +61,7 @@ Why lazy? It keeps `import core.image_processing` cheap (the model loading happe
 
 ## File resolution
 
-```53:59:fastApi-app/core/image_processing.py
+```85:91:fastApi-app/core/image_processing.py
 def get_image_path(image_id: str, base_dir: Path) -> Path:
     """Resolve filesystem path for a stored image regardless of extension."""
 
@@ -59,7 +77,7 @@ This is why upload doesn't need to remember the extension — the click can find
 
 Every click writes a copy of the input with a red dot drawn at the click coordinates to `{base_dir}/point/{image_id}_debug.png`:
 
-```33:51:fastApi-app/core/image_processing.py
+```64:82:fastApi-app/core/image_processing.py
 def _create_debug_click_image(source_image: Image.Image, x: int, y: int, base_dir: Path, image_id: str):
     """Create RGB debug image with a marker drawn at click coordinates."""
 
@@ -83,31 +101,21 @@ def _create_debug_click_image(source_image: Image.Image, x: int, y: int, base_di
 
 These accumulate forever; there is no cleanup.
 
-## The pipeline call
+## The pipeline call (legacy `segment_at_click`)
 
-```86:107:fastApi-app/core/image_processing.py
-    if not image_bytes:
-        return b"", b"", "png"
+`segment_at_click` (lines 195–244) is used only by the legacy `POST /images/click` one-step endpoint. The modern two-step flow uses `segment_candidates_on_image` + `inpaint_selected_mask_on_image` instead.
 
+```212:227:fastApi-app/core/image_processing.py
     remover = _get_object_remover_class()()
     image_key = f"memory://{hashlib.sha256(image_bytes).hexdigest()}"
+
+    logger.info("Running ObjectRemover: image_key=%s click=(%d,%d)", image_key, x, y)
     background_bgr, cutout_bgra = remover.remove_object(
         image_path=image_key,
         x=x,
         y=y,
         image_bytes=image_bytes,
     )
-
-    ok_bg, bg_buf = cv2.imencode(".png", background_bgr)
-    ok_co, co_buf = cv2.imencode(".png", cutout_bgra)
-    if not ok_bg or bg_buf is None:
-        raise RuntimeError("Failed to encode background image to PNG.")
-    if not ok_co or co_buf is None:
-        raise RuntimeError("Failed to encode cutout image to PNG.")
-
-    background_bytes = bg_buf.tobytes()
-    cutout_bytes = co_buf.tobytes()
-    return background_bytes, cutout_bytes, "png"
 ```
 
 Things to notice:

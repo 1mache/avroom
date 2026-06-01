@@ -1,6 +1,6 @@
 # API Endpoints
 
-Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py). Object routes live in [`fastApi-app/api/objects.py`](../../fastApi-app/api/objects.py).
+Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py). 3D routes live in [`fastApi-app/api/model_3d.py`](../../fastApi-app/api/model_3d.py).
 
 | Method | Path | Request | Response |
 |---|---|---|---|
@@ -10,12 +10,15 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `POST` | `/images/inpaint` | `InpaintMaskRequest` | `InpaintMaskResponse` |
 | `POST` | `/images/click` | `ClickRequest` | `ClickResultResponse` legacy one-step flow |
 | `POST` | `/images/{uid}/name` | `SetNameRequest` | `SessionInfo` |
+| `DELETE` | `/images/{uid}` | path `uid` | 204 No Content |
 | `GET` | `/images/{uid}/cache` | path `uid` | `UidCacheStatusResponse` |
+| `GET` | `/images/{uid}/objects` | path `uid` | `ObjectListResponse` |
 | `GET` | `/images/{uid}/background` | path `uid` | PNG file |
-| `GET` | `/images/{uid}/cutout` | path `uid` | PNG file |
+| `GET` | `/images/{uid}/cutout` | path `uid` | latest object cutout PNG |
 | `GET` | `/images/{uid}/original` | path `uid` | original image file |
-| `POST` | `/objects/test-3d` | `{"uid":"..."}` | GLB bytes |
-| `GET` | `/objects/{uid}` | path `uid` | GLB file |
+| `POST` | `/3d/test-3d` | `{"uid":"...", "object_id": 0}` | GLB bytes |
+| `GET` | `/3d/{uid}/{object_id}` | path `uid`, `object_id` | GLB file |
+| `GET` | `/3d/{uid}` | path `uid` | GLB file (legacy id-0 fallback) |
 
 ## `POST /images/segment`
 
@@ -38,15 +41,33 @@ Runs inpainting for the one mask selected by user.
 
 Behavior:
 
-1. Load original uploaded image.
+1. Load the current canvas: `{uid}_background.png` if it exists (prior removals already applied), otherwise the original upload. This enables progressive removal — each inpaint stacks on the previous one.
 2. Load selected cached `{uid}_mask_{mask_id}_refined.npy`.
 3. Load matching cached `{uid}_mask_{mask_id}_cutout.png`.
 4. Run `BackgroundInpainter.cut_mask_from_image(...)`.
-5. Promote result to final `{uid}_background.png` and `{uid}_cutout.png`.
-6. Delete all temporary candidate files for that `image_id`.
-7. Return same final response fields as legacy click flow.
+5. Allocate the next sequential `object_id` for this session (0, 1, 2 …).
+6. Write updated canvas to `{uid}_background.png` (overwrites — becomes the new starting point for the next object).
+7. Write cutout to `{uid}_{object_id}_cutout.png` (numbered — never overwrites a prior object).
+8. Delete all temporary candidate files for that `image_id`.
+9. Return `InpaintMaskResponse` with `object_id` plus background/cutout base64.
 
 If `mask_id` is unknown or candidate cache is gone, endpoint returns `404`.
+
+## `GET /images/{uid}/objects`
+
+Returns all processed objects for a session as `ObjectListResponse`. For each object id found on disk, the endpoint reads the cutout PNG, base64-encodes it, derives `cutout_bounds`, and checks whether a GLB model exists.
+
+Missing individual cutouts are skipped with a WARNING log — the response is still 200 with the remaining objects. An unknown `uid` returns 200 with an empty `objects` list (same behavior as `/images/{uid}/cache`).
+
+## `DELETE /images/{uid}`
+
+Deletes a session and all its associated files from disk:
+- Removes `uid` from `sessions.json` and `names.json`.
+- Removes the original upload (`{uid}.*`), final background, all numbered cutouts (`{uid}_{oid}_cutout.png`), all numbered GLBs (`{uid}_{oid}.glb`), candidate masks, and the click-debug overlay.
+- Legacy `{uid}_cutout.png` and `{uid}.glb` are also removed for pre-numbering sessions.
+- Missing files are silently ignored.
+
+Returns 204 No Content on success.
 
 ## `POST /images/click`
 

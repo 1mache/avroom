@@ -71,7 +71,10 @@ react-front/
     │   ├── layout/MainPage.tsx
     │   └── widgets/
     │       ├── UploadFrame.tsx
-    │       └── ResultFrame.tsx
+    │       ├── MaskPickerModal.tsx
+    │       ├── SessionPicker.tsx
+    │       ├── Model3DFrame.tsx
+    │       └── ObjectPanel.tsx
     ├── assets/                  - hero.png, vite.svg, typescript.svg
     └── counter.ts               - leftover from Vite scaffold; not imported
 ```

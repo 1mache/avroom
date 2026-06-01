@@ -35,7 +35,7 @@ Response contains `masks[]`; each mask has:
 
 `inpaintMask({ image_id, mask_id })` posts JSON to `POST /images/inpaint`.
 
-Response mirrors legacy final result:
+Response is `InpaintMaskResponse`, which extends `ClickResultResponse` and adds `object_id`:
 
 ```ts
 {
@@ -44,6 +44,7 @@ Response mirrors legacy final result:
   cutout_b64: string;
   format: string;
   cutout_bounds?: CutoutBounds | null;
+  object_id: number;   // zero-based id assigned to this object within the session
 }
 ```
 
@@ -55,11 +56,21 @@ Response mirrors legacy final result:
 
 `setSessionName(uid, name)` posts `{name}` to `POST /images/{uid}/name` and returns the updated `SessionInfo`. Backend enforces uniqueness — on collision the backend returns 409 and `handleJsonResponse` throws with the body text, which `MainPage` routes to the error modal.
 
+## Objects
+
+`getSessionObjects(uid)` fetches `GET /images/${uid}/objects` and returns `ObjectListResponse`. Used by `MainPage` on session restore to populate the full `objects[]` array.
+
 ## 3D
 
-`generate3DModel(uid)` still posts to `POST /objects/test-3d`. Backend expects final `{uid}_cutout.png`, now written by `/images/inpaint`.
+`generate3DModel(uid, objectId)` posts to `POST /3d/test-3d` with body `{ uid, object_id: objectId }`. Returns raw GLB `ArrayBuffer`.
 
-`fetchCached3DModel(uid)` reads `GET /objects/{uid}` and returns `null` on 404.
+`fetchCached3DModel(uid, objectId)` fetches `GET /3d/${uid}/${objectId}` and returns `null` on 404 (model not yet generated for that object).
+
+## Session management
+
+`getUidCacheStatus(uid)` fetches `GET /images/${uid}/cache` for session restore.
+
+`deleteSession(uid)` calls `DELETE /images/${uid}` (no body). Throws on non-2xx.
 
 ## Legacy
 

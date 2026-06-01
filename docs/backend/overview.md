@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from api.routes import router as images_router
-from api.objects import router as objects_router
+from api.model_3d import router as model_3d_router
 from logging_config import setup_logging
 
 setup_logging()
@@ -55,14 +55,14 @@ async def read_root() -> dict[str, str]:
 
 
 app.include_router(images_router)
-app.include_router(objects_router)
+app.include_router(model_3d_router)
 logger.info("FastAPI app initialized")
 ```
 
 Things to notice:
 
 - The CORS list is hardcoded to the Vite dev server (`localhost:5173` / `127.0.0.1:5173`). If the frontend ever moves origins, this needs updating.
-- There are two routers: `/images` and `/objects` — see [api-endpoints.md](api-endpoints.md).
+- There are two routers: `/images` and `/3d` — see [api-endpoints.md](api-endpoints.md).
 - `GET /` is a health endpoint that returns `{"status": "ok", "service": "image-processing"}`.
  - Logging is configured centrally by `setup_logging()` and startup/shutdown messages are logged via the FastAPI lifespan.
 
@@ -73,8 +73,9 @@ Things to notice:
 | Entry / app factory | [`fastApi-app/main.py`](../../fastApi-app/main.py) | `FastAPI()` instance, CORS, mount router. |
 | Settings | [`fastApi-app/settings.py`](../../fastApi-app/settings.py) | `get_image_storage_dir()` — see [settings-and-storage.md](settings-and-storage.md). |
 | Routes | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | `/images/upload`, `/images/segment`, `/images/inpaint`, and legacy `/images/click`. |
-| Routes (3D test) | [`fastApi-app/api/objects.py`](../../fastApi-app/api/objects.py) | `/objects/test-3d` (returns GLB bytes). |
+| Routes (3D) | [`fastApi-app/api/model_3d.py`](../../fastApi-app/api/model_3d.py) | `POST /3d/test-3d`, `GET /3d/{uid}/{object_id}`, `GET /3d/{uid}` (legacy). |
 | Core | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | Bridges HTTP requests to `ObjectSegmentor`, `BackgroundInpainter`, and legacy `ObjectRemover`. |
+| Object storage | [`fastApi-app/core/object_storage.py`](../../fastApi-app/core/object_storage.py) | All `{uid}_{object_id}_…` path helpers (`object_cutout_path`, `list_object_ids`, `next_object_id`, etc.). |
 | Schemas | [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.py) | Pydantic models. |
 
 ## Project metadata — [`fastApi-app/pyproject.toml`](../../fastApi-app/pyproject.toml)

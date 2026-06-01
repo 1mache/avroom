@@ -6,12 +6,15 @@ Welcome to the Avroom architecture documentation. These docs describe the **curr
 
 What changed in this refresh:
 
-- Backend: new `POST /images/{uid}/name` endpoint; `GET /images/sessions` now returns `list[SessionInfo]` (was `list[str]`); `GET /images/{uid}/cache` now includes `name` field — updated `api-endpoints.md`.
-- Backend: added `SessionInfo`, `SetNameRequest` models; added `name` field to `UidCacheStatusResponse` — updated `schemas.md`.
-- Backend: added `get_names_file()`, `load_names()`, `set_session_name()` to `settings.py`; documented `names.json` storage layout; fixed `register_uid` line reference (104–121) — updated `settings-and-storage.md`.
-- Frontend: `getSessions()` returns `SessionInfo[]`; added `setSessionName()` API function — updated `api-integration.md`.
-- Frontend: added `sessionName` and `sessionsRefreshKey` state; added `SessionInfo` type; updated `UidCacheStatusResponse` with `name?` — updated `state-and-types.md`.
-- Frontend: `SessionPicker` now accepts `refreshKey` prop and shows custom names on chips; `MainPage` has editable session name field — updated `components.md`.
+- Backend: new `core/object_storage.py` module — centralises all `{uid}_{object_id}_…` path construction (`object_cutout_path`, `list_object_ids`, `next_object_id`, etc.) — updated `repo-structure.md`, `backend/overview.md`, `backend/settings-and-storage.md`.
+- Backend: `api/objects.py` renamed to `api/model_3d.py`; URL prefix `/objects` changed to `/3d` — updated `architecture.md`, `backend/api-endpoints.md`, `backend/overview.md`.
+- Backend: progressive canvas — `segment_candidates_on_image` and `inpaint_selected_mask_on_image` now read from `{uid}_background.png` (if present) instead of original upload via new `load_canvas_bytes` helper — updated `backend/core-image-processing.md`, `backend/data-flow.md`.
+- Backend: `POST /images/inpaint` now writes `{uid}_{object_id}_cutout.png` (numbered) and returns `object_id` in response; `DELETE /images/{uid}` and `GET /images/{uid}/cache` updated for multi-object — updated `backend/api-endpoints.md`, `backend/schemas.md`.
+- Backend: new `GET /images/{uid}/objects` endpoint returning `ObjectListResponse` — updated `backend/api-endpoints.md`, `backend/schemas.md`.
+- Backend: `POST /3d/test-3d` now accepts `object_id`; new `GET /3d/{uid}/{object_id}` route — updated `backend/api-endpoints.md`.
+- Frontend: `generate3DModel` and `fetchCached3DModel` now take `objectId: number`; new `getSessionObjects` function — updated `frontend/api-integration.md`.
+- Frontend: `MainPage` state refactored to `objects: CutoutObject[]` + `activeObjectId` + `isAddingObject`; `sessionLocked` removed; `cutoutSrc`/`cutoutAlphaBounds`/`glbData` are now derived — updated `frontend/state-and-types.md`, `frontend/user-flow.md`.
+- Frontend: new `ObjectPanel` component — updated `frontend/components.md`, `frontend/overview.md`, `repo-structure.md`.
 
 If you change architecture, run the [`update-avroom-docs`](../.cursor/skills/update-avroom-docs/SKILL.md) skill to keep these files in sync with the code.
 

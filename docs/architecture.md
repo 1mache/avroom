@@ -14,7 +14,7 @@ flowchart LR
     outputs[("debug outputs<br/>TestModules/outputs/")]
 
     user -->|HTTP| spa
-    spa -->|"POST /images/upload<br/>POST /images/segment<br/>POST /images/inpaint<br/>POST /objects/test-3d"| api
+    spa -->|"POST /images/upload<br/>POST /images/segment<br/>POST /images/inpaint<br/>GET /images/{uid}/objects<br/>POST /3d/test-3d"| api
     api -->|read/write files| storage
     api -->|"in-process import<br/>ObjectSegmentor / BackgroundInpainter"| pipeline
     pipeline -->|debug PNGs| outputs
@@ -32,7 +32,8 @@ flowchart LR
 
 ### Backend — [fastApi-app/](../fastApi-app/)
 
-- FastAPI app declared in [`fastApi-app/main.py`](../fastApi-app/main.py); routers: `/images` from [`fastApi-app/api/routes.py`](../fastApi-app/api/routes.py) and `/objects` from [`fastApi-app/api/objects.py`](../fastApi-app/api/objects.py).
+- FastAPI app declared in [`fastApi-app/main.py`](../fastApi-app/main.py); routers: `/images` from [`fastApi-app/api/routes.py`](../fastApi-app/api/routes.py) and `/3d` from [`fastApi-app/api/model_3d.py`](../fastApi-app/api/model_3d.py).
+- Per-object artifact path construction centralised in [`fastApi-app/core/object_storage.py`](../fastApi-app/core/object_storage.py).
 - CORS allows `http://localhost:5173` and `http://127.0.0.1:5173` (Vite default) — see [`fastApi-app/main.py`](../fastApi-app/main.py) lines 16–22.
 - Persists uploads on local disk (default `fastApi-app/tmp/images/`, see [`fastApi-app/settings.py`](../fastApi-app/settings.py)).
 - Performs the actual segmentation/inpainting by calling the AI pipeline directly from [`fastApi-app/core/image_processing.py`](../fastApi-app/core/image_processing.py).
@@ -55,9 +56,11 @@ HTTP endpoints (MVP):
 |---|---|---|
 | `POST /images/upload` | `multipart/form-data` with `file` | `ImageUploadResponse` (`image_id`, `original_filename`, `stored_path`) |
 | `POST /images/segment` | `SegmentRequest` (`image_id`, `x`, `y`, optional `options`) | `SegmentResponse` (`masks[]` with `mask_id`, `cutout_b64`, `cutout_bounds`) |
-| `POST /images/inpaint` | `InpaintMaskRequest` (`image_id`, `mask_id`) | `InpaintMaskResponse` (`background_b64`, `cutout_b64`, `format`) |
+| `POST /images/inpaint` | `InpaintMaskRequest` (`image_id`, `mask_id`) | `InpaintMaskResponse` (`background_b64`, `cutout_b64`, `format`, `object_id`) |
+| `GET /images/{uid}/objects` | path `uid` | `ObjectListResponse` (`uid`, `objects[]`) |
 | `POST /images/click` | `ClickRequest` | Legacy `ClickResultResponse` |
-| `POST /objects/test-3d` | `{"uid": "..."}` | raw GLB bytes (`model/gltf-binary`) |
+| `POST /3d/test-3d` | `{"uid": "...", "object_id": 0}` | raw GLB bytes (`model/gltf-binary`) |
+| `GET /3d/{uid}/{object_id}` | path params | cached GLB file |
 
 Schemas in [`fastApi-app/schemas/image.py`](../fastApi-app/schemas/image.py); frontend mirrors them in [`react-front/src/types/api.ts`](../react-front/src/types/api.ts).
 

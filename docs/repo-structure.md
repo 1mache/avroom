@@ -26,10 +26,13 @@ fastApi-app/
 ├── pyproject.toml      - tool.fastapi.entrypoint = "main:app"
 ├── api/
 │   ├── __init__.py
-│   └── routes.py       - /images/upload, /images/segment, /images/inpaint, legacy /images/click
+│   ├── routes.py       - /images/upload, /images/segment, /images/inpaint, legacy /images/click
+│   └── model_3d.py     - /3d/test-3d, /3d/{uid}/{object_id}, /3d/{uid} (3D GLB endpoints)
 ├── core/
 │   ├── __init__.py
-│   └── image_processing.py - bridge to the AI pipeline + debug PNG
+│   ├── image_processing.py   - bridge to the AI pipeline + progressive canvas + debug PNG
+│   ├── mask_cache.py         - filesystem helpers for temporary segmentation candidates
+│   └── object_storage.py     - filesystem path helpers for finalized per-object artifacts
 ├── schemas/
 │   ├── __init__.py
 │   └── image.py        - Pydantic models for requests/responses
@@ -57,7 +60,10 @@ react-front/
     │   ├── layout/MainPage.tsx
     │   └── widgets/
     │       ├── UploadFrame.tsx
-    │       └── ResultFrame.tsx
+    │       ├── MaskPickerModal.tsx
+    │       ├── SessionPicker.tsx
+    │       ├── Model3DFrame.tsx
+    │       └── ObjectPanel.tsx
     ├── assets/         - images
     └── counter.ts      - leftover Vite scaffold, unused
 ```

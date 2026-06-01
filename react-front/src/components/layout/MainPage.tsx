@@ -725,6 +725,10 @@ export const MainPage: React.FC = () => {
     setNormalizedClickPos(null);
   }, []);
 
+  const handleToggleObjectPanel = useCallback(() => {
+    setObjectPanelCollapsed((c) => !c);
+  }, []);
+
   const cutoutOverlayStyle: React.CSSProperties | undefined =
     backgroundNaturalSize && renderedBackgroundRect
       ? {
@@ -890,7 +894,7 @@ export const MainPage: React.FC = () => {
                 onSelectObject={handleSelectObject}
                 onAddObject={handleAddObject}
                 collapsed={objectPanelCollapsed}
-                onToggleCollapsed={() => setObjectPanelCollapsed((c) => !c)}
+                onToggleCollapsed={handleToggleObjectPanel}
               />
             ) : null}
           </div>

@@ -43,16 +43,32 @@ export const ObjectPanel: React.FC<ObjectPanelProps> = ({
 
   return (
     <div className="object-panel-container">
-      <button
-        type="button"
-        className="object-panel-toggle"
-        onClick={onToggleCollapsed}
-        aria-label={collapsed ? "Expand objects panel" : "Collapse objects panel"}
-        title={collapsed ? "Expand" : "Collapse"}
-      >
-        {collapsed ? "▶" : "◀"}
-      </button>
+      {/* Side column — always visible regardless of collapsed state */}
+      <div className="object-panel-side">
+        <button
+          type="button"
+          className="object-panel-toggle"
+          onClick={onToggleCollapsed}
+          aria-label={collapsed ? "Expand objects panel" : "Collapse objects panel"}
+          title={collapsed ? "Expand" : "Collapse"}
+        >
+          {collapsed ? "▶" : "◀"}
+        </button>
 
+        {/* + button is always visible so users can add objects even when panel is collapsed */}
+        <button
+          type="button"
+          className={`object-panel-add-side${isAddingObject ? " is-active" : ""}`}
+          onClick={handleAddObject}
+          disabled={disabled}
+          aria-label="Add new object"
+          title="Add new object"
+        >
+          +
+        </button>
+      </div>
+
+      {/* Expandable body with scrollable thumbnail list */}
       <div className={`object-panel-body${collapsed ? " is-collapsed" : ""}`}>
         <span className="object-panel-label">Objects</span>
 
@@ -75,17 +91,6 @@ export const ObjectPanel: React.FC<ObjectPanelProps> = ({
             </button>
           ))}
         </div>
-
-        <button
-          type="button"
-          className={`object-panel-add-btn${isAddingObject ? " is-active" : ""}`}
-          onClick={handleAddObject}
-          disabled={disabled}
-          aria-label="Add new object"
-          title="Add object"
-        >
-          +
-        </button>
       </div>
     </div>
   );

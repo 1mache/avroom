@@ -432,24 +432,34 @@ export const MainPage: React.FC = () => {
       return;
     }
 
+    // Snapshot the target id before any await so we write to the right object
+    // even if the user switches active objects while generation is in flight.
+    const targetObjectId = activeObjectId;
     setIsGenerating3D(true);
     setError(null);
 
     try {
-      const cached = await fetchCached3DModel(imageId, activeObjectId);
+      const cached = await fetchCached3DModel(imageId, targetObjectId);
       if (cached) {
         setObjects((prev) =>
-          prev.map((o) => (o.objectId === activeObjectId ? { ...o, glbData: cached } : o))
+          prev.map((o) => (o.objectId === targetObjectId ? { ...o, glbData: cached } : o))
         );
-        setShow3D(true);
+        // Only surface the 3D view if the user hasn't switched away.
+        setActiveObjectId((current) => {
+          if (current === targetObjectId) setShow3D(true);
+          return current;
+        });
         return;
       }
 
-      const buffer = await generate3DModel(imageId, activeObjectId);
+      const buffer = await generate3DModel(imageId, targetObjectId);
       setObjects((prev) =>
-        prev.map((o) => (o.objectId === activeObjectId ? { ...o, glbData: buffer } : o))
+        prev.map((o) => (o.objectId === targetObjectId ? { ...o, glbData: buffer } : o))
       );
-      setShow3D(true);
+      setActiveObjectId((current) => {
+        if (current === targetObjectId) setShow3D(true);
+        return current;
+      });
     } catch (genError) {
       const message =
         genError instanceof Error ? genError.message : "Unexpected 3D generation error.";
@@ -911,6 +921,7 @@ export const MainPage: React.FC = () => {
                   type="button"
                   className={`primary-button secondary${obj.objectId === activeObjectId ? " active" : ""}`}
                   onClick={() => handleSelectObject(obj.objectId)}
+                  disabled={isInpainting || isGenerating3D}
                 >
                   Object {obj.objectId}
                 </button>

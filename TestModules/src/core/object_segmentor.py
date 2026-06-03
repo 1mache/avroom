@@ -83,11 +83,12 @@ class ObjectSegmentor:
                 decoded from memory instead of read from ``image_path``.
 
         Returns:
-            A tuple of ``(refined_mask, cutout_bgra)`` pairs — one per SAM
-            candidate. ``refined_mask`` is the routing-expanded mask after a
-            3 px uniform dilation (ready for inpainting). ``cutout_bgra`` is
-            the original pixels inside the *raw* SAM mask with alpha = 0
-            outside it (BGRA, same spatial size as the input image).
+            A tuple of ``(refined_mask, cutout_bgra)`` pairs from **both** passes
+            concatenated: depth-map candidates first, then original-image candidates.
+            ``refined_mask`` is the routing-expanded mask after a 3 px uniform
+            dilation (ready for inpainting). ``cutout_bgra`` is the original pixels
+            inside the *raw* SAM mask with alpha = 0 outside it (BGRA, same spatial
+            size as the input image).
         """
         logger.info(
             f"Starting multi-mask segmentation — image: {image_path}, point: ({x}, {y})"
@@ -126,26 +127,68 @@ class ObjectSegmentor:
             y=y,
         )
 
-        logger.info(f"Requesting ALL candidate masks from SAM at ({x}, {y})...")
-        candidate_pairs = self.segmentation.get_all_masks_for_position(
+        logger.info("Pass A (depth): requesting ALL candidate masks from SAM...")
+        depth_candidate_pairs = self.segmentation.get_all_masks_for_position(
             run_context["input_image"],
             x,
             y,
             expand_pixels=run_context.get("expand_pixels", 14),
             use_broad_mask=run_context["use_broad_mask"],
         )
+        depth_pairs = self._process_candidates(depth_candidate_pairs, image, label="depth")
+        logger.info(f"Pass A (depth): {len(depth_pairs)} candidate(s) produced")
 
+        logger.info("Pass B (image): requesting ALL candidate masks from SAM on original RGB...")
+        image_candidate_pairs = self.segmentation.get_all_masks_for_position(
+            image,
+            x,
+            y,
+            expand_pixels=14,
+            use_broad_mask=False,
+        )
+        image_pairs = self._process_candidates(image_candidate_pairs, image, label="image")
+        logger.info(f"Pass B (image): {len(image_pairs)} candidate(s) produced")
+
+        result_pairs = depth_pairs + image_pairs
+        logger.info(
+            f"Multi-mask segmentation completed — {len(result_pairs)} total candidate(s) "
+            f"({len(depth_pairs)} depth + {len(image_pairs)} image)"
+        )
+        return tuple(result_pairs)
+
+    def _process_candidates(
+        self,
+        candidate_pairs: tuple[tuple[np.ndarray, np.ndarray], ...],
+        image: np.ndarray,
+        label: str,
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Process SAM candidate mask pairs into refined masks and BGRA cutouts.
+
+        Runs the refine-and-compose stage on every ``(expanded_mask, original_mask)``
+        pair produced by SAM. Both passes (depth and image) delegate here so the
+        processing logic stays in one place.
+
+        Args:
+            candidate_pairs: Raw ``(expanded_mask, original_mask)`` pairs from SAM.
+            image: Original BGR image used for cutout composition and overlays.
+            label: Short string prefix (e.g. ``"depth"`` or ``"image"``) applied to
+                all debug-image save keys so the two passes never overwrite each other.
+
+        Returns:
+            List of ``(refined_mask, cutout_bgra)`` pairs ready for inpainting or
+            direct consumption by the caller.
+        """
         result_pairs: list[tuple[np.ndarray, np.ndarray]] = []
         total_candidates = len(candidate_pairs)
 
         for candidate_index, (expanded_mask, original_mask) in enumerate(candidate_pairs):
             logger.info(
-                f"Processing SAM candidate {candidate_index + 1}/{total_candidates}..."
+                f"[{label}] Processing SAM candidate {candidate_index + 1}/{total_candidates}..."
             )
 
             expanded_mask = ensure_mask_hw(expanded_mask, image.shape[:2])
             original_mask = ensure_mask_hw(original_mask, image.shape[:2])
-            self.image_saver.save(f"tight_mask_{candidate_index}", expanded_mask)
+            self.image_saver.save(f"{label}_tight_mask_{candidate_index}", expanded_mask)
 
             tight_overlay = image.copy()
             tight_bool_mask = (
@@ -153,7 +196,7 @@ class ObjectSegmentor:
             )
             tight_overlay[tight_bool_mask] = [255, 255, 255]
             self.image_saver.save(
-                f"debug_tight_mask_overlay_{candidate_index}", tight_overlay
+                f"{label}_debug_tight_mask_overlay_{candidate_index}", tight_overlay
             )
 
             refined_mask = self.mask_refiner.expand_mask_uniform(
@@ -161,12 +204,12 @@ class ObjectSegmentor:
                 radius=3,
             )
             refined_mask = ensure_mask_hw(refined_mask, image.shape[:2])
-            self.image_saver.save(f"mask_{candidate_index}", refined_mask)
+            self.image_saver.save(f"{label}_mask_{candidate_index}", refined_mask)
 
             mask_overlay = image.copy()
             bool_mask = refined_mask > 0 if refined_mask.dtype != bool else refined_mask
             mask_overlay[bool_mask] = [255, 255, 255]
-            self.image_saver.save(f"debug_mask_overlay_{candidate_index}", mask_overlay)
+            self.image_saver.save(f"{label}_debug_mask_overlay_{candidate_index}", mask_overlay)
 
             cutout_bgra = BgraCutoutComposer.compose_original_overlap_bgra(
                 original_bgr=image,
@@ -175,11 +218,8 @@ class ObjectSegmentor:
 
             result_pairs.append((refined_mask, cutout_bgra))
             logger.debug(
-                f"Candidate {candidate_index}: refined_mask shape={refined_mask.shape}, "
-                f"cutout_bgra shape={cutout_bgra.shape}"
+                f"[{label}] Candidate {candidate_index}: "
+                f"refined_mask shape={refined_mask.shape}, cutout_bgra shape={cutout_bgra.shape}"
             )
 
-        logger.info(
-            f"Multi-mask segmentation completed — {total_candidates} candidate(s) returned"
-        )
-        return tuple(result_pairs)
+        return result_pairs

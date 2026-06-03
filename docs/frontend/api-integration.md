@@ -1,151 +1,77 @@
 # API Integration
 
-All backend traffic goes through [`react-front/src/api/images.ts`](../../react-front/src/api/images.ts). It uses the native `fetch` — there is no axios.
+All backend traffic goes through [`react-front/src/api/images.ts`](../../react-front/src/api/images.ts). It uses native `fetch`.
 
 ## Base URL
 
-```3:4:react-front/src/api/images.ts
-const API_BASE_URL =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000";
-```
-
-- Override with the Vite env var `VITE_API_BASE_URL`.
-- Default points at the local FastAPI dev server.
-
-There is no `.env*` checked into `react-front/`. If you want a different backend in dev, create `react-front/.env.local` with:
-
-```
-VITE_API_BASE_URL=http://my.host:8000
-```
-
-Vite injects this at build time; runtime changes require a rebuild/restart.
+`API_BASE_URL` reads `VITE_API_BASE_URL` or falls back to `http://127.0.0.1:8000`.
 
 ## Helpers
 
-```6:13:react-front/src/api/images.ts
-async function handleJsonResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Request failed with status ${response.status}`);
-  }
+`handleJsonResponse<T>(...)` throws an `Error` with backend response text on non-2xx responses. `MainPage` shows that message in the error modal.
 
-  return (await response.json()) as T;
+## Upload
+
+`uploadImage(file)` posts multipart form data to `POST /images/upload` and returns `ImageUploadResponse`.
+
+## Segmentation
+
+`segmentImage(payload)` posts JSON to `POST /images/segment`.
+
+Payload:
+
+```ts
+{ image_id: string; x: number; y: number; options?: ClickRequestOptions }
+```
+
+Response contains `masks[]`; each mask has:
+
+- `mask_id` for later inpainting.
+- `cutout_b64` preview rendered in modal.
+- `format`, currently `png`.
+- `cutout_bounds` for future final cutout drag behavior.
+
+## Inpainting
+
+`inpaintMask({ image_id, mask_id })` posts JSON to `POST /images/inpaint`.
+
+Response is `InpaintMaskResponse`, which extends `ClickResultResponse` and adds `object_id`:
+
+```ts
+{
+  image_id: string;
+  background_b64: string;
+  cutout_b64: string;
+  format: string;
+  cutout_bounds?: CutoutBounds | null;
+  object_id: number;   // zero-based id assigned to this object within the session
 }
 ```
 
-A thin wrapper that throws an `Error` whose message is either the response body text or a generic `Request failed with status NNN`. `MainPage` catches this and shows it under the action buttons.
+`MainPage` turns base64 strings into `data:image/png;base64,...` URLs and drops them into existing result rendering.
 
-## `uploadImage`
+## Sessions
 
-```15:25:react-front/src/api/images.ts
-export async function uploadImage(file: File): Promise<ImageUploadResponse> {
-  const formData = new FormData();
-  formData.append("file", file);
+`getSessions()` fetches `GET /images/sessions` and returns `SessionInfo[]`. Each entry has `uid` and `name` (nullable). Previously returned bare `string[]`; updated after session naming was added.
 
-  const response = await fetch(`${API_BASE_URL}/images/upload`, {
-    method: "POST",
-    body: formData,
-  });
+`setSessionName(uid, name)` posts `{name}` to `POST /images/{uid}/name` and returns the updated `SessionInfo`. Backend enforces uniqueness — on collision the backend returns 409 and `handleJsonResponse` throws with the body text, which `MainPage` routes to the error modal.
 
-  return handleJsonResponse<ImageUploadResponse>(response);
-}
-```
+## Objects
 
-- The form field name `"file"` must match `UploadFile = File(...)` in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) line 26.
-- Browser sets the `multipart/form-data` boundary automatically — don't add an explicit `Content-Type` header.
+`getSessionObjects(uid)` fetches `GET /images/${uid}/objects` and returns `ObjectListResponse`. Used by `MainPage` on session restore to populate the full `objects[]` array.
 
-## `clickImage`
+## 3D
 
-```27:37:react-front/src/api/images.ts
-export async function clickImage(payload: ClickRequest): Promise<ClickResultResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/click`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
+`generate3DModel(uid, objectId)` posts to `POST /3d/test-3d` with body `{ uid, object_id: objectId }`. Returns raw GLB `ArrayBuffer`.
 
-  return handleJsonResponse<ClickResultResponse>(response);
-}
-```
+`fetchCached3DModel(uid, objectId)` fetches `GET /3d/${uid}/${objectId}` and returns `null` on 404 (model not yet generated for that object).
 
-- JSON payload typed as [`ClickRequest`](../backend/schemas.md#clickrequest).
-- The TS types in [`react-front/src/types/api.ts`](../../react-front/src/types/api.ts) mirror the backend Pydantic models — see [state-and-types.md](state-and-types.md).
+## Session management
 
-## `getSessions`
+`getUidCacheStatus(uid)` fetches `GET /images/${uid}/cache` for session restore.
 
-```56:59:react-front/src/api/images.ts
-export async function getSessions(): Promise<string[]> {
-  const response = await fetch(`${API_BASE_URL}/images/sessions`);
-  return handleJsonResponse<string[]>(response);
-}
-```
+`deleteSession(uid)` calls `DELETE /images/${uid}` (no body). Throws on non-2xx.
 
-Returns the array of UIDs from `sessions.json`. Empty array if none exist yet.
+## Legacy
 
-## `getUidCacheStatus`
-
-```61:64:react-front/src/api/images.ts
-export async function getUidCacheStatus(uid: string): Promise<UidCacheStatusResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/${uid}/cache`);
-  return handleJsonResponse<UidCacheStatusResponse>(response);
-}
-```
-
-Checks which output files exist for a UID without downloading them. Used by `SessionPicker` and `handleSessionSelect`.
-
-## `fetchCached3DModel`
-
-```67:75:react-front/src/api/images.ts
-export async function fetchCached3DModel(uid: string): Promise<ArrayBuffer | null> {
-  const response = await fetch(`${API_BASE_URL}/objects/${uid}`);
-  if (response.status === 404) return null;
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Request failed with status ${response.status}`);
-  }
-  return response.arrayBuffer();
-}
-```
-
-Returns GLB bytes if the model exists, `null` on 404. Throws on other errors.
-
-## Auth, retries, timeouts
-
-There are none. Each call is fire-once. If you add auth or retry behavior, wrap it inside `handleJsonResponse` rather than at every call site.
-
-## `generate3DModel`
-
-```39:54:react-front/src/api/images.ts
-export async function generate3DModel(uid: string): Promise<ArrayBuffer> {
-  const response = await fetch(`${API_BASE_URL}/objects/test-3d`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ uid }),
-  });
-
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Request failed with status ${response.status}`);
-  }
-
-  return response.arrayBuffer();
-}
-```
-
-- This endpoint returns **raw GLB bytes**, not JSON (so it bypasses `handleJsonResponse`).
-- The backend expects a cutout stored at `{uid}_cutout.png` (written by `POST /images/click`). See [backend/api-endpoints.md](../backend/api-endpoints.md#post-objectstest-3d).
-
-## Response handling in `MainPage`
-
-```99:103:react-front/src/components/layout/MainPage.tsx
-      const result = await clickImage(payload);
-      const base64Prefix = `data:image/${result.format};base64,`;
-      setBackgroundSrc(`${base64Prefix}${result.background_b64}`);
-      setCutoutSrc(`${base64Prefix}${result.cutout_b64}`);
-```
-
-The base64 strings are turned into `data:image/png;base64,...` URLs and dropped straight into `<img src={...}>`. No blob URLs, no caching, no streaming.
+`clickImage(payload)` remains for `POST /images/click`, but normal UI flow uses `segmentImage(...)` followed by `inpaintMask(...)`.

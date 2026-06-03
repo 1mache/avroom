@@ -20,6 +20,7 @@ flowchart TD
     MainPage --> UploadFrame["components/widgets/UploadFrame.tsx"]
     MainPage --> ResultBg["ResultFrame (Background)"]
     MainPage --> ResultCo["ResultFrame (Cutout)"]
-    MainPage --> apiImages["api/images.ts<br/>uploadImage / clickImage"]
+    MainPage --> MaskPicker["MaskPickerModal"]
+    MainPage --> apiImages["api/images.ts<br/>uploadImage / segmentImage / inpaintMask"]
     apiImages -->|fetch| Backend(("FastAPI<br/>VITE_API_BASE_URL"))
 ```

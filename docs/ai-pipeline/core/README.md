@@ -8,7 +8,7 @@
 | `ObjectSegmentor` | Stages 1–3 + 5–7 (no inpainting). Returns every SAM candidate as `(refined_mask, cutout_bgra)` pairs. |
 | `BackgroundInpainter` | Stage 4 only. Accepts an original image + mask and returns the inpainted background. |
 
-**When it runs:** `ObjectRemover` — on every `/images/click` via [`image_processing.segment_at_click`](../../../fastApi-app/core/image_processing.py) and manual test scripts. `ObjectSegmentor` and `BackgroundInpainter` — from test scripts or future API routes that need deferred or selective inpainting.
+**When it runs:** `ObjectSegmentor` runs on `/images/segment`, then `BackgroundInpainter` runs on `/images/inpaint` after user mask choice. `ObjectRemover` remains for legacy `/images/click` and manual test scripts.
 
 Code: [`TestModules/src/core/`](../../../TestModules/src/core/).
 

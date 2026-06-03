@@ -1,73 +1,74 @@
 # Backend Request Lifecycle
 
-Two endpoints, two flows. Both go through `fastApi-app/api/routes.py`.
+Three image flows go through `fastApi-app/api/routes.py`.
 
-## Upload flow
+## Upload Flow
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Router as "api/routes.py<br/>upload_image"
+    participant Router as "api/routes.py"
     participant Settings as "settings.py"
-    participant Disk as "fastApi-app/tmp/images/"
+    participant Disk as "tmp/images"
 
-    Client->>Router: POST /images/upload (multipart file)
+    Client->>Router: POST /images/upload
     Router->>Settings: get_image_storage_dir()
-    Settings-->>Router: Path
-    Router->>Disk: mkdir -p
-    Router->>Router: image_id = uuid.uuid4()
-    Router->>Router: pick suffix from filename or .png
-    Router->>Router: file.read()
-    Router->>Disk: write {image_id}{suffix}
+    Router->>Disk: write {image_id}.{ext}
     Router-->>Client: ImageUploadResponse
 ```
 
-Code: [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) lines 24–71.
-
-## Click flow
+## Segment Flow
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Router as "api/routes.py<br/>handle_click"
-    participant Settings as "settings.py"
+    participant Router as "api/routes.py"
     participant Core as "core/image_processing.py"
-    participant Disk as "fastApi-app/tmp/images/"
-    participant AI as "ObjectRemover"
+    participant Cache as "core/mask_cache.py"
+    participant AI as "ObjectSegmentor"
 
-    Client->>Router: POST /images/click (ClickRequest)
-    Router->>Settings: get_image_storage_dir()
-    Router->>Core: process_click_on_image(image_id, x, y, options)
-    Core->>Disk: read image bytes via get_image_path glob
-    Core->>Core: PIL bounds check + debug PNG to point/
-    Core->>Core: segment_at_click(bytes, x, y)
-    Core->>Core: lazy import ObjectRemover
-    Core->>AI: remover.remove_object(image_path, x, y, image_bytes)
-    AI-->>Core: (background_bgr, cutout_bgra)
-    Core->>Core: cv2.imencode each as PNG
-    Core-->>Router: (bg_bytes, cutout_bytes, "png")
-    Router->>Router: base64 each
-    Router-->>Client: ClickResultResponse
+    Client->>Router: POST /images/segment {image_id,x,y}
+    Router->>Core: segment_candidates_on_image(...)
+    Core->>Core: load image + validate natural click
+    Core->>Cache: delete stale candidates
+    Core->>AI: get_mask_for_object_at_position(...)
+    AI-->>Core: (refined_mask, cutout_bgra)[]
+    Core->>Cache: save .npy masks + PNG cutouts
+    Router-->>Client: SegmentResponse(masks[])
 ```
 
-## Per-step file:line references
+## Inpaint Flow
 
-| Step | File | Lines |
-|---|---|---|
-| Resolve storage dir | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | 35, 66 |
-| Locate file by `image_id.*` | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 53–59 |
-| Load bytes | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 62–70 |
-| PIL open + bounds check | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 142–168 |
-| Debug PNG (`point/{id}_debug.png`) | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 33–51, 166 |
-| Lazy import pipeline | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 19–30 |
-| Call `ObjectRemover.remove_object` | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 91–100 |
-| `cv2.imencode` PNG | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | 107–114 |
-| Exception → HTTP status | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | 100–108 |
-| Base64 encode | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | 116–117 |
-| Build response | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | 127–132 |
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Router as "api/routes.py"
+    participant Core as "core/image_processing.py"
+    participant Cache as "core/mask_cache.py"
+    participant AI as "BackgroundInpainter"
+    participant Disk as "tmp/images"
 
-## Synchronous, no concurrency
+    Client->>Router: POST /images/inpaint {image_id,mask_id}
+    Router->>Core: inpaint_selected_mask_on_image(...)
+    Core->>Core: load_canvas_bytes (background if exists, else original)
+    Core->>Cache: load selected refined mask + cutout
+    Core->>AI: cut_mask_from_image(canvas, refined_mask)
+    AI-->>Core: background_bgr
+    Router->>Router: next_object_id(storage_dir, uid)
+    Router->>Disk: write {uid}_background.png (new canvas)
+    Router->>Disk: write {uid}_{object_id}_cutout.png
+    Router->>Cache: delete temporary candidates
+    Router-->>Client: InpaintMaskResponse (includes object_id)
+```
 
-Every request blocks until `ObjectRemover.remove_object` returns. With a CPU-only setup this is many seconds. There is no queue, no worker pool, no streaming progress channel — the response only comes back after the full pipeline is done.
+## Cache Rules
 
-If you ever need parallel requests, note that the AI pipeline caches the SAM predictor, LaMa, the SD pipe and HF depth pipelines behind module-level `functools.lru_cache` factories — one shared instance of each per process. Serializing access to those (especially the SD pipeline) is left to the caller.
+- Candidate cache exists only between segmentation response and user selection.
+- New segmentation for same image deletes older candidates first.
+- Segmentation reads from the current canvas (`{uid}_background.png` if present, original otherwise) — each new object is cut from the already-cleaned room image.
+- Successful inpaint writes the new background to `{uid}_background.png` (overwrites — becomes the canvas for the next object) and the cutout to `{uid}_{object_id}_cutout.png` (numbered — prior objects are never overwritten).
+- Successful inpaint deletes every `{uid}_mask_*` temporary file.
+
+## Synchronous Model
+
+Endpoints remain synchronous. Segmentation returns only after all mask candidates are ready; inpainting returns only after selected background is generated. There is no queue, progress stream, or worker pool.

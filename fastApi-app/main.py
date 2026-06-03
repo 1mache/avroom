@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from api.routes import router as images_router
-from api.objects import router as objects_router
+from api.model_3d import router as model_3d_router
 from logging_config import setup_logging
 
 
@@ -50,5 +50,5 @@ async def read_root() -> dict[str, str]:
 
 
 app.include_router(images_router)
-app.include_router(objects_router)
+app.include_router(model_3d_router)
 logger.info("FastAPI app initialized")

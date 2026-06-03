@@ -2,41 +2,88 @@
 
 All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.py).
 
-## `ImageProcessingOptions`
+## Sessions
 
-Optional knobs passed with click requests. Still mostly reserved.
-
-| Field | Type | Default | Description |
-|---|---|---|---|
-| `output_format` | `str` | `"png"` | Desired output format. Current pipeline still returns PNG. |
-| `grayscale` | `bool` | `False` | Reserved flag. |
-
-## `ImageUploadResponse`
-
-Returned by `POST /images/upload`.
+`SessionInfo` is returned by `GET /images/sessions` and `POST /images/{uid}/name`.
 
 | Field | Type | Description |
 |---|---|---|
-| `image_id` | `str` | Server-generated UUID used by later requests. |
-| `original_filename` | `str \| null` | Filename sent by client, if any. |
-| `stored_path` | `str \| null` | Debug-oriented filesystem path. |
+| `uid` | `str` | Session UUID. |
+| `name` | `str \| null` | Human-readable label, or `null` if unnamed. |
 
-## `ClickRequest`
+`SetNameRequest` is the body of `POST /images/{uid}/name`.
 
-Body of `POST /images/click`.
+| Field | Type | Description |
+|---|---|---|
+| `name` | `str` | Desired label (min length 1). |
 
-| Field | Type | Constraints | Description |
-|---|---|---|---|
-| `image_id` | `str` | required | UID from upload. |
-| `x` | `int` | `>= 0` | Natural-image X coordinate. |
-| `y` | `int` | `>= 0` | Natural-image Y coordinate. |
-| `options` | `ImageProcessingOptions \| null` | optional | Reserved processing options. |
+## Upload
 
-Schema only enforces non-negative values. Real image bounds are checked later in processing code.
+`ImageUploadResponse` is returned by `POST /images/upload`.
 
-## `CutoutBounds`
+| Field | Type | Description |
+|---|---|---|
+| `image_id` | `str` | Server UUID used by later requests. |
+| `original_filename` | `str \| null` | Filename sent by client. |
+| `stored_path` | `str \| null` | Debug filesystem path. |
 
-New metadata schema used by drag/clamp behavior.
+## Segmentation
+
+`SegmentRequest` extends `ClickRequest`: `image_id`, natural-image `x/y`, optional `options`.
+
+`SegmentResponse` returns:
+
+| Field | Type | Description |
+|---|---|---|
+| `image_id` | `str` | Segmented image id. |
+| `masks` | `list[SegmentMaskOption]` | User-selectable candidates in SAM return order. |
+
+`SegmentMaskOption`:
+
+| Field | Type | Description |
+|---|---|---|
+| `mask_id` | `str` | Candidate id; currently candidate index as string. |
+| `cutout_b64` | `str` | BGRA cutout preview, not raw black-white mask. |
+| `format` | `str` | Currently `png`. |
+| `cutout_bounds` | `CutoutBounds \| null` | Visible-object bounds for preview and later drag. |
+
+## Inpainting
+
+`InpaintMaskRequest` is sent to `POST /images/inpaint`.
+
+| Field | Type | Description |
+|---|---|---|
+| `image_id` | `str` | Uploaded image id. |
+| `mask_id` | `str` | Selected candidate id from segmentation response. |
+
+`InpaintMaskResponse` extends `ClickResultResponse` (`image_id`, `background_b64`, `cutout_b64`, `format`, `cutout_bounds`) and adds:
+
+| Field | Type | Description |
+|---|---|---|
+| `object_id` | `int` | Zero-based integer id assigned to the newly created object within the session. Defaults to `0` if the inpaint route does not supply one (legacy behavior). |
+
+## Object List
+
+`ObjectInfo` describes one finalized object within a session. Returned inside `ObjectListResponse` by `GET /images/{uid}/objects`.
+
+| Field | Type | Description |
+|---|---|---|
+| `object_id` | `int` | Zero-based integer id. |
+| `cutout_b64` | `str` | Base64-encoded BGRA cutout PNG. |
+| `format` | `str` | Currently `png`. |
+| `cutout_bounds` | `CutoutBounds \| null` | Tight visible-object bounds inside the cutout PNG. |
+| `has_3d` | `bool` | Whether a GLB 3D model has been generated for this object. |
+
+`ObjectListResponse` is returned by `GET /images/{uid}/objects`.
+
+| Field | Type | Description |
+|---|---|---|
+| `uid` | `str` | Session UID. |
+| `objects` | `list[ObjectInfo]` | Objects in ascending `object_id` order. |
+
+## Final Result Metadata
+
+`CutoutBounds` describes visible object inside full-size cutout PNG:
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -47,40 +94,19 @@ New metadata schema used by drag/clamp behavior.
 | `natural_width` | `int` | Full cutout PNG width. |
 | `natural_height` | `int` | Full cutout PNG height. |
 
-Important contract:
-
-- Bounds describe the visible object inside the full cutout PNG.
-- They are not frame coordinates.
-- Frontend uses them to clamp translation so transparent padding may leave frame while opaque object stays inside frame.
-
-## `ClickResultResponse`
-
-Returned by `POST /images/click`.
+`UidCacheStatusResponse` reports final cached artifacts and `cutout_bounds` for restored sessions.
 
 | Field | Type | Description |
 |---|---|---|
-| `image_id` | `str` | Echo of request UID. |
-| `background_b64` | `str` | Base64 PNG of inpainted background. |
-| `cutout_b64` | `str` | Base64 BGRA PNG of segmented object. |
-| `format` | `str` | Current image encoding, still `"png"`. |
-| `cutout_bounds` | `CutoutBounds \| null` | Tight visible-object bounds extracted from cutout alpha. |
+| `uid` | `str` | Session UUID. |
+| `name` | `str \| null` | Human-readable label from `names.json`, or `null`. |
+| `has_background` | `bool` | Background PNG cached on disk. |
+| `has_cutout` | `bool` | Cutout PNG cached on disk. |
+| `has_3d` | `bool` | GLB model cached on disk. |
+| `cutout_bounds` | `CutoutBounds \| null` | Tight visible-object bounds from cached cutout. |
 
-`cutout_bounds` may be `null` if server cannot decode the PNG for metadata extraction. Frontend should handle that by falling back to full-image clamping.
+## Legacy
 
-## `UidCacheStatusResponse`
+`ClickRequest` and `ClickResultResponse` remain for `POST /images/click`, but normal frontend flow uses `SegmentRequest` followed by `InpaintMaskRequest`.
 
-Returned by `GET /images/{uid}/cache`.
-
-| Field | Type | Description |
-|---|---|---|
-| `uid` | `str` | Requested UID. |
-| `has_background` | `bool` | `{uid}_background.png` exists. |
-| `has_cutout` | `bool` | `{uid}_cutout.png` exists. |
-| `has_3d` | `bool` | `{uid}.glb` exists. |
-| `cutout_bounds` | `CutoutBounds \| null` | Bounds derived from cached cutout PNG, if present. |
-
-This extra metadata lets session restore recover drag bounds without re-running segmentation.
-
-## Frontend mirror
-
-Frontend re-declares these types in [`react-front/src/types/api.ts`](../../react-front/src/types/api.ts). No codegen exists. Backend schema changes must be mirrored manually.
+Frontend mirrors these types in [`react-front/src/types/api.ts`](../../react-front/src/types/api.ts). No codegen exists.

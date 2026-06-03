@@ -1,4 +1,15 @@
-import type { ClickRequest, ClickResultResponse, ImageUploadResponse, UidCacheStatusResponse } from "../types/api";
+import type {
+  ClickRequest,
+  ClickResultResponse,
+  ImageUploadResponse,
+  InpaintMaskRequest,
+  InpaintMaskResponse,
+  ObjectListResponse,
+  SegmentRequest,
+  SegmentResponse,
+  SessionInfo,
+  UidCacheStatusResponse,
+} from "../types/api";
 
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000";
@@ -38,13 +49,13 @@ export async function clickImage(payload: ClickRequest): Promise<ClickResultResp
   return handleJsonResponse<ClickResultResponse>(response);
 }
 
-export async function generate3DModel(uid: string): Promise<ArrayBuffer> {
-  const response = await fetch(`${API_BASE_URL}/objects/test-3d`, {
+export async function generate3DModel(uid: string, objectId: number): Promise<ArrayBuffer> {
+  const response = await fetch(`${API_BASE_URL}/3d/test-3d`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ uid }),
+    body: JSON.stringify({ uid, object_id: objectId }),
   });
 
   if (!response.ok) {
@@ -55,9 +66,21 @@ export async function generate3DModel(uid: string): Promise<ArrayBuffer> {
   return response.arrayBuffer();
 }
 
-export async function getSessions(): Promise<string[]> {
+export async function getSessions(): Promise<SessionInfo[]> {
   const response = await fetch(`${API_BASE_URL}/images/sessions`);
-  return handleJsonResponse<string[]>(response);
+  return handleJsonResponse<SessionInfo[]>(response);
+}
+
+export async function setSessionName(uid: string, name: string): Promise<SessionInfo> {
+  const response = await fetch(`${API_BASE_URL}/images/${uid}/name`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name }),
+  });
+
+  return handleJsonResponse<SessionInfo>(response);
 }
 
 export async function getUidCacheStatus(uid: string): Promise<UidCacheStatusResponse> {
@@ -65,14 +88,54 @@ export async function getUidCacheStatus(uid: string): Promise<UidCacheStatusResp
   return handleJsonResponse<UidCacheStatusResponse>(response);
 }
 
+export async function segmentImage(payload: SegmentRequest): Promise<SegmentResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/segment`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  return handleJsonResponse<SegmentResponse>(response);
+}
+
+export async function inpaintMask(payload: InpaintMaskRequest): Promise<InpaintMaskResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/inpaint`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  return handleJsonResponse<InpaintMaskResponse>(response);
+}
+
+export async function deleteSession(uid: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/images/${uid}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(text || `Delete failed with status ${response.status}`);
+  }
+}
+
 // 404 means "model not generated yet", not an exceptional transport failure.
-export async function fetchCached3DModel(uid: string): Promise<ArrayBuffer | null> {
-  const response = await fetch(`${API_BASE_URL}/objects/${uid}`);
+export async function fetchCached3DModel(uid: string, objectId: number): Promise<ArrayBuffer | null> {
+  const response = await fetch(`${API_BASE_URL}/3d/${uid}/${objectId}`);
   if (response.status === 404) return null;
   if (!response.ok) {
     const text = await response.text();
     throw new Error(text || `Request failed with status ${response.status}`);
   }
   return response.arrayBuffer();
+}
+
+export async function getSessionObjects(uid: string): Promise<ObjectListResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/${uid}/objects`);
+  return handleJsonResponse<ObjectListResponse>(response);
 }
 

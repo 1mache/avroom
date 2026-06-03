@@ -1,3 +1,8 @@
+export interface SessionInfo {
+  uid: string;
+  name: string | null;
+}
+
 export interface ImageUploadResponse {
   image_id: string;
   original_filename?: string | null;
@@ -18,6 +23,8 @@ export interface ClickRequest {
   options?: ClickRequestOptions;
 }
 
+export type SegmentRequest = ClickRequest;
+
 export interface ClickResultResponse {
   image_id: string;
   background_b64: string;
@@ -27,8 +34,30 @@ export interface ClickResultResponse {
   cutout_bounds?: CutoutBounds | null;
 }
 
+export interface SegmentMaskOption {
+  mask_id: string;
+  cutout_b64: string;
+  format: string;
+  cutout_bounds?: CutoutBounds | null;
+}
+
+export interface SegmentResponse {
+  image_id: string;
+  masks: SegmentMaskOption[];
+}
+
+export interface InpaintMaskRequest {
+  image_id: string;
+  mask_id: string;
+}
+
+export interface InpaintMaskResponse extends ClickResultResponse {
+  object_id: number;
+}
+
 export interface UidCacheStatusResponse {
   uid: string;
+  name?: string | null;
   has_background: boolean;
   has_cutout: boolean;
   has_3d: boolean;
@@ -44,5 +73,18 @@ export interface CutoutBounds {
   // map drag/clamp math back to original image space.
   natural_width: number;
   natural_height: number;
+}
+
+export interface ObjectInfo {
+  object_id: number;
+  cutout_b64: string;
+  format: string;
+  cutout_bounds?: CutoutBounds | null;
+  has_3d: boolean;
+}
+
+export interface ObjectListResponse {
+  uid: string;
+  objects: ObjectInfo[];
 }
 

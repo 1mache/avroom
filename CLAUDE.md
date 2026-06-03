@@ -20,14 +20,14 @@ avroom/
 │   │   └── utils/        # MaskRefiner, DebugImageSaver, MaskOverlapRGBAComposer
 │   └── tests/            # Standalone test scripts
 ├── fastApi-app/          # FastAPI microservice (the IPE - Image Processing Engine)
-│   ├── api/routes.py     # POST /images/upload, POST /images/click
+│   ├── api/routes.py     # upload, segment, inpaint, legacy click endpoints
 │   ├── core/             # image_processing.py - bridges API to ObjectRemover
 │   ├── schemas/          # Pydantic request/response models
 │   ├── settings.py       # Image storage dir config
 │   └── tmp               # Runtime temp object storage (gitignored)
 └── react-front/          # React/TypeScript frontend (MVP state)
     └── src/
-        ├── api/images.ts  # uploadImage(), clickImage() fetch calls
+        ├── api/images.ts  # uploadImage(), segmentImage(), inpaintMask() fetch calls
         ├── components/layout/MainPage.tsx  # All UI state lives here
         └── types/         # Shared TypeScript types
 ```
@@ -98,7 +98,7 @@ Use `logger = logging.getLogger(__name__)` at module level. No `print()`. Level 
 
 ## AI Pipeline Architecture (Critical)
 
-`ObjectRemover` (`TestModules/src/core/objectRemover.py`) orchestrates the full pipeline:
+`ObjectRemover` (`TestModules/src/core/objectRemover.py`) orchestrates the legacy full pipeline. Normal UI flow now uses `ObjectSegmentor` first, lets the user choose a mask, then passes selected `refined_mask` to `BackgroundInpainter`.
 
 1. **Depth** — `OptimizedDepthFacade` blends two depth models (Depth-Anything-V2 for near, LiheYoung for far) using V2 depth values as alpha weights. This prevents wall seams.
 2. **Adapt** — `SamImageAdapter` converts the grayscale depth map to 3-channel RGB for SAM input. Result is cached per image+point.

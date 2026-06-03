@@ -3,15 +3,21 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   API_BASE_URL,
-  clickImage,
+  deleteSession,
   fetchCached3DModel,
   generate3DModel,
+  getSessionObjects,
   getUidCacheStatus,
+  inpaintMask,
+  segmentImage,
+  setSessionName as saveSessionName,
   uploadImage,
 } from "../../api/images";
 import avroomLogo from "../../assets/avroom.png";
-import type { ClickRequest, CutoutBounds } from "../../types/api";
+import type { CutoutBounds, SegmentMaskOption, SegmentRequest } from "../../types/api";
+import { MaskPickerModal } from "../widgets/MaskPickerModal";
 import { Model3DFrame } from "../widgets/Model3DFrame";
+import { ObjectPanel } from "../widgets/ObjectPanel";
 import { SessionPicker } from "../widgets/SessionPicker";
 import { UploadFrame } from "../widgets/UploadFrame";
 
@@ -40,6 +46,14 @@ interface DragState {
   startClientY: number;
   startOffsetX: number;
   startOffsetY: number;
+}
+
+interface CutoutObject {
+  objectId: number;
+  cutoutSrc: string;
+  cutoutAlphaBounds: CutoutAlphaBounds | null;
+  normalizedClickPos: ClickPosition | null;
+  glbData: ArrayBuffer | null;
 }
 
 // `object-fit: contain` means visible image may not fill stage. Drag math must
@@ -117,6 +131,8 @@ const toCutoutAlphaBounds = (bounds: CutoutBounds | null | undefined): CutoutAlp
   };
 };
 
+const DELETE_CONFIRM_SECONDS = 2;
+
 export const MainPage: React.FC = () => {
   const frameInputRef = useRef<HTMLInputElement>(null);
   const uploadOtherInputRef = useRef<HTMLInputElement>(null);
@@ -133,20 +149,29 @@ export const MainPage: React.FC = () => {
   const [naturalClickPos, setNaturalClickPos] = useState<ClickPosition | null>(null);
   const [normalizedClickPos, setNormalizedClickPos] = useState<ClickPosition | null>(null);
   const [backgroundSrc, setBackgroundSrc] = useState<string | null>(null);
-  const [cutoutSrc, setCutoutSrc] = useState<string | null>(null);
   const [backgroundNaturalSize, setBackgroundNaturalSize] = useState<Size | null>(null);
   const [resultStageSize, setResultStageSize] = useState<Size | null>(null);
-  const [cutoutAlphaBounds, setCutoutAlphaBounds] = useState<CutoutAlphaBounds | null>(null);
   const [cutoutOffset, setCutoutOffset] = useState<ClickPosition>({ x: 0, y: 0 });
-  const [sessionLocked, setSessionLocked] = useState(false);
   const [showCutout, setShowCutout] = useState(false);
   const [show3D, setShow3D] = useState(false);
+  const [maskOptions, setMaskOptions] = useState<SegmentMaskOption[]>([]);
+  const [selectedMaskId, setSelectedMaskId] = useState<string | null>(null);
   const [isDraggingCutout, setIsDraggingCutout] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isInpainting, setIsInpainting] = useState(false);
   const [isGenerating3D, setIsGenerating3D] = useState(false);
-  const [glbData, setGlbData] = useState<ArrayBuffer | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [sessionName, setSessionName] = useState<string>("");
+  const [sessionsRefreshKey, setSessionsRefreshKey] = useState(0);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteConfirming, setDeleteConfirming] = useState(false);
+  const deleteConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [objects, setObjects] = useState<CutoutObject[]>([]);
+  const [activeObjectId, setActiveObjectId] = useState<number | null>(null);
+  const [isAddingObject, setIsAddingObject] = useState(false);
+  const [objectPanelCollapsed, setObjectPanelCollapsed] = useState(false);
 
   const replaceUploadedImageUrl = useCallback((nextUrl: string | null) => {
     setUploadedImageUrl((previousUrl) => {
@@ -163,19 +188,31 @@ export const MainPage: React.FC = () => {
     setNaturalClickPos(null);
     setNormalizedClickPos(null);
     setBackgroundSrc(null);
-    setCutoutSrc(null);
     setBackgroundNaturalSize(null);
     setResultStageSize(null);
-    setCutoutAlphaBounds(null);
     setCutoutOffset({ x: 0, y: 0 });
-    setSessionLocked(false);
     setShowCutout(false);
     setShow3D(false);
+    setMaskOptions([]);
+    setSelectedMaskId(null);
     setIsDraggingCutout(false);
     dragStateRef.current = null;
-    setGlbData(null);
+    setObjects([]);
+    setActiveObjectId(null);
+    setIsAddingObject(false);
     setError(null);
+    if (deleteConfirmTimerRef.current) {
+      clearTimeout(deleteConfirmTimerRef.current);
+      deleteConfirmTimerRef.current = null;
+    }
+    setDeleteConfirming(false);
   }, []);
+
+  // Derive active-object values from the objects array
+  const activeObject = objects.find(o => o.objectId === activeObjectId) ?? null;
+  const cutoutSrc = activeObject?.cutoutSrc ?? null;
+  const cutoutAlphaBounds = activeObject?.cutoutAlphaBounds ?? null;
+  const glbData = activeObject?.glbData ?? null;
 
   useEffect(() => {
     return () => {
@@ -242,14 +279,31 @@ export const MainPage: React.FC = () => {
 
     try {
       const status = await getUidCacheStatus(uid);
-      if (status.has_background && status.has_cutout) {
+      setSessionName(status.name ?? uid);
+
+      if (status.has_background) {
         setBackgroundSrc(`${API_BASE_URL}/images/${uid}/background`);
-        setCutoutSrc(`${API_BASE_URL}/images/${uid}/cutout`);
-        setCutoutAlphaBounds(toCutoutAlphaBounds(status.cutout_bounds));
-        setSessionLocked(true);
+      }
+
+      if (status.has_cutout) {
+        const objList = await getSessionObjects(uid);
+        if (objList.objects.length > 0) {
+          const loadedObjects: CutoutObject[] = objList.objects.map((info) => ({
+            objectId: info.object_id,
+            cutoutSrc: `data:image/${info.format};base64,${info.cutout_b64}`,
+            cutoutAlphaBounds: toCutoutAlphaBounds(info.cutout_bounds ?? null),
+            normalizedClickPos: null,
+            glbData: null,
+          }));
+          setObjects(loadedObjects);
+          const lastObject = loadedObjects[loadedObjects.length - 1];
+          setActiveObjectId(lastObject.objectId);
+          setShowCutout(true);
+        }
       }
     } catch {
       // Non-fatal. User can rerun cutout.
+      setSessionName(uid);
     }
   }, [replaceUploadedImageUrl, resetWorkspaceState]);
 
@@ -265,7 +319,9 @@ export const MainPage: React.FC = () => {
     try {
       const response = await uploadImage(uploadedFile);
       setImageId(response.image_id);
+      setSessionName(response.image_id);
       setUploadedFile(null);
+      setSessionsRefreshKey((k) => k + 1);
     } catch (uploadError) {
       const message =
         uploadError instanceof Error ? uploadError.message : "Unexpected upload error.";
@@ -286,7 +342,7 @@ export const MainPage: React.FC = () => {
       return;
     }
 
-    const payload: ClickRequest = {
+    const payload: SegmentRequest = {
       image_id: imageId,
       x: naturalClickPos.x,
       y: naturalClickPos.y,
@@ -296,15 +352,15 @@ export const MainPage: React.FC = () => {
     setError(null);
 
     try {
-      const result = await clickImage(payload);
-      const base64Prefix = `data:image/${result.format};base64,`;
-      setBackgroundSrc(`${base64Prefix}${result.background_b64}`);
-      setCutoutSrc(`${base64Prefix}${result.cutout_b64}`);
-      setCutoutAlphaBounds(toCutoutAlphaBounds(result.cutout_bounds));
-      setSessionLocked(true);
-      setShowCutout(false);
-      setShow3D(false);
-      setGlbData(null);
+      const result = await segmentImage(payload);
+      if (result.masks.length === 0) {
+        throw new Error("No mask candidates returned.");
+      }
+
+      // Processing now has two phases: segmentation stops here so user can
+      // decide subjective best mask before expensive inpainting runs.
+      setMaskOptions(result.masks);
+      setSelectedMaskId(null);
     } catch (processError) {
       const message =
         processError instanceof Error ? processError.message : "Unexpected processing error.";
@@ -314,14 +370,62 @@ export const MainPage: React.FC = () => {
     }
   }, [imageId, naturalClickPos]);
 
+  const handleMaskPickerClose = useCallback(() => {
+    if (isInpainting) {
+      return;
+    }
+
+    setMaskOptions([]);
+    setSelectedMaskId(null);
+  }, [isInpainting]);
+
+  const handleMaskSelected = useCallback(async (maskId: string) => {
+    if (!imageId || isInpainting) {
+      return;
+    }
+
+    setSelectedMaskId(maskId);
+    setIsInpainting(true);
+    setError(null);
+
+    try {
+      const result = await inpaintMask({ image_id: imageId, mask_id: maskId });
+      const base64Prefix = `data:image/${result.format};base64,`;
+
+      const newObject: CutoutObject = {
+        objectId: result.object_id,
+        cutoutSrc: `${base64Prefix}${result.cutout_b64}`,
+        cutoutAlphaBounds: toCutoutAlphaBounds(result.cutout_bounds),
+        normalizedClickPos: normalizedClickPos,
+        glbData: null,
+      };
+
+      setObjects((prev) => [...prev, newObject]);
+      setActiveObjectId(result.object_id);
+      setBackgroundSrc(`${base64Prefix}${result.background_b64}`);
+      setIsAddingObject(false);
+      setCutoutOffset({ x: 0, y: 0 });
+      setShowCutout(true);
+      setShow3D(false);
+      setMaskOptions([]);
+      setSelectedMaskId(null);
+    } catch (processError) {
+      const message =
+        processError instanceof Error ? processError.message : "Unexpected inpainting error.";
+      setError(message);
+    } finally {
+      setIsInpainting(false);
+    }
+  }, [imageId, isInpainting, normalizedClickPos]);
+
   const handleToggle3D = useCallback(async () => {
     if (show3D) {
       setShow3D(false);
       return;
     }
 
-    if (!imageId) {
-      setError("No uploaded image to process yet.");
+    if (!imageId || activeObjectId === null) {
+      setError("No object selected for 3D generation.");
       return;
     }
 
@@ -330,20 +434,34 @@ export const MainPage: React.FC = () => {
       return;
     }
 
+    // Snapshot the target id before any await so we write to the right object
+    // even if the user switches active objects while generation is in flight.
+    const targetObjectId = activeObjectId;
     setIsGenerating3D(true);
     setError(null);
 
     try {
-      const cached = await fetchCached3DModel(imageId);
+      const cached = await fetchCached3DModel(imageId, targetObjectId);
       if (cached) {
-        setGlbData(cached);
-        setShow3D(true);
+        setObjects((prev) =>
+          prev.map((o) => (o.objectId === targetObjectId ? { ...o, glbData: cached } : o))
+        );
+        // Only surface the 3D view if the user hasn't switched away.
+        setActiveObjectId((current) => {
+          if (current === targetObjectId) setShow3D(true);
+          return current;
+        });
         return;
       }
 
-      const buffer = await generate3DModel(imageId);
-      setGlbData(buffer);
-      setShow3D(true);
+      const buffer = await generate3DModel(imageId, targetObjectId);
+      setObjects((prev) =>
+        prev.map((o) => (o.objectId === targetObjectId ? { ...o, glbData: buffer } : o))
+      );
+      setActiveObjectId((current) => {
+        if (current === targetObjectId) setShow3D(true);
+        return current;
+      });
     } catch (genError) {
       const message =
         genError instanceof Error ? genError.message : "Unexpected 3D generation error.";
@@ -352,7 +470,69 @@ export const MainPage: React.FC = () => {
     } finally {
       setIsGenerating3D(false);
     }
-  }, [glbData, imageId, show3D]);
+  }, [activeObjectId, glbData, imageId, show3D]);
+
+  const handleNameKeyDown = useCallback(async (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter" || !imageId || !sessionName.trim()) {
+      return;
+    }
+
+    event.currentTarget.blur();
+
+    try {
+      await saveSessionName(imageId, sessionName.trim());
+      setSessionsRefreshKey((k) => k + 1);
+    } catch (nameError) {
+      const message =
+        nameError instanceof Error ? nameError.message : "Failed to save session name.";
+      setError(message);
+    }
+  }, [imageId, sessionName]);
+
+  const handleDeleteSession = useCallback(async () => {
+    if (!imageId) {
+      return;
+    }
+
+    if (!deleteConfirming) {
+      setDeleteConfirming(true);
+      deleteConfirmTimerRef.current = setTimeout(() => {
+        setDeleteConfirming(false);
+      }, DELETE_CONFIRM_SECONDS * 1000);
+      return;
+    }
+
+    if (deleteConfirmTimerRef.current) {
+      clearTimeout(deleteConfirmTimerRef.current);
+      deleteConfirmTimerRef.current = null;
+    }
+    setDeleteConfirming(false);
+    setIsDeleting(true);
+
+    try {
+      await deleteSession(imageId);
+      setImageId(null);
+      setUploadedFile(null);
+      replaceUploadedImageUrl(null);
+      resetWorkspaceState();
+      setSessionName("");
+      setSessionsRefreshKey((k) => k + 1);
+    } catch (deleteError) {
+      const message =
+        deleteError instanceof Error ? deleteError.message : "Failed to delete session.";
+      setError(message);
+    } finally {
+      setIsDeleting(false);
+    }
+  }, [deleteConfirming, imageId, replaceUploadedImageUrl, resetWorkspaceState]);
+
+  useEffect(() => {
+    return () => {
+      if (deleteConfirmTimerRef.current) {
+        clearTimeout(deleteConfirmTimerRef.current);
+      }
+    };
+  }, []);
 
   const triggerFileInput = useCallback(() => {
     if (frameInputRef.current) {
@@ -525,6 +705,30 @@ export const MainPage: React.FC = () => {
     };
   }, [isDraggingCutout]);
 
+  const handleAddObject = useCallback(() => {
+    setIsAddingObject(true);
+    setClickPosition(null);
+    setNaturalClickPos(null);
+    setNormalizedClickPos(null);
+    setShowCutout(false);
+    setShow3D(false);
+  }, []);
+
+  const handleSelectObject = useCallback((objectId: number) => {
+    setActiveObjectId(objectId);
+    setIsAddingObject(false);
+    setCutoutOffset({ x: 0, y: 0 });
+    setShowCutout(true);
+    setShow3D(false);
+    setClickPosition(null);
+    setNaturalClickPos(null);
+    setNormalizedClickPos(null);
+  }, []);
+
+  const handleToggleObjectPanel = useCallback(() => {
+    setObjectPanelCollapsed((c) => !c);
+  }, []);
+
   const cutoutOverlayStyle: React.CSSProperties | undefined =
     backgroundNaturalSize && renderedBackgroundRect
       ? {
@@ -538,13 +742,23 @@ export const MainPage: React.FC = () => {
         }
       : undefined;
 
+  const isChoosingMask = maskOptions.length > 0;
   const uploadBusy = Boolean(imageId && !uploadedFile);
-  const clickEnabled = Boolean(imageId && !sessionLocked);
-  const sessionStatus = backgroundSrc
-    ? "Results ready"
-    : imageId
-      ? "Image uploaded"
-      : "Awaiting upload";
+  // Clicking is enabled during initial upload (no background yet) or when explicitly adding a new object.
+  const clickEnabled = Boolean(imageId && (!backgroundSrc || isAddingObject));
+  const sessionStatus = isInpainting
+    ? "Inpainting"
+    : isChoosingMask
+      ? "Choose mask"
+      : isAddingObject
+        ? "Adding object"
+        : objects.length > 0
+          ? `${objects.length} object${objects.length === 1 ? "" : "s"} removed`
+          : backgroundSrc
+            ? "Results ready"
+            : imageId
+              ? "Image uploaded"
+              : "Awaiting upload";
 
   return (
     <div className="page">
@@ -573,6 +787,16 @@ export const MainPage: React.FC = () => {
         </div>
       ) : null}
 
+      {isChoosingMask ? (
+        <MaskPickerModal
+          masks={maskOptions}
+          selectedMaskId={selectedMaskId}
+          isInpainting={isInpainting}
+          onSelect={handleMaskSelected}
+          onClose={handleMaskPickerClose}
+        />
+      ) : null}
+
       <input
         ref={uploadOtherInputRef}
         type="file"
@@ -597,56 +821,85 @@ export const MainPage: React.FC = () => {
 
       <main className="page-main">
         <section className="workspace-rail">
-          <SessionPicker onSessionSelect={handleSessionSelect} />
+          <SessionPicker onSessionSelect={handleSessionSelect} refreshKey={sessionsRefreshKey} />
         </section>
 
         <section className="workspace-panel">
-          <div className="main-frame-container">
-            {!backgroundSrc ? (
-              <UploadFrame
-                ref={frameInputRef}
-                imageSrc={uploadedImageUrl}
-                clickPosition={clickPosition}
-                onFileSelected={handleFileSelected}
-                onImageClick={handleImageClick}
-                disabled={isUploading || isProcessing || isGenerating3D}
-                clickEnabled={clickEnabled}
+          {imageId ? (
+            <div className="session-name-row">
+              <input
+                type="text"
+                className="session-name-input"
+                value={sessionName}
+                onChange={(e) => setSessionName(e.target.value)}
+                onKeyDown={handleNameKeyDown}
+                placeholder="Session name (Enter to save)"
+                aria-label="Session name"
               />
-            ) : (
-              <div className="frame upload-frame result-main-frame">
-                <div ref={resultStageRef} className="image-container result-image-stage">
-                  <img
-                    src={backgroundSrc}
-                    alt="Background result"
-                    className="frame-image"
-                    onLoad={handleBackgroundLoad}
-                  />
+            </div>
+          ) : null}
 
-                  {showCutout && cutoutSrc ? (
+          <div className="main-frame-container">
+            <div className="main-frame-image-area">
+              {!backgroundSrc || isAddingObject ? (
+                <UploadFrame
+                  ref={frameInputRef}
+                  imageSrc={isAddingObject ? backgroundSrc : uploadedImageUrl}
+                  clickPosition={clickPosition}
+                  onFileSelected={handleFileSelected}
+                  onImageClick={handleImageClick}
+                  disabled={isUploading || isProcessing || isChoosingMask || isInpainting || isGenerating3D}
+                  clickEnabled={clickEnabled}
+                />
+              ) : (
+                <div className="frame upload-frame result-main-frame">
+                  <div ref={resultStageRef} className="image-container result-image-stage">
                     <img
-                      src={cutoutSrc}
-                      alt="Cutout result"
-                      className="cutout-overlay"
-                      style={cutoutOverlayStyle}
-                      onPointerDown={handleCutoutPointerDown}
-                      onDragStart={(event) => event.preventDefault()}
+                      src={backgroundSrc}
+                      alt="Background result"
+                      className="frame-image"
+                      onLoad={handleBackgroundLoad}
                     />
-                  ) : null}
 
-                  {show3D && glbData ? (
-                    <Model3DFrame
-                      glbData={glbData}
-                      clickNormalizedPos={normalizedClickPos}
-                      className="overlay-absolute model-overlay"
-                      backgroundImage={null}
-                    />
-                  ) : null}
+                    {showCutout && cutoutSrc ? (
+                      <img
+                        src={cutoutSrc}
+                        alt="Cutout result"
+                        className="cutout-overlay"
+                        style={cutoutOverlayStyle}
+                        onPointerDown={handleCutoutPointerDown}
+                        onDragStart={(event) => event.preventDefault()}
+                      />
+                    ) : null}
+
+                    {show3D && glbData ? (
+                      <Model3DFrame
+                        glbData={glbData}
+                        clickNormalizedPos={activeObject?.normalizedClickPos ?? null}
+                        className="overlay-absolute model-overlay"
+                        backgroundImage={null}
+                      />
+                    ) : null}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
+
+            {imageId && objects.length > 0 ? (
+              <ObjectPanel
+                objects={objects}
+                activeObjectId={activeObjectId}
+                isAddingObject={isAddingObject}
+                disabled={isInpainting || isGenerating3D}
+                onSelectObject={handleSelectObject}
+                onAddObject={handleAddObject}
+                collapsed={objectPanelCollapsed}
+                onToggleCollapsed={handleToggleObjectPanel}
+              />
+            ) : null}
           </div>
 
-          {backgroundSrc ? (
+          {backgroundSrc && !isAddingObject && objects.length > 0 ? (
             <div className="control-dashboard">
               <label className="dashboard-toggle">
                 <input
@@ -677,7 +930,7 @@ export const MainPage: React.FC = () => {
               type="button"
               className={`primary-button${uploadBusy ? " ghost" : ""}`}
               onClick={uploadBusy ? triggerFileInput : handleUpload}
-              disabled={isUploading || isProcessing || isGenerating3D || (!uploadBusy && !uploadedFile)}
+              disabled={isUploading || isProcessing || isChoosingMask || isInpainting || isGenerating3D || (!uploadBusy && !uploadedFile)}
             >
               {isUploading ? "Uploading..." : uploadBusy ? "Upload other" : "Upload"}
             </button>
@@ -686,11 +939,23 @@ export const MainPage: React.FC = () => {
               type="button"
               className="primary-button secondary"
               onClick={handleCutOut}
-              disabled={!imageId || !clickPosition || sessionLocked || isProcessing}
+              disabled={!imageId || !clickPosition || (!isAddingObject && !!backgroundSrc) || isProcessing || isChoosingMask || isInpainting}
             >
-              {isProcessing ? "Running..." : "Cut Out"}
+              {isProcessing ? "Segmenting..." : isInpainting ? "Inpainting..." : "Cut Out"}
             </button>
           </div>
+          {imageId ? (
+            <div className="delete-row">
+              <button
+                type="button"
+                className={`primary-button danger${deleteConfirming ? " confirming" : ""}`}
+                onClick={handleDeleteSession}
+                disabled={isDeleting || isUploading || isProcessing || isInpainting || isGenerating3D}
+              >
+                {isDeleting ? "Deleting..." : deleteConfirming ? "Confirm delete?" : "Delete session"}
+              </button>
+            </div>
+          ) : null}
         </section>
       </main>
     </div>

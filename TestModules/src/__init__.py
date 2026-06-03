@@ -36,7 +36,7 @@ from .ai_engines import (
     StableDiffusionInpaintingStrategy,
     TrellisReconstructionStrategy,
 )
-from .core import ObjectRemover
+from .core import BackgroundInpainter, ObjectRemover, ObjectSegmentor
 from .routing import (
     BoundaryVarianceRoutingStrategy,
     CenterOfMassRoutingStrategy,
@@ -56,7 +56,9 @@ __all__ = [
     "ImageSegmentationStrategy",
     "LamaInpaintingStrategy",
     "NearFarBlendedDepthMappingStrategy",
+    "BackgroundInpainter",
     "ObjectRemover",
+    "ObjectSegmentor",
     "OpenLrmReconstructionStrategy",
     "Reconstruction3DFacade",
     "Reconstruction3DStrategy",

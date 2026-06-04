@@ -122,12 +122,20 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         image: np.ndarray,
         x: int,
         y: int,
+        *,
+        save_debug: bool = True,
     ) -> tuple[Any, DebugImageSaver]:
-        """Run SAM multimask prediction and save per-candidate debug images.
+        """Run SAM multimask prediction and optionally save per-candidate debug images.
 
-        Returns the raw ``masks`` array from SAM alongside a ``DebugImageSaver``
-        that already has ``mask_0`` … ``mask_N`` written, so callers do not need
-        to repeat the save loop.
+        Args:
+            save_debug: When ``True`` (default), writes ``mask_0`` … ``mask_N``
+                to the debug output directory. Pass ``False`` when the caller
+                (e.g. ``predict_all_masks`` via ``ObjectSegmentor``) will save
+                its own labeled artifacts, to avoid unlabeled duplicates that
+                get silently overwritten on the second pass.
+
+        Returns the raw ``masks`` array alongside the shared ``DebugImageSaver``
+        instance so callers can append further saves to the same directory.
         """
         predictor = self._predictor
         predictor.set_image(image)
@@ -142,8 +150,9 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         )
 
         image_saver = DebugImageSaver()
-        for i, mask in enumerate(masks):
-            image_saver.save(f"mask_{i}.png", mask)
+        if save_debug:
+            for i, mask in enumerate(masks):
+                image_saver.save(f"mask_{i}.png", mask)
 
         return masks, image_saver
 
@@ -190,14 +199,16 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         Each candidate is independently dilated by ``expand_pixels`` when
         non-zero; otherwise a distinct copy is returned.
         """
-        masks, image_saver = self._run_sam_predict(image, x, y)
+        # ObjectSegmentor saves labeled per-candidate artifacts for every pair
+        # it receives, so we skip the raw unlabeled saves here to avoid writing
+        # files that would be silently overwritten by the second (image) pass.
+        masks, _image_saver = self._run_sam_predict(image, x, y, save_debug=False)
 
         candidate_pairs: list[tuple[np.ndarray, np.ndarray]] = []
         for i, raw_mask in enumerate(masks):
             original_mask = raw_mask
             if expand_pixels > 0:
                 expanded_mask = self._mask_refiner.dilate_mask(raw_mask, pixels=expand_pixels)
-                image_saver.save(f"dilated_mask_{i}.png", expanded_mask)
             else:
                 expanded_mask = raw_mask.copy()
             candidate_pairs.append((expanded_mask, original_mask))

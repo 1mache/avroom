@@ -83,11 +83,12 @@ class ObjectSegmentor:
                 decoded from memory instead of read from ``image_path``.
 
         Returns:
-            A tuple of ``(refined_mask, cutout_bgra)`` pairs — one per SAM
-            candidate. ``refined_mask`` is the routing-expanded mask after a
-            3 px uniform dilation (ready for inpainting). ``cutout_bgra`` is
-            the original pixels inside the *raw* SAM mask with alpha = 0
-            outside it (BGRA, same spatial size as the input image).
+            A tuple of ``(refined_mask, cutout_bgra)`` pairs from **both** passes
+            concatenated: depth-map candidates first, then original-image candidates.
+            ``refined_mask`` is the routing-expanded mask after a 3 px uniform
+            dilation (ready for inpainting). ``cutout_bgra`` is the original pixels
+            inside the *raw* SAM mask with alpha = 0 outside it (BGRA, same spatial
+            size as the input image).
         """
         logger.info(
             f"Starting multi-mask segmentation — image: {image_path}, point: ({x}, {y})"
@@ -107,7 +108,8 @@ class ObjectSegmentor:
 
         logger.info("Step 1: Computing optimized depth map...")
         optimized_depth = self.depth.map_depth(image)
-        self.image_saver.save("optimized_depth", optimized_depth)
+        # Depth is already persisted by EnhancedEdgeDepthMappingStrategy as
+        # outputs/depthMaps/enhanced_edge_04_bilateral.png — no duplicate save here.
 
         logger.info("Step 2: Adapting depth data for SAM...")
         adapted_for_sam = self.sam_adapter.get_adapted_image(
@@ -115,7 +117,7 @@ class ObjectSegmentor:
             image_id=image_path,
             point=(x, y),
         )
-        self.image_saver.save("adapted_for_sam", adapted_for_sam)
+        self.image_saver.save("segment_adapted_depth_for_sam", adapted_for_sam)
 
         logger.info(f"Step 3: Determining optimal routing context for ({x}, {y})...")
         run_context = self.router.choose_input(
@@ -126,60 +128,106 @@ class ObjectSegmentor:
             y=y,
         )
 
-        logger.info(f"Requesting ALL candidate masks from SAM at ({x}, {y})...")
-        candidate_pairs = self.segmentation.get_all_masks_for_position(
+        logger.info("Pass A (depth): requesting ALL candidate masks from SAM...")
+        depth_candidate_pairs = self.segmentation.get_all_masks_for_position(
             run_context["input_image"],
             x,
             y,
             expand_pixels=run_context.get("expand_pixels", 14),
             use_broad_mask=run_context["use_broad_mask"],
         )
+        depth_pairs = self._process_candidates(depth_candidate_pairs, image, label="depth_pass")
+        logger.info(f"Pass A (depth): {len(depth_pairs)} candidate(s) produced")
 
+        logger.info("Pass B (image): requesting ALL candidate masks from SAM on original RGB...")
+        image_candidate_pairs = self.segmentation.get_all_masks_for_position(
+            image,
+            x,
+            y,
+            expand_pixels=14,
+            use_broad_mask=False,
+        )
+        image_pairs = self._process_candidates(image_candidate_pairs, image, label="image_pass")
+        logger.info(f"Pass B (image): {len(image_pairs)} candidate(s) produced")
+
+        result_pairs = depth_pairs + image_pairs
+        logger.info(
+            f"Multi-mask segmentation completed — {len(result_pairs)} total candidate(s) "
+            f"({len(depth_pairs)} depth + {len(image_pairs)} image)"
+        )
+        return tuple(result_pairs)
+
+    def _process_candidates(
+        self,
+        candidate_pairs: tuple[tuple[np.ndarray, np.ndarray], ...],
+        image: np.ndarray,
+        label: str,
+    ) -> list[tuple[np.ndarray, np.ndarray]]:
+        """Process SAM candidate mask pairs into refined masks and BGRA cutouts.
+
+        Runs the refine-and-compose stage on every ``(expanded_mask, original_mask)``
+        pair produced by SAM. Both passes (depth and image) delegate here so the
+        processing logic stays in one place.
+
+        Args:
+            candidate_pairs: Raw ``(expanded_mask, original_mask)`` pairs from SAM.
+            image: Original BGR image used for cutout composition and overlays.
+            label: Short string prefix (e.g. ``"depth"`` or ``"image"``) applied to
+                all debug-image save keys so the two passes never overwrite each other.
+
+        Returns:
+            List of ``(refined_mask, cutout_bgra)`` pairs ready for inpainting or
+            direct consumption by the caller.
+        """
         result_pairs: list[tuple[np.ndarray, np.ndarray]] = []
         total_candidates = len(candidate_pairs)
 
         for candidate_index, (expanded_mask, original_mask) in enumerate(candidate_pairs):
+            pfx = f"{label}_candidate_{candidate_index}"
             logger.info(
-                f"Processing SAM candidate {candidate_index + 1}/{total_candidates}..."
+                f"[{label}] Processing SAM candidate {candidate_index + 1}/{total_candidates}..."
             )
 
             expanded_mask = ensure_mask_hw(expanded_mask, image.shape[:2])
             original_mask = ensure_mask_hw(original_mask, image.shape[:2])
-            self.image_saver.save(f"tight_mask_{candidate_index}", expanded_mask)
 
-            tight_overlay = image.copy()
-            tight_bool_mask = (
-                expanded_mask > 0 if expanded_mask.dtype != bool else expanded_mask
-            )
-            tight_overlay[tight_bool_mask] = [255, 255, 255]
-            self.image_saver.save(
-                f"debug_tight_mask_overlay_{candidate_index}", tight_overlay
-            )
+            # Raw mask as SAM produced it (before routing dilation).
+            self.image_saver.save(f"{pfx}_sam_raw_mask", original_mask)
 
+            # Mask after routing-dilation (expand_pixels applied by SAM strategy).
+            self.image_saver.save(f"{pfx}_sam_expanded_mask", expanded_mask)
+
+            expanded_bool = expanded_mask > 0 if expanded_mask.dtype != bool else expanded_mask
+            expanded_overlay = image.copy()
+            expanded_overlay[expanded_bool] = [255, 255, 255]
+            self.image_saver.save(f"{pfx}_overlay_expanded", expanded_overlay)
+
+            # Uniform 3 px dilation on top of the routing-expanded mask.
             refined_mask = self.mask_refiner.expand_mask_uniform(
                 original_mask=expanded_mask,
                 radius=3,
             )
             refined_mask = ensure_mask_hw(refined_mask, image.shape[:2])
-            self.image_saver.save(f"mask_{candidate_index}", refined_mask)
 
-            mask_overlay = image.copy()
-            bool_mask = refined_mask > 0 if refined_mask.dtype != bool else refined_mask
-            mask_overlay[bool_mask] = [255, 255, 255]
-            self.image_saver.save(f"debug_mask_overlay_{candidate_index}", mask_overlay)
+            # refined_mask is a return value — save it explicitly.
+            self.image_saver.save(f"{pfx}_refined_mask", refined_mask)
 
+            refined_bool = refined_mask > 0 if refined_mask.dtype != bool else refined_mask
+            refined_overlay = image.copy()
+            refined_overlay[refined_bool] = [255, 255, 255]
+            self.image_saver.save(f"{pfx}_overlay_refined", refined_overlay)
+
+            # cutout_bgra is a return value — save it explicitly.
             cutout_bgra = BgraCutoutComposer.compose_original_overlap_bgra(
                 original_bgr=image,
                 mask=original_mask,
             )
+            self.image_saver.save(f"{pfx}_cutout_bgra", cutout_bgra)
 
             result_pairs.append((refined_mask, cutout_bgra))
             logger.debug(
-                f"Candidate {candidate_index}: refined_mask shape={refined_mask.shape}, "
-                f"cutout_bgra shape={cutout_bgra.shape}"
+                f"[{label}] Candidate {candidate_index}: "
+                f"refined_mask shape={refined_mask.shape}, cutout_bgra shape={cutout_bgra.shape}"
             )
 
-        logger.info(
-            f"Multi-mask segmentation completed — {total_candidates} candidate(s) returned"
-        )
-        return tuple(result_pairs)
+        return result_pairs

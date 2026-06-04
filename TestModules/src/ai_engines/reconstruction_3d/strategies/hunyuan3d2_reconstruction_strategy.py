@@ -56,7 +56,7 @@ class Hunyuan3D2ReconstructionStrategy(Reconstruction3DStrategy):
             ``HF_TOKEN`` or ``HUGGINGFACE_HUB_TOKEN`` environment variables.
     """
 
-    DEFAULT_SPACE_ID: str = "tencent/Hunyuan3D-2.1"
+    DEFAULT_SPACE_ID: str = "es3d-fi/hunyuan3d-2-1"
 
     _API_GENERATION_ALL: str = "/generation_all"
     _API_SHAPE_GENERATION: str = "/shape_generation"

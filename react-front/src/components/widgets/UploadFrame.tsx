@@ -71,15 +71,35 @@ export const UploadFrame = forwardRef<HTMLInputElement, UploadFrameProps>(({
     }
 
     const rect = event.currentTarget.getBoundingClientRect();
-    const imgRect = img.getBoundingClientRect();
-    const clickXOnImg = event.clientX - imgRect.left;
-    const clickYOnImg = event.clientY - imgRect.top;
+    const elementRect = img.getBoundingClientRect();
+
+    // The <img> uses `object-fit: contain`, so the painted image is letterboxed
+    // and centered inside the element box. getBoundingClientRect() returns the
+    // element box, not the painted image — mapping clicks against it would treat
+    // the letterbox bars as image content and skew coordinates toward center.
+    // Reconstruct the painted-image rect from the natural aspect ratio.
+    const naturalRatio = img.naturalWidth / img.naturalHeight;
+    const elementRatio = elementRect.width / elementRect.height;
+    let contentWidth = elementRect.width;
+    let contentHeight = elementRect.height;
+    if (elementRatio > naturalRatio) {
+      // Element wider than image → bars on left/right.
+      contentWidth = elementRect.height * naturalRatio;
+    } else {
+      // Element taller than image → bars on top/bottom.
+      contentHeight = elementRect.width / naturalRatio;
+    }
+    const offsetX = (elementRect.width - contentWidth) / 2;
+    const offsetY = (elementRect.height - contentHeight) / 2;
+
+    const clickXOnImg = event.clientX - elementRect.left - offsetX;
+    const clickYOnImg = event.clientY - elementRect.top - offsetY;
 
     if (
       clickXOnImg < 0 ||
       clickYOnImg < 0 ||
-      clickXOnImg > imgRect.width ||
-      clickYOnImg > imgRect.height
+      clickXOnImg > contentWidth ||
+      clickYOnImg > contentHeight
     ) {
       return;
     }
@@ -91,12 +111,12 @@ export const UploadFrame = forwardRef<HTMLInputElement, UploadFrameProps>(({
     // Natural coordinates are what backend expects. Display coordinates alone
     // would drift whenever preview size differs from original image size.
     const naturalPos = {
-      x: Math.round((clickXOnImg / imgRect.width) * img.naturalWidth),
-      y: Math.round((clickYOnImg / imgRect.height) * img.naturalHeight),
+      x: Math.round((clickXOnImg / contentWidth) * img.naturalWidth),
+      y: Math.round((clickYOnImg / contentHeight) * img.naturalHeight),
     };
     const normalizedPos = {
-      x: clickXOnImg / imgRect.width,
-      y: clickYOnImg / imgRect.height,
+      x: clickXOnImg / contentWidth,
+      y: clickYOnImg / contentHeight,
     };
 
     onImageClick(displayPos, naturalPos, normalizedPos);

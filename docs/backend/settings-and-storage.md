@@ -140,7 +140,7 @@ Key helpers:
 
 ## What's not configurable
 
-- CORS origins (hardcoded in [`fastApi-app/main.py`](../../fastApi-app/main.py) lines 16–22).
+- CORS origins (hardcoded in [`fastApi-app/main.py`](../../fastApi-app/main.py) lines 36–42).
 - Output format (hardcoded `"png"` in `segment_at_click`).
 - Debug overlay subdir name (`"point"` constant inside `_create_debug_click_image`).
 - Mask dilation radius, SD strength, depth model IDs — all live in the AI pipeline; see [ai-pipeline/](../ai-pipeline/README.md).

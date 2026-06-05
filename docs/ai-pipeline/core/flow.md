@@ -17,16 +17,22 @@ Returns `(background_bgr, cutout_bgra)`.
 
 ## `ObjectSegmentor.get_mask_for_object_at_position` — segmentation only
 
-Stages 1–4 identical to `remove_object`. Stage 5 uses the multi-mask variant:
+Stages 1–4 identical to `remove_object` (load image → depth → adapt → route). Then runs **two independent SAM passes** whose results are concatenated:
 
-5. **Segment (all candidates)** — `ImageSegmentationFacade.get_all_masks_for_position(...)` returns one `(expanded_mask, original_mask)` pair per SAM candidate.
+**Pass A — depth-adapted input:**
 
-Then, for each candidate:
+5. **Segment (all candidates)** — `ImageSegmentationFacade.get_all_masks_for_position(run_context["input_image"], x, y, expand_pixels=run_context["expand_pixels"], ...)` returns one `(expanded_mask, original_mask)` pair per SAM candidate.
+
+For each Pass A candidate:
 
 6. **Refine** — `MaskRefiner.expand_mask_uniform(..., radius=3)` applied to `expanded_mask` → `refined_mask`.
 7. **Compose** — `BgraCutoutComposer.compose_original_overlap_bgra(image, original_mask)` builds `cutout_bgra` from the raw (tight) mask.
 
-Returns a tuple of `(refined_mask, cutout_bgra)` pairs — one per candidate.
+**Pass B — original RGB input:**
+
+Runs `ImageSegmentationFacade.get_all_masks_for_position(rgb_image, x, y, expand_pixels=14, use_broad_mask=False)` — fixed parameters, not from routing context. Applies the same refine + compose steps to each candidate.
+
+Returns a tuple of `(refined_mask, cutout_bgra)` pairs — depth-pass candidates first, then image-pass candidates.
 
 Inpainting (stage 7 of `remove_object`) is intentionally omitted.
 

@@ -31,6 +31,102 @@ _NUM_CHUNKS: int = 8_000
 # guidance_scale matches the Space's own slider default across all presets.
 _GUIDANCE_SCALE: float = 5.0
 
+# ---------------------------------------------------------------------------
+# Cutout pre-processing toggles
+# ---------------------------------------------------------------------------
+# Set to False to disable a step without touching the helper signature, which
+# is useful when debugging or comparing raw vs. cleaned inputs.
+_ENABLE_ALPHA_THRESHOLD: bool = True
+_ENABLE_TIGHT_CROP: bool = True
+
+# Pixels whose alpha is strictly below this value are zeroed out.  A value of
+# 10 removes faint shadow dust while leaving semi-transparent object edges
+# intact.
+_ALPHA_THRESHOLD: int = 10
+
+# After cropping to the visible bounding box, a transparent square canvas is
+# created whose side length equals max(crop_w, crop_h) * this ratio.  The
+# extra margin prevents the diffusion model from interpreting the object as
+# pressed directly against the camera lens, which causes warped, blob-like
+# geometry.  1.2 adds a 20 % border on each side of the shorter axis.
+_TIGHT_CROP_PADDING_RATIO: float = 1.2
+
+
+def _prepare_cutout_for_hunyuan(
+    pil_image: Image.Image,
+    *,
+    apply_alpha_threshold: bool = True,
+    apply_tight_crop: bool = True,
+    alpha_threshold: int = 10,
+    padding_ratio: float = _TIGHT_CROP_PADDING_RATIO,
+) -> Image.Image:
+    """Clean an RGBA cutout before uploading it to the Hunyuan3D-2.1 Space.
+
+    Two optional steps remove the artefacts that cause the model to generate a
+    black floor or warped geometry beneath the reconstructed object:
+
+    1. **Alpha thresholding** — pixels whose alpha value is below
+       *alpha_threshold* are forced to fully transparent (A=0).  This removes
+       faint shadow "pixel dust" that leaks from the segmentation mask and is
+       interpreted by the model as a ground plane.
+
+    2. **Center-and-pad crop** — after thresholding, the bounding box of all
+       non-zero alpha pixels is computed via :pymeth:`PIL.Image.getbbox` and the
+       image is cropped to that box.  The crop is then centered on a new
+       transparent square canvas whose side length equals
+       ``max(crop_w, crop_h) * padding_ratio``.  This 20 % margin prevents the
+       diffusion model from treating the object as occupying the full image
+       plane, which would warp perspective and produce blob-like geometry.
+
+    Both steps are no-ops when their respective *apply_** flag is ``False``.
+
+    Args:
+        pil_image: An RGBA PIL image (the result of :func:`to_pil_rgba`).
+        apply_alpha_threshold: Zero out pixels below *alpha_threshold*.
+        apply_tight_crop: Crop to bounding box, then center on a padded square.
+        alpha_threshold: Inclusive lower bound for "visible" alpha (0-255).
+        padding_ratio: Square canvas side = max(crop dimension) * ratio.
+            Defaults to :data:`_TIGHT_CROP_PADDING_RATIO` (1.2 → 20 % margin).
+
+    Returns:
+        A cleaned RGBA PIL image ready for the Hunyuan3D-2.1 Space.
+    """
+    img = pil_image.convert("RGBA")
+
+    if apply_alpha_threshold:
+        arr = np.array(img)
+        # Zero the alpha channel for near-transparent pixels so the model does
+        # not interpret shadow dust as a surface.
+        arr[arr[:, :, 3] < alpha_threshold, 3] = 0
+        img = Image.fromarray(arr, mode="RGBA")
+        logger.debug("Alpha threshold applied: threshold=%d", alpha_threshold)
+
+    if apply_tight_crop:
+        # getbbox() operates on the alpha channel of an RGBA image and returns
+        # the smallest bounding box enclosing all non-zero pixels.
+        bbox = img.getbbox()
+        if bbox is not None:
+            cropped = img.crop(bbox)
+            canvas_size = int(max(cropped.size) * padding_ratio)
+            padded = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
+            paste_x = (canvas_size - cropped.width) // 2
+            paste_y = (canvas_size - cropped.height) // 2
+            padded.paste(cropped, (paste_x, paste_y))
+            logger.debug(
+                "Center-pad crop applied: bbox=%s cropped_size=%s "
+                "canvas_size=%d paste_offset=(%d, %d)",
+                bbox,
+                cropped.size,
+                canvas_size,
+                paste_x,
+                paste_y,
+            )
+            img = padded
+        else:
+            logger.warning("getbbox() returned None (fully transparent image); skipping crop.")
+
+    return img
+
 
 class Hunyuan3D2GenerationError(RuntimeError):
     """Raised when both the textured and shape-only Hunyuan3D-2.1 calls fail."""
@@ -122,8 +218,13 @@ class Hunyuan3D2ReconstructionStrategy(Reconstruction3DStrategy):
             output,
         )
 
-        pil_image: Image.Image = to_pil_rgba(image)
-        logger.debug("Image converted to RGBA: size=%s", pil_image.size)
+        pil_image: Image.Image = _prepare_cutout_for_hunyuan(
+            to_pil_rgba(image),
+            apply_alpha_threshold=_ENABLE_ALPHA_THRESHOLD,
+            apply_tight_crop=_ENABLE_TIGHT_CROP,
+            alpha_threshold=_ALPHA_THRESHOLD,
+        )
+        logger.debug("Image prepared for Hunyuan upload: size=%s", pil_image.size)
 
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             tmp_path = Path(tmp.name)
@@ -178,7 +279,7 @@ class Hunyuan3D2ReconstructionStrategy(Reconstruction3DStrategy):
             guidance_scale=_GUIDANCE_SCALE,
             seed=seed,
             octree_resolution=octree_resolution,
-            check_box_rembg=True,
+            check_box_rembg=False,
             num_chunks=_NUM_CHUNKS,
             randomize_seed=False,
         )

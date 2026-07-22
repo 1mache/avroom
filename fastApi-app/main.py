@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -10,6 +11,11 @@ from api.routes import router as images_router
 from api.model_3d import router as model_3d_router
 from logging_config import setup_logging
 
+# Load fastApi-app/.env (gitignored) into os.environ before anything else runs,
+# so HF_TOKEN is available when the 3D reconstruction strategies are lazily
+# instantiated on first use (see hunyuan3d2_reconstruction_strategy.py /
+# trellis_reconstruction_strategy.py).
+load_dotenv()
 
 setup_logging()
 logger = logging.getLogger(__name__)

@@ -28,5 +28,9 @@ Constructor dependency injection supplies defaults for each orchestrator:
 
 ## Coupling
 
-- **Upstream callers:** [`fastApi-app/core/image_processing.py`](../../../fastApi-app/core/image_processing.py) (`segment_at_click` uses `ObjectRemover`), manual scripts under [`TestModules/tests/`](../../../TestModules/tests/).
+- **Upstream callers:** [`fastApi-app/core/image_processing.py`](../../../fastApi-app/core/image_processing.py):
+  - `segment_at_click` → `ObjectRemover` (legacy `POST /images/click` one-step flow)
+  - `segment_candidates_on_image` → `ObjectSegmentor` (modern `POST /images/segment`)
+  - `inpaint_selected_mask_on_image` → `BackgroundInpainter` (modern `POST /images/inpaint`)
+- Manual scripts under [`TestModules/tests/`](../../../TestModules/tests/).
 - **Downstream:** all pipeline domains listed on [README](README.md).

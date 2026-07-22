@@ -2,19 +2,14 @@
 
 Welcome to the Avroom architecture documentation. These docs describe the **current state** of the project as found in the code (not aspirational design).
 
-> Last refresh: 2026-06-01
+> Last refresh: 2026-06-04
 
 What changed in this refresh:
 
-- Backend: new `core/object_storage.py` module — centralises all `{uid}_{object_id}_…` path construction (`object_cutout_path`, `list_object_ids`, `next_object_id`, etc.) — updated `repo-structure.md`, `backend/overview.md`, `backend/settings-and-storage.md`.
-- Backend: `api/objects.py` renamed to `api/model_3d.py`; URL prefix `/objects` changed to `/3d` — updated `architecture.md`, `backend/api-endpoints.md`, `backend/overview.md`.
-- Backend: progressive canvas — `segment_candidates_on_image` and `inpaint_selected_mask_on_image` now read from `{uid}_background.png` (if present) instead of original upload via new `load_canvas_bytes` helper — updated `backend/core-image-processing.md`, `backend/data-flow.md`.
-- Backend: `POST /images/inpaint` now writes `{uid}_{object_id}_cutout.png` (numbered) and returns `object_id` in response; `DELETE /images/{uid}` and `GET /images/{uid}/cache` updated for multi-object — updated `backend/api-endpoints.md`, `backend/schemas.md`.
-- Backend: new `GET /images/{uid}/objects` endpoint returning `ObjectListResponse` — updated `backend/api-endpoints.md`, `backend/schemas.md`.
-- Backend: `POST /3d/test-3d` now accepts `object_id`; new `GET /3d/{uid}/{object_id}` route — updated `backend/api-endpoints.md`.
-- Frontend: `generate3DModel` and `fetchCached3DModel` now take `objectId: number`; new `getSessionObjects` function — updated `frontend/api-integration.md`.
-- Frontend: `MainPage` state refactored to `objects: CutoutObject[]` + `activeObjectId` + `isAddingObject`; `sessionLocked` removed; `cutoutSrc`/`cutoutAlphaBounds`/`glbData` are now derived — updated `frontend/state-and-types.md`, `frontend/user-flow.md`.
-- Frontend: new `ObjectPanel` component — updated `frontend/components.md`, `frontend/overview.md`, `repo-structure.md`.
+- AI pipeline depth: `EnhancedEdgeDepthMappingStrategy` is the actual default depth strategy (wraps `NearFarBlendedDepthMappingStrategy`, adds CLAHE + bilateral post-processing for sharper object-floor separation) — updated `ai-pipeline/ai-engines/depth/components.md`.
+- AI pipeline core flow: `ObjectSegmentor` runs **two independent SAM passes** (Pass A: depth-adapted input using routing context; Pass B: original RGB with fixed `expand_pixels=14`) — results concatenated, depth-pass first — updated `ai-pipeline/core/flow.md`.
+- AI pipeline core components: upstream callers section now lists all three `image_processing.py` functions and their orchestrators (`segment_at_click`→`ObjectRemover`, `segment_candidates_on_image`→`ObjectSegmentor`, `inpaint_selected_mask_on_image`→`BackgroundInpainter`) — updated `ai-pipeline/core/components.md`.
+- Backend settings: corrected CORS line reference in `main.py` from 16–22 to 36–42 — updated `backend/settings-and-storage.md`.
 
 If you change architecture, run the [`update-avroom-docs`](../.cursor/skills/update-avroom-docs/SKILL.md) skill to keep these files in sync with the code.
 

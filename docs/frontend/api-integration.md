@@ -35,7 +35,7 @@ Response contains `masks[]`; each mask has:
 
 `inpaintMask({ image_id, mask_id })` posts JSON to `POST /images/inpaint`.
 
-Response is `InpaintMaskResponse`, which extends `ClickResultResponse` and adds `object_id`:
+Response is `InpaintMaskResponse`, which extends `ClickResultResponse` and adds `object_id` and `object_uuid`:
 
 ```ts
 {
@@ -44,7 +44,8 @@ Response is `InpaintMaskResponse`, which extends `ClickResultResponse` and adds 
   cutout_b64: string;
   format: string;
   cutout_bounds?: CutoutBounds | null;
-  object_id: number;   // zero-based id assigned to this object within the session
+  object_id: number;
+  object_uuid: string;
 }
 ```
 
@@ -58,7 +59,13 @@ Response is `InpaintMaskResponse`, which extends `ClickResultResponse` and adds 
 
 ## Objects
 
-`getSessionObjects(uid)` fetches `GET /images/${uid}/objects` and returns `ObjectListResponse`. Used by `MainPage` on session restore to populate the full `objects[]` array.
+`getSessionObjects(uid)` fetches `GET /images/${uid}/objects` and returns `ObjectListResponse`. Used by `MainPage` on session restore to populate the full `objects[]` array. Each `ObjectInfo` may include `uuid`, `name`, and `average_depth` when metadata was persisted at inpaint time.
+
+`getObjectByUuid(objectUuid)` fetches `GET /images/objects/${objectUuid}` and returns `ObjectMetadataResponse`.
+
+`setObjectName(objectUuid, name)` sends `PATCH /images/objects/${objectUuid}` with `{ name }`.
+
+`POST /images/objects/{uuid}/rescale-by-depth` exists on the backend but has no frontend wrapper or UI wiring yet.
 
 ## 3D
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import logging
+from dataclasses import dataclass
 
 import cv2
 import numpy as np
@@ -13,9 +14,14 @@ from PIL import Image, ImageDraw, UnidentifiedImageError
 
 from schemas.image import ImageProcessingOptions
 from core.mask_cache import delete_candidates, load_cutout_bytes, load_refined_mask, mask_id_from_index, save_candidate
-from core.object_storage import current_background_path
-from core.depth_cache import compute_average_depth_over_mask, get_or_compute_depth
-from core.object_metadata import ObjectMetadata, create_object_metadata
+from core.object_storage import current_background_path, object_cutout_path, resolve_object_cutout_path
+from core.depth_cache import (
+    compute_average_depth_over_mask,
+    compute_depth_scale_factor,
+    get_or_compute_depth,
+    sample_depth_at_point,
+)
+from core.object_metadata import ObjectMetadata, create_object_metadata, get_object_by_uuid, set_object_average_depth
 
 
 logger = logging.getLogger(__name__)
@@ -399,5 +405,143 @@ def build_object_metadata_for_inpaint(
         object_id=object_id,
         average_depth=average_depth,
         content_hash=content_hash,
+    )
+
+
+@dataclass(frozen=True)
+class RescaleByDepthResult:
+    """Outcome of rescaling one object cutout based on placement depth."""
+
+    object_uuid: str
+    session_id: str
+    object_id: int
+    source_average_depth: float
+    target_depth: float
+    scale_factor: float
+    cutout_bytes: bytes
+
+
+def _scale_cutout_bgra_about_alpha_center(cutout_bgra: np.ndarray, scale_factor: float) -> np.ndarray:
+    """Scale visible cutout content about its alpha-bbox center on a same-sized canvas."""
+    if cutout_bgra.ndim != 3 or cutout_bgra.shape[2] < 4:
+        raise ValueError("Cutout must be a BGRA image with an alpha channel.")
+
+    height, width = cutout_bgra.shape[:2]
+    alpha = cutout_bgra[:, :, 3]
+    non_zero_points = cv2.findNonZero(alpha)
+    if non_zero_points is None:
+        raise ValueError("Cutout has no visible alpha pixels.")
+
+    x, y, w, h = cv2.boundingRect(non_zero_points)
+    left, top, right, bottom = x, y, x + w, y + h
+    center_x = (left + right) / 2.0
+    center_y = (top + bottom) / 2.0
+
+    crop = cutout_bgra[top:bottom, left:right]
+    new_w = max(1, int(round(crop.shape[1] * scale_factor)))
+    new_h = max(1, int(round(crop.shape[0] * scale_factor)))
+    scaled_crop = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+    canvas = np.zeros_like(cutout_bgra)
+    paste_x = int(round(center_x - new_w / 2.0))
+    paste_y = int(round(center_y - new_h / 2.0))
+
+    src_x0 = max(0, -paste_x)
+    src_y0 = max(0, -paste_y)
+    dst_x0 = max(0, paste_x)
+    dst_y0 = max(0, paste_y)
+    copy_w = min(new_w - src_x0, width - dst_x0)
+    copy_h = min(new_h - src_y0, height - dst_y0)
+
+    if copy_w <= 0 or copy_h <= 0:
+        raise ValueError("Scaled cutout falls completely outside the canvas bounds.")
+
+    canvas[dst_y0 : dst_y0 + copy_h, dst_x0 : dst_x0 + copy_w] = scaled_crop[
+        src_y0 : src_y0 + copy_h,
+        src_x0 : src_x0 + copy_w,
+    ]
+    return canvas
+
+
+def rescale_cutout_by_depth(
+    base_dir: Path,
+    object_uuid: str,
+    x: int,
+    y: int,
+) -> RescaleByDepthResult:
+    """Rescale a stored cutout based on depth at ``(x, y)`` and persist the result.
+
+    Samples depth from the session's current canvas, compares it to the object's
+    stored ``average_depth``, resizes the cutout proportionally, overwrites the
+    cutout PNG, and updates metadata so later rescales do not compound.
+    """
+    logger.info(
+        "Rescale by depth requested: object_uuid=%s placement=(%d,%d)",
+        object_uuid,
+        x,
+        y,
+    )
+
+    metadata = get_object_by_uuid(base_dir, object_uuid)
+    if metadata is None:
+        raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
+
+    cutout_path = resolve_object_cutout_path(base_dir, metadata.session_id, metadata.object_id)
+    if not cutout_path.exists():
+        raise FileNotFoundError(
+            f"Cutout not found for uuid='{object_uuid}' at path='{cutout_path}'"
+        )
+
+    source_average_depth = metadata.average_depth
+    image_bytes = load_canvas_bytes(image_id=metadata.session_id, base_dir=base_dir)
+    segmentor = _get_object_segmentor_class()()
+    depth_map, _ = get_or_compute_depth(
+        base_dir,
+        metadata.session_id,
+        image_bytes,
+        segmentor.depth.map_depth,
+    )
+
+    target_depth = sample_depth_at_point(depth_map, x, y)
+    scale_factor = compute_depth_scale_factor(source_average_depth, target_depth)
+    logger.info(
+        "Depth scale computed: object_uuid=%s source_depth=%.2f target_depth=%.2f scale=%.4f",
+        object_uuid,
+        source_average_depth,
+        target_depth,
+        scale_factor,
+    )
+
+    cutout_bgra = cv2.imdecode(
+        np.frombuffer(cutout_path.read_bytes(), dtype=np.uint8),
+        cv2.IMREAD_UNCHANGED,
+    )
+    if cutout_bgra is None:
+        raise ValueError(f"Could not decode cutout PNG for uuid='{object_uuid}'.")
+
+    scaled_cutout = _scale_cutout_bgra_about_alpha_center(cutout_bgra, scale_factor)
+    cutout_bytes = _encode_png(scaled_cutout, "rescaled cutout")
+
+    write_path = object_cutout_path(base_dir, metadata.session_id, metadata.object_id)
+    write_path.write_bytes(cutout_bytes)
+    set_object_average_depth(base_dir, object_uuid, target_depth)
+
+    logger.info(
+        "Rescale by depth complete: object_uuid=%s session_id=%s object_id=%d path=%s shape=%s",
+        object_uuid,
+        metadata.session_id,
+        metadata.object_id,
+        write_path,
+        scaled_cutout.shape,
+    )
+
+    return RescaleByDepthResult(
+        object_uuid=object_uuid,
+        session_id=metadata.session_id,
+        object_id=metadata.object_id,
+        source_average_depth=source_average_depth,
+        target_depth=target_depth,
+        scale_factor=scale_factor,
+        cutout_bytes=cutout_bytes,
     )
 

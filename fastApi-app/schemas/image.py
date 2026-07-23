@@ -206,6 +206,51 @@ class SetObjectNameRequest(BaseModel):
     ]
 
 
+class RescaleByDepthRequest(BaseModel):
+    """Request payload for depth-proportional cutout rescaling at a placement point."""
+
+    x: Annotated[
+        int,
+        Field(ge=0, description="Placement X coordinate in natural-image pixels."),
+    ]
+    y: Annotated[
+        int,
+        Field(ge=0, description="Placement Y coordinate in natural-image pixels."),
+    ]
+
+
+class RescaleByDepthResponse(BaseModel):
+    """Result of rescaling one object cutout based on depth at a placement point."""
+
+    object_uuid: Annotated[str, Field(description="Server-generated UUID for this object.")]
+    session_id: Annotated[str, Field(description="Session UID.")]
+    object_id: Annotated[int, Field(ge=0, description="Zero-based integer id within the session.")]
+    source_average_depth: Annotated[
+        float,
+        Field(description="Object average depth before this rescale."),
+    ]
+    target_depth: Annotated[
+        float,
+        Field(description="Sampled uint8 depth at the placement point."),
+    ]
+    scale_factor: Annotated[
+        float,
+        Field(description="Applied scale factor (target_depth / source_average_depth)."),
+    ]
+    cutout_b64: Annotated[
+        str,
+        Field(description="Base64-encoded rescaled BGRA cutout PNG."),
+    ]
+    format: Annotated[
+        str,
+        Field(description="Image format, currently 'png'."),
+    ]
+    cutout_bounds: Annotated[
+        CutoutBounds | None,
+        Field(default=None, description="Tight visible-object bounds inside the rescaled cutout PNG."),
+    ]
+
+
 class ObjectMetadataResponse(BaseModel):
     """Metadata record for one finalized object."""
 

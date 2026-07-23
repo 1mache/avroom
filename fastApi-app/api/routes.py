@@ -19,6 +19,7 @@ from core.image_processing import (
     get_image_path,
     inpaint_selected_mask_on_image,
     process_click_on_image,
+    rescale_cutout_by_depth,
     segment_candidates_on_image,
 )
 from core.mask_cache import delete_candidates
@@ -47,6 +48,8 @@ from schemas.image import (
     SessionInfo,
     SetNameRequest,
     SetObjectNameRequest,
+    RescaleByDepthRequest,
+    RescaleByDepthResponse,
     UidCacheStatusResponse,
 )
 from core.object_storage import (
@@ -527,6 +530,53 @@ async def rename_object(object_uuid: str, request: SetObjectNameRequest) -> Obje
     response = _metadata_to_response(metadata, storage_dir, get_3d_storage_dir())
     logger.info("Object renamed: uuid=%s name=%r", object_uuid, request.name)
     return response
+
+
+@router.post("/objects/{object_uuid}/rescale-by-depth", response_model=RescaleByDepthResponse)
+async def rescale_object_by_depth(
+    object_uuid: str,
+    request: RescaleByDepthRequest,
+) -> RescaleByDepthResponse:
+    """Rescale a cutout proportionally based on depth at the given placement point."""
+    logger.info(
+        "Rescale by depth requested: uuid=%s placement=(%d,%d)",
+        object_uuid,
+        request.x,
+        request.y,
+    )
+    storage_dir = get_image_storage_dir()
+    try:
+        result = rescale_cutout_by_depth(
+            base_dir=storage_dir,
+            object_uuid=object_uuid,
+            x=request.x,
+            y=request.y,
+        )
+    except FileNotFoundError as exc:
+        logger.warning("Rescale by depth failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        logger.error("Rescale by depth failed — invalid input: uuid=%s reason=%s", object_uuid, exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    cutout_bounds = _extract_cutout_bounds_from_png_bytes(result.cutout_bytes)
+    logger.info(
+        "Rescale by depth complete: uuid=%s scale_factor=%.4f target_depth=%.2f",
+        object_uuid,
+        result.scale_factor,
+        result.target_depth,
+    )
+    return RescaleByDepthResponse(
+        object_uuid=result.object_uuid,
+        session_id=result.session_id,
+        object_id=result.object_id,
+        source_average_depth=result.source_average_depth,
+        target_depth=result.target_depth,
+        scale_factor=result.scale_factor,
+        cutout_b64=base64.b64encode(result.cutout_bytes).decode("ascii"),
+        format="png",
+        cutout_bounds=cutout_bounds,
+    )
 
 
 @router.get("/{uid}/objects", response_model=ObjectListResponse)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 from collections.abc import Callable
 from pathlib import Path
 
@@ -86,6 +87,40 @@ def compute_average_depth_over_mask(depth_map: np.ndarray, mask: np.ndarray) -> 
         logger.warning("Average depth requested for empty mask — returning 0.0")
         return 0.0
     return float(np.mean(pixels))
+
+
+def sample_depth_at_point(depth_map: np.ndarray, x: int, y: int) -> float:
+    """Return uint8 depth at ``(x, y)``, clamped to the map bounds."""
+    if depth_map.ndim == 3:
+        depth_map = depth_map[:, :, 0]
+
+    height, width = depth_map.shape[:2]
+    clamped_x = max(0, min(x, width - 1))
+    clamped_y = max(0, min(y, height - 1))
+    if clamped_x != x or clamped_y != y:
+        logger.debug(
+            "Depth sample clamped: requested=(%d,%d) clamped=(%d,%d)",
+            x,
+            y,
+            clamped_x,
+            clamped_y,
+        )
+    return float(depth_map[clamped_y, clamped_x])
+
+
+def compute_depth_scale_factor(source_depth: float, target_depth: float) -> float:
+    """Return proportional scale ``target / source`` for depth-based resizing.
+
+    Higher uint8 depth means closer to the camera, so moving an object from
+    near to far yields a factor below 1.0.
+    """
+    if not math.isfinite(source_depth) or not math.isfinite(target_depth):
+        raise ValueError("Depth values must be finite.")
+    if source_depth <= 0 or target_depth <= 0:
+        raise ValueError(
+            f"Depth values must be positive (source={source_depth}, target={target_depth})."
+        )
+    return target_depth / source_depth
 
 
 def get_or_compute_depth(

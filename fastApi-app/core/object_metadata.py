@@ -159,6 +159,23 @@ def set_object_name(base_dir: Path, object_uuid: str, name: str | None) -> Objec
     return updated
 
 
+def set_object_average_depth(base_dir: Path, object_uuid: str, average_depth: float) -> ObjectMetadata:
+    """Update ``average_depth`` after a depth-based rescale placement."""
+    metadata = get_object_by_uuid(base_dir, object_uuid)
+    if metadata is None:
+        raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
+
+    updated = metadata.model_copy(update={"average_depth": average_depth})
+    path = object_meta_path(base_dir, updated.session_id, updated.object_id)
+    path.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
+    logger.info(
+        "Updated object average_depth: uuid=%s average_depth=%.2f",
+        object_uuid,
+        average_depth,
+    )
+    return updated
+
+
 def delete_session_metadata(base_dir: Path, session_id: str, object_ids: list[int]) -> int:
     """Remove metadata JSON files and prune UUID index entries for a session."""
     index = _load_object_index()

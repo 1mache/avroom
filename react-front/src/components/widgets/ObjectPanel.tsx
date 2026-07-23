@@ -1,16 +1,45 @@
 import React, { useCallback } from "react";
 
+const EyeOpenIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path
+      d="M2 12C2 12 5.5 5.5 12 5.5C18.5 5.5 22 12 22 12C22 12 18.5 18.5 12 18.5C5.5 18.5 2 12 2 12Z"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <circle cx="12" cy="12" r="2.75" stroke="currentColor" strokeWidth="1.5" />
+  </svg>
+);
+
+const EyeOffIcon: React.FC = () => (
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path
+      d="M2 12C2 12 5.5 5.5 12 5.5C18.5 5.5 22 12 22 12C22 12 18.5 18.5 12 18.5C5.5 18.5 2 12 2 12Z"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <circle cx="12" cy="12" r="2.75" stroke="currentColor" strokeWidth="1.5" />
+    <line x1="4" y1="4" x2="20" y2="20" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+  </svg>
+);
+
 interface ObjectEntry {
   objectId: number;
   cutoutSrc: string;
+  hidden: boolean;
 }
 
 interface ObjectPanelProps {
   objects: ObjectEntry[];
-  activeObjectId: number | null;
+  selectedObjectId: number | null;
   isAddingObject: boolean;
   disabled: boolean;
   onSelectObject: (objectId: number) => void;
+  onToggleHidden: (objectId: number) => void;
   onAddObject: () => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -18,10 +47,11 @@ interface ObjectPanelProps {
 
 export const ObjectPanel: React.FC<ObjectPanelProps> = ({
   objects,
-  activeObjectId,
+  selectedObjectId,
   isAddingObject,
   disabled,
   onSelectObject,
+  onToggleHidden,
   onAddObject,
   collapsed,
   onToggleCollapsed,
@@ -33,6 +63,18 @@ export const ObjectPanel: React.FC<ObjectPanelProps> = ({
       }
     },
     [disabled, onSelectObject],
+  );
+
+  const handleToggleHidden = useCallback(
+    (event: React.MouseEvent, objectId: number) => {
+      // Don't let the eye toggle also trigger selection of the thumbnail
+      // underneath it.
+      event.stopPropagation();
+      if (!disabled) {
+        onToggleHidden(objectId);
+      }
+    },
+    [disabled, onToggleHidden],
   );
 
   const handleAddObject = useCallback(() => {
@@ -74,21 +116,33 @@ export const ObjectPanel: React.FC<ObjectPanelProps> = ({
 
         <div className="object-panel-list">
           {objects.map((obj) => (
-            <button
-              key={obj.objectId}
-              type="button"
-              className={`object-thumbnail-btn${obj.objectId === activeObjectId ? " is-active" : ""}`}
-              onClick={() => handleSelectObject(obj.objectId)}
-              disabled={disabled}
-              aria-label={`Select object ${obj.objectId}`}
-              title={`Object ${obj.objectId}`}
-            >
-              <img
-                src={obj.cutoutSrc}
-                alt={`Object ${obj.objectId}`}
-                className="object-thumbnail-img"
-              />
-            </button>
+            <div key={obj.objectId} className="object-thumbnail-row">
+              <button
+                type="button"
+                className={`object-thumbnail-btn${obj.objectId === selectedObjectId ? " is-active" : ""}`}
+                onClick={() => handleSelectObject(obj.objectId)}
+                disabled={disabled || obj.hidden}
+                aria-label={`Select object ${obj.objectId}`}
+                title={obj.hidden ? `Object ${obj.objectId} (hidden)` : `Object ${obj.objectId}`}
+              >
+                <img
+                  src={obj.cutoutSrc}
+                  alt={`Object ${obj.objectId}`}
+                  className="object-thumbnail-img"
+                />
+              </button>
+
+              <button
+                type="button"
+                className="object-visibility-btn"
+                onClick={(event) => handleToggleHidden(event, obj.objectId)}
+                disabled={disabled}
+                aria-label={obj.hidden ? `Show object ${obj.objectId}` : `Hide object ${obj.objectId}`}
+                title={obj.hidden ? "Show object" : "Hide object"}
+              >
+                {obj.hidden ? <EyeOffIcon /> : <EyeOpenIcon />}
+              </button>
+            </div>
           ))}
         </div>
       </div>

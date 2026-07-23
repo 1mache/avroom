@@ -738,7 +738,11 @@ export const MainPage: React.FC = () => {
     const naturalX = localX / scaleX;
     const naturalY = localY / scaleY;
 
-    const hitOrder = buildHitTestOrder(objects, selectedObjectId);
+    // While the selected object's 3D model is shown, its 2D cutout is hidden
+    // and that screen region belongs to the (higher z-index) 3D frame instead.
+    const hitOrder = buildHitTestOrder(objects, selectedObjectId).filter(
+      (obj) => !(show3D && obj.objectId === selectedObjectId),
+    );
     for (const obj of hitOrder) {
       const localObjX = naturalX - obj.offset.x;
       const localObjY = naturalY - obj.offset.y;
@@ -774,7 +778,7 @@ export const MainPage: React.FC = () => {
       return;
     }
     // No object under the pointer: keep the current selection unchanged.
-  }, [backgroundNaturalSize, renderedBackgroundRect, objects, selectedObjectId, sampleObjectAlpha, handleSelectObject]);
+  }, [backgroundNaturalSize, renderedBackgroundRect, objects, selectedObjectId, show3D, sampleObjectAlpha, handleSelectObject]);
 
   useEffect(() => {
     if (!isDraggingCutout) {
@@ -889,6 +893,44 @@ export const MainPage: React.FC = () => {
       : undefined;
 
   const visibleObjects = objects.filter((o) => !o.hidden);
+  // While the selected object's 3D model is shown, its 2D cutout is hidden so
+  // the 3D frame visually replaces it instead of stacking on top of it.
+  const stageCutoutObjects = visibleObjects.filter(
+    (obj) => !(show3D && obj.objectId === selectedObjectId),
+  );
+
+  // Position the 3D frame over roughly the same rect the selected object's 2D
+  // cutout occupies (its alpha bounds + current drag offset), so swapping
+  // between 2D and 3D doesn't jump the object to a different spot/scale.
+  const model3DFrameStyle: React.CSSProperties | undefined =
+    backgroundNaturalSize && renderedBackgroundRect && selectedObject
+      ? (() => {
+          const scaleX = renderedBackgroundRect.width / backgroundNaturalSize.width;
+          const scaleY = renderedBackgroundRect.height / backgroundNaturalSize.height;
+          const bounds = selectedObject.cutoutAlphaBounds;
+          const left = bounds
+            ? renderedBackgroundRect.x + (bounds.left + selectedObject.offset.x) * scaleX
+            : renderedBackgroundRect.x;
+          const top = bounds
+            ? renderedBackgroundRect.y + (bounds.top + selectedObject.offset.y) * scaleY
+            : renderedBackgroundRect.y;
+          const width = bounds ? (bounds.right - bounds.left) * scaleX : renderedBackgroundRect.width;
+          const height = bounds ? (bounds.bottom - bounds.top) * scaleY : renderedBackgroundRect.height;
+
+          return {
+            position: "absolute",
+            left: `${left}px`,
+            top: `${top}px`,
+            width: `${width}px`,
+            height: `${height}px`,
+            // Above .result-interaction-overlay (z-index 100) so OrbitControls
+            // receive pointer events instead of the 2D drag/hit-test layer.
+            zIndex: 200,
+            pointerEvents: "auto",
+            touchAction: "none",
+          } satisfies React.CSSProperties;
+        })()
+      : undefined;
 
   const isChoosingMask = maskOptions.length > 0;
   const uploadBusy = Boolean(imageId && !uploadedFile);
@@ -1009,7 +1051,7 @@ export const MainPage: React.FC = () => {
                       onLoad={handleBackgroundLoad}
                     />
 
-                    {visibleObjects.map((obj, index) => (
+                    {stageCutoutObjects.map((obj, index) => (
                       <img
                         key={obj.objectId}
                         src={obj.cutoutSrc}
@@ -1017,7 +1059,7 @@ export const MainPage: React.FC = () => {
                         className="cutout-overlay"
                         style={getCutoutOverlayStyle(
                           obj,
-                          obj.objectId === selectedObjectId ? visibleObjects.length + 2 : index + 2,
+                          obj.objectId === selectedObjectId ? stageCutoutObjects.length + 2 : index + 2,
                         )}
                         draggable={false}
                       />
@@ -1033,7 +1075,7 @@ export const MainPage: React.FC = () => {
                       <Model3DFrame
                         glbData={glbData}
                         clickNormalizedPos={selectedObject?.normalizedClickPos ?? null}
-                        className="overlay-absolute model-overlay"
+                        style={model3DFrameStyle}
                         backgroundImage={null}
                       />
                     ) : null}

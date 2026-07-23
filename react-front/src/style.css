@@ -241,6 +241,23 @@ input {
   touch-action: none;
 }
 
+.selection-highlight {
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 0 18px rgba(11, 127, 130, 0.35);
+  animation: selection-highlight-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes selection-highlight-pulse {
+  0%,
+  100% {
+    opacity: 0.9;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
 .upload-placeholder {
   flex: 1;
   border-radius: var(--radius-sm);

@@ -130,6 +130,31 @@ const clampCutoutOffset = (
   };
 };
 
+// Maps an object's alpha bounds (+ its drag offset) from natural-image pixels
+// into on-stage CSS pixels, using the same contained-rect scale as the
+// background/cutout images. Falls back to the full rendered rect when bounds
+// are unknown (e.g. legacy session data).
+const getBoundsStageRect = (
+  bounds: CutoutAlphaBounds | null,
+  offset: ClickPosition,
+  renderedRect: { x: number; y: number; width: number; height: number },
+  naturalSize: Size,
+): { left: number; top: number; width: number; height: number } => {
+  if (!bounds) {
+    return { left: renderedRect.x, top: renderedRect.y, width: renderedRect.width, height: renderedRect.height };
+  }
+
+  const scaleX = renderedRect.width / naturalSize.width;
+  const scaleY = renderedRect.height / naturalSize.height;
+
+  return {
+    left: renderedRect.x + (bounds.left + offset.x) * scaleX,
+    top: renderedRect.y + (bounds.top + offset.y) * scaleY,
+    width: (bounds.right - bounds.left) * scaleX,
+    height: (bounds.bottom - bounds.top) * scaleY,
+  };
+};
+
 const toCutoutAlphaBounds = (bounds: CutoutBounds | null | undefined): CutoutAlphaBounds | null => {
   if (!bounds) {
     return null;
@@ -905,29 +930,49 @@ export const MainPage: React.FC = () => {
   const model3DFrameStyle: React.CSSProperties | undefined =
     backgroundNaturalSize && renderedBackgroundRect && selectedObject
       ? (() => {
-          const scaleX = renderedBackgroundRect.width / backgroundNaturalSize.width;
-          const scaleY = renderedBackgroundRect.height / backgroundNaturalSize.height;
-          const bounds = selectedObject.cutoutAlphaBounds;
-          const left = bounds
-            ? renderedBackgroundRect.x + (bounds.left + selectedObject.offset.x) * scaleX
-            : renderedBackgroundRect.x;
-          const top = bounds
-            ? renderedBackgroundRect.y + (bounds.top + selectedObject.offset.y) * scaleY
-            : renderedBackgroundRect.y;
-          const width = bounds ? (bounds.right - bounds.left) * scaleX : renderedBackgroundRect.width;
-          const height = bounds ? (bounds.bottom - bounds.top) * scaleY : renderedBackgroundRect.height;
+          const rect = getBoundsStageRect(
+            selectedObject.cutoutAlphaBounds,
+            selectedObject.offset,
+            renderedBackgroundRect,
+            backgroundNaturalSize,
+          );
 
           return {
             position: "absolute",
-            left: `${left}px`,
-            top: `${top}px`,
-            width: `${width}px`,
-            height: `${height}px`,
+            left: `${rect.left}px`,
+            top: `${rect.top}px`,
+            width: `${rect.width}px`,
+            height: `${rect.height}px`,
             // Above .result-interaction-overlay (z-index 100) so OrbitControls
             // receive pointer events instead of the 2D drag/hit-test layer.
             zIndex: 200,
             pointerEvents: "auto",
             touchAction: "none",
+          } satisfies React.CSSProperties;
+        })()
+      : undefined;
+
+  // Highlight ring traced around whichever object is currently selected (2D or
+  // 3D), so the panel's "is-active" thumbnail has an on-canvas counterpart.
+  // Non-interactive: sits above everything but never intercepts pointer events.
+  const selectionHighlightStyle: React.CSSProperties | undefined =
+    backgroundNaturalSize && renderedBackgroundRect && selectedObject && !isAddingObject
+      ? (() => {
+          const rect = getBoundsStageRect(
+            selectedObject.cutoutAlphaBounds,
+            selectedObject.offset,
+            renderedBackgroundRect,
+            backgroundNaturalSize,
+          );
+
+          return {
+            position: "absolute",
+            left: `${rect.left}px`,
+            top: `${rect.top}px`,
+            width: `${rect.width}px`,
+            height: `${rect.height}px`,
+            zIndex: 210,
+            pointerEvents: "none",
           } satisfies React.CSSProperties;
         })()
       : undefined;
@@ -1078,6 +1123,10 @@ export const MainPage: React.FC = () => {
                         style={model3DFrameStyle}
                         backgroundImage={null}
                       />
+                    ) : null}
+
+                    {selectionHighlightStyle ? (
+                      <div className="selection-highlight" style={selectionHighlightStyle} />
                     ) : null}
                   </div>
                 </div>

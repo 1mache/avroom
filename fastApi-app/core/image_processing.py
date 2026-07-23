@@ -14,6 +14,8 @@ from PIL import Image, ImageDraw, UnidentifiedImageError
 from schemas.image import ImageProcessingOptions
 from core.mask_cache import delete_candidates, load_cutout_bytes, load_refined_mask, mask_id_from_index, save_candidate
 from core.object_storage import current_background_path
+from core.depth_cache import compute_average_depth_over_mask, get_or_compute_depth
+from core.object_metadata import ObjectMetadata, create_object_metadata
 
 
 logger = logging.getLogger(__name__)
@@ -197,6 +199,8 @@ def segment_at_click(
     x: int,
     y: int,
     options: ImageProcessingOptions | None = None,
+    session_id: str | None = None,
+    base_dir: Path | None = None,
 ) -> tuple[bytes, bytes, str]:
     """Segmentation stub that returns background and cutout images.
 
@@ -212,12 +216,22 @@ def segment_at_click(
     remover = _get_object_remover_class()()
     image_key = f"memory://{hashlib.sha256(image_bytes).hexdigest()}"
 
+    depth_map = None
+    if session_id is not None and base_dir is not None:
+        depth_map, _ = get_or_compute_depth(
+            base_dir,
+            session_id,
+            image_bytes,
+            remover.depth.map_depth,
+        )
+
     logger.info("Running ObjectRemover: image_key=%s click=(%d,%d)", image_key, x, y)
     background_bgr, cutout_bgra = remover.remove_object(
         image_path=image_key,
         x=x,
         y=y,
         image_bytes=image_bytes,
+        depth_map=depth_map,
     )
     logger.info(
         "ObjectRemover finished: bg_shape=%s cutout_shape=%s",
@@ -267,6 +281,8 @@ def process_click_on_image(
         x=x,
         y=y,
         options=options,
+        session_id=image_id,
+        base_dir=base_dir,
     )
 
     return background_bytes, cutout_bytes, image_format
@@ -294,6 +310,12 @@ def segment_candidates_on_image(
     delete_candidates(base_dir, image_id)
 
     segmentor = _get_object_segmentor_class()()
+    depth_map, _ = get_or_compute_depth(
+        base_dir,
+        image_id,
+        image_bytes,
+        segmentor.depth.map_depth,
+    )
     # Hash image bytes → build cache key. memory:// prefix tells the AI pipeline
     # "don't read disk, use this hash to find cached model state."
     image_key = f"memory://{hashlib.sha256(image_bytes).hexdigest()}"
@@ -303,6 +325,7 @@ def segment_candidates_on_image(
         x=x,
         y=y,
         image_bytes=image_bytes,
+        depth_map=depth_map,
     )
     logger.info("ObjectSegmentor finished: image_id=%s candidates=%d", image_id, len(candidate_pairs))
 
@@ -341,4 +364,40 @@ def inpaint_selected_mask_on_image(
 
     background_bytes = _encode_png(background_bgr, "background")
     return background_bytes, cutout_bytes, "png"
+
+
+def build_object_metadata_for_inpaint(
+    image_id: str,
+    mask_id: str,
+    object_id: int,
+    base_dir: Path,
+) -> ObjectMetadata:
+    """Compute average mask depth and build metadata before canvas is overwritten.
+
+    Uses the current canvas bytes and depth cache. Expects a cache hit when
+    segmentation ran on the same canvas state immediately before inpaint.
+    """
+    image_bytes = load_canvas_bytes(image_id=image_id, base_dir=base_dir)
+    segmentor = _get_object_segmentor_class()()
+    depth_map, content_hash = get_or_compute_depth(
+        base_dir,
+        image_id,
+        image_bytes,
+        segmentor.depth.map_depth,
+    )
+    refined_mask = load_refined_mask(base_dir, image_id, mask_id)
+    average_depth = compute_average_depth_over_mask(depth_map, refined_mask)
+    logger.info(
+        "Object metadata prepared: image_id=%s object_id=%d mask_id=%s average_depth=%.2f",
+        image_id,
+        object_id,
+        mask_id,
+        average_depth,
+    )
+    return create_object_metadata(
+        session_id=image_id,
+        object_id=object_id,
+        average_depth=average_depth,
+        content_hash=content_hash,
+    )
 

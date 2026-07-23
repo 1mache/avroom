@@ -65,6 +65,7 @@ class ObjectSegmentor:
         x: int,
         y: int,
         image_bytes: bytes | None = None,
+        depth_map: np.ndarray | None = None,
     ) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
         """Segment all SAM candidates at ``(x, y)`` and return refined mask pairs.
 
@@ -81,6 +82,8 @@ class ObjectSegmentor:
             y: Click Y coordinate in image pixel space.
             image_bytes: Optional raw image bytes. When provided the image is
                 decoded from memory instead of read from ``image_path``.
+            depth_map: Optional precomputed uint8 depth map. When provided,
+                depth inference is skipped (caller may supply a session cache).
 
         Returns:
             A tuple of ``(refined_mask, cutout_bgra)`` pairs from **both** passes
@@ -106,8 +109,12 @@ class ObjectSegmentor:
                 logger.error(f"Could not load image: {image_path}")
                 raise FileNotFoundError(f"Could not load image: {image_path}")
 
-        logger.info("Step 1: Computing optimized depth map...")
-        optimized_depth = self.depth.map_depth(image)
+        if depth_map is not None:
+            logger.info("Step 1: Using precomputed depth map...")
+            optimized_depth = depth_map
+        else:
+            logger.info("Step 1: Computing optimized depth map...")
+            optimized_depth = self.depth.map_depth(image)
         # Depth is already persisted by EnhancedEdgeDepthMappingStrategy as
         # outputs/depthMaps/enhanced_edge_04_bilateral.png — no duplicate save here.
 

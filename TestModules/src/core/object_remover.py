@@ -90,6 +90,7 @@ class ObjectRemover:
         y: int,
         depth_output_flag: bool = False,
         image_bytes: bytes | None = None,
+        depth_map: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Run the full pipeline and return ``(background_bgr, cutout_bgra)``."""
         logger.info(f"Starting object removal - Image: {image_path}, Point: ({x}, {y})")
@@ -106,8 +107,12 @@ class ObjectRemover:
                 logger.error(f"Could not load image: {image_path}")
                 raise FileNotFoundError(f"Could not load image: {image_path}")
 
-        logger.info("Step 1: Computing optimized depth map...")
-        optimized_depth = self.depth.map_depth(image)
+        if depth_map is not None:
+            logger.info("Step 1: Using precomputed depth map...")
+            optimized_depth = depth_map
+        else:
+            logger.info("Step 1: Computing optimized depth map...")
+            optimized_depth = self.depth.map_depth(image)
         self.image_saver.save("optimized_depth", optimized_depth)
 
         logger.info("Step 2: Adapting data...")

@@ -5,9 +5,11 @@ import type {
   InpaintMaskRequest,
   InpaintMaskResponse,
   ObjectListResponse,
+  ObjectMetadataResponse,
   SegmentRequest,
   SegmentResponse,
   SessionInfo,
+  SetObjectNameRequest,
   UidCacheStatusResponse,
 } from "../types/api";
 
@@ -137,5 +139,25 @@ export async function fetchCached3DModel(uid: string, objectId: number): Promise
 export async function getSessionObjects(uid: string): Promise<ObjectListResponse> {
   const response = await fetch(`${API_BASE_URL}/images/${uid}/objects`);
   return handleJsonResponse<ObjectListResponse>(response);
+}
+
+export async function getObjectByUuid(objectUuid: string): Promise<ObjectMetadataResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}`);
+  return handleJsonResponse<ObjectMetadataResponse>(response);
+}
+
+export async function setObjectName(
+  objectUuid: string,
+  name: string | null,
+): Promise<ObjectMetadataResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ name } satisfies SetObjectNameRequest),
+  });
+
+  return handleJsonResponse<ObjectMetadataResponse>(response);
 }
 

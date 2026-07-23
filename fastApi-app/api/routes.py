@@ -15,12 +15,23 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 
 from core.image_processing import (
+    build_object_metadata_for_inpaint,
     get_image_path,
     inpaint_selected_mask_on_image,
     process_click_on_image,
+    rescale_cutout_by_depth,
     segment_candidates_on_image,
 )
 from core.mask_cache import delete_candidates
+from core.depth_cache import delete_session_depth_maps
+from core.object_metadata import (
+    ObjectMetadata,
+    get_object_by_uuid,
+    load_object_metadata,
+    save_object_metadata,
+    set_object_name,
+    delete_session_metadata,
+)
 from schemas.image import (
     ClickRequest,
     ClickResultResponse,
@@ -30,11 +41,15 @@ from schemas.image import (
     InpaintMaskResponse,
     ObjectInfo,
     ObjectListResponse,
+    ObjectMetadataResponse,
     SegmentMaskOption,
     SegmentRequest,
     SegmentResponse,
     SessionInfo,
     SetNameRequest,
+    SetObjectNameRequest,
+    RescaleByDepthRequest,
+    RescaleByDepthResponse,
     UidCacheStatusResponse,
 )
 from core.object_storage import (
@@ -326,6 +341,14 @@ async def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
     # Allocate next sequential object id for this session.
     object_id = next_object_id(storage_dir, request.image_id)
 
+    object_metadata = build_object_metadata_for_inpaint(
+        image_id=request.image_id,
+        mask_id=request.mask_id,
+        object_id=object_id,
+        base_dir=storage_dir,
+    )
+    save_object_metadata(storage_dir, object_metadata)
+
     # Background always written to the single cumulative canvas path (overwrites → becomes new canvas).
     background_image_path = current_background_path(storage_dir, request.image_id)
     background_image_path.write_bytes(background_bytes)
@@ -343,12 +366,13 @@ async def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
     cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_bytes)
 
     logger.info(
-        "Inpainting complete: image_id=%s mask_id=%s background_bytes=%d cutout_bytes=%d object_id=%d",
+        "Inpainting complete: image_id=%s mask_id=%s background_bytes=%d cutout_bytes=%d object_id=%d object_uuid=%s",
         request.image_id,
         request.mask_id,
         len(background_bytes),
         len(cutout_bytes),
         object_id,
+        object_metadata.uuid,
     )
 
     return InpaintMaskResponse(
@@ -358,6 +382,7 @@ async def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
         format=image_format,
         cutout_bounds=cutout_bounds,
         object_id=object_id,
+        object_uuid=object_metadata.uuid,
     )
 
 
@@ -400,6 +425,9 @@ async def delete_session(uid: str) -> Response:
             if p.exists():
                 p.unlink()
                 removed += 1
+
+        delete_session_metadata(storage_dir, uid, obj_ids)
+        removed += delete_session_depth_maps(storage_dir, uid)
 
         debug_path = storage_dir / "point" / f"{uid}_debug.png"
         if debug_path.exists():
@@ -446,6 +474,111 @@ async def set_name(uid: str, request: SetNameRequest) -> SessionInfo:
     return SessionInfo(uid=uid, name=request.name)
 
 
+def _metadata_to_response(
+    metadata: ObjectMetadata,
+    storage_dir: Path,
+    three_d_dir: Path,
+) -> ObjectMetadataResponse:
+    """Build API response from stored metadata plus derived artifact flags."""
+    cutout_path = resolve_object_cutout_path(storage_dir, metadata.session_id, metadata.object_id)
+    cutout_bounds = None
+    if cutout_path.exists():
+        cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_path.read_bytes())
+    has_3d = resolve_object_glb_path(three_d_dir, metadata.session_id, metadata.object_id).exists()
+    return ObjectMetadataResponse(
+        uuid=metadata.uuid,
+        session_id=metadata.session_id,
+        object_id=metadata.object_id,
+        name=metadata.name,
+        average_depth=metadata.average_depth,
+        content_hash=metadata.content_hash,
+        created_at=metadata.created_at,
+        has_3d=has_3d,
+        cutout_bounds=cutout_bounds,
+    )
+
+
+@router.get("/objects/{object_uuid}", response_model=ObjectMetadataResponse)
+async def get_object_by_uuid_endpoint(object_uuid: str) -> ObjectMetadataResponse:
+    """Return metadata for one object searchable by its UUID."""
+    logger.info("Object metadata requested: uuid=%s", object_uuid)
+    storage_dir = get_image_storage_dir()
+    metadata = get_object_by_uuid(storage_dir, object_uuid)
+    if metadata is None:
+        logger.warning("Object metadata not found: uuid=%s", object_uuid)
+        raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
+    response = _metadata_to_response(metadata, storage_dir, get_3d_storage_dir())
+    logger.info(
+        "Object metadata returned: uuid=%s session_id=%s object_id=%d",
+        object_uuid,
+        metadata.session_id,
+        metadata.object_id,
+    )
+    return response
+
+
+@router.patch("/objects/{object_uuid}", response_model=ObjectMetadataResponse)
+async def rename_object(object_uuid: str, request: SetObjectNameRequest) -> ObjectMetadataResponse:
+    """Update the optional name on one object identified by UUID."""
+    logger.info("Object rename requested: uuid=%s name=%r", object_uuid, request.name)
+    storage_dir = get_image_storage_dir()
+    try:
+        metadata = set_object_name(storage_dir, object_uuid, request.name)
+    except FileNotFoundError as exc:
+        logger.warning("Object rename failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    response = _metadata_to_response(metadata, storage_dir, get_3d_storage_dir())
+    logger.info("Object renamed: uuid=%s name=%r", object_uuid, request.name)
+    return response
+
+
+@router.post("/objects/{object_uuid}/rescale-by-depth", response_model=RescaleByDepthResponse)
+async def rescale_object_by_depth(
+    object_uuid: str,
+    request: RescaleByDepthRequest,
+) -> RescaleByDepthResponse:
+    """Rescale a cutout proportionally based on depth at the given placement point."""
+    logger.info(
+        "Rescale by depth requested: uuid=%s placement=(%d,%d)",
+        object_uuid,
+        request.x,
+        request.y,
+    )
+    storage_dir = get_image_storage_dir()
+    try:
+        result = rescale_cutout_by_depth(
+            base_dir=storage_dir,
+            object_uuid=object_uuid,
+            x=request.x,
+            y=request.y,
+        )
+    except FileNotFoundError as exc:
+        logger.warning("Rescale by depth failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        logger.error("Rescale by depth failed — invalid input: uuid=%s reason=%s", object_uuid, exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    cutout_bounds = _extract_cutout_bounds_from_png_bytes(result.cutout_bytes)
+    logger.info(
+        "Rescale by depth complete: uuid=%s scale_factor=%.4f target_depth=%.2f",
+        object_uuid,
+        result.scale_factor,
+        result.target_depth,
+    )
+    return RescaleByDepthResponse(
+        object_uuid=result.object_uuid,
+        session_id=result.session_id,
+        object_id=result.object_id,
+        source_average_depth=result.source_average_depth,
+        target_depth=result.target_depth,
+        scale_factor=result.scale_factor,
+        cutout_b64=base64.b64encode(result.cutout_bytes).decode("ascii"),
+        format="png",
+        cutout_bounds=cutout_bounds,
+    )
+
+
 @router.get("/{uid}/objects", response_model=ObjectListResponse)
 async def get_session_objects(uid: str) -> ObjectListResponse:
     """Return all processed objects for a session with cutout thumbnails.
@@ -480,9 +613,13 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
             cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")
             cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_bytes)
             has_3d = resolve_object_glb_path(three_d_dir, uid, oid).exists()
+            meta = load_object_metadata(storage_dir, uid, oid)
             objects_list.append(
                 ObjectInfo(
                     object_id=oid,
+                    uuid=meta.uuid if meta is not None else None,
+                    name=meta.name if meta is not None else None,
+                    average_depth=meta.average_depth if meta is not None else None,
                     cutout_b64=cutout_b64,
                     format="png",
                     cutout_bounds=cutout_bounds,

@@ -100,10 +100,13 @@ The file is a JSON object mapping uid strings to human-readable names:
 fastApi-app/tmp/
 ├── sessions.json                    - array of all registered UIDs
 ├── names.json                       - uid → human-readable name map
+├── object_index.json                - object UUID → {session_id, object_id}
 ├── images/
 │   ├── {image_id}.{ext}             - one per upload (jpg/png/...)
 │   ├── {image_id}_background.png         - cumulative inpainted canvas (overwrites each inpaint)
-│   ├── {image_id}_{object_id}_cutout.png - per-object cutout (numbered, never overwritten)
+│   ├── {image_id}_{object_id}_cutout.png - per-object cutout (overwritten by rescale-by-depth)
+│   ├── {image_id}_{object_id}_meta.json   - object metadata (uuid, average_depth, …)
+│   ├── {image_id}_depth_{hash}.npy         - cached depth map for session + canvas hash
 │   ├── {image_id}_cutout.png             - legacy flat cutout (sessions before per-object numbering)
 │   ├── {image_id}_mask_{n}_refined.npy   - candidate refined mask (segmentation, temporary)
 │   ├── {image_id}_mask_{n}_cutout.png    - candidate cutout preview (segmentation, temporary)
@@ -116,8 +119,10 @@ fastApi-app/tmp/
 
 - `{image_id}.{ext}` is written by `upload_image` — the suffix comes from the original filename or defaults to `.png` ([`api/routes.py`](../../fastApi-app/api/routes.py) lines 41–48).
 - `{image_id}_background.png` is written (and overwritten) by `inpaint_mask` on every successful inpaint, becoming the progressive canvas for the next object.
-- `{image_id}_{object_id}_cutout.png` is written by `inpaint_mask` with a sequentially allocated `object_id` — prior objects are never overwritten. Path construction lives in [`core/object_storage.py`](../../fastApi-app/core/object_storage.py) (`object_cutout_path`, `next_object_id`).
-- `point/{image_id}_debug.png` is written by `_create_debug_click_image` on every click ([`core/image_processing.py`](../../fastApi-app/core/image_processing.py) lines 64–82).
+- `{image_id}_{object_id}_cutout.png` is written by `inpaint_mask` with a sequentially allocated `object_id`. It is **not** overwritten by later inpaints, but **is** overwritten by `POST /images/objects/{uuid}/rescale-by-depth`. Path construction lives in [`core/object_storage.py`](../../fastApi-app/core/object_storage.py) (`object_cutout_path`, `next_object_id`).
+- `{image_id}_{object_id}_meta.json` and `object_index.json` are written by `inpaint_mask` via [`core/object_metadata.py`](../../fastApi-app/core/object_metadata.py).
+- `{image_id}_depth_{hash}.npy` is written by [`core/depth_cache.py`](../../fastApi-app/core/depth_cache.py) on first depth computation for a canvas state; removed by `DELETE /images/{uid}`.
+- `point/{image_id}_debug.png` is written by `_create_debug_click_image` on every click ([`core/image_processing.py`](../../fastApi-app/core/image_processing.py) lines 74–90).
 - `{image_id}_{object_id}.glb` is written by `generate_test_3d` ([`api/model_3d.py`](../../fastApi-app/api/model_3d.py) lines 49–126).
 
 No file is ever cleaned up by the service automatically. `DELETE /images/{uid}` removes all artifacts for a session on explicit request.
@@ -138,9 +143,37 @@ Key helpers:
 | `next_object_id(base_dir, uid)` | `max(list_object_ids) + 1`, or `0` if none exist |
 | `current_background_path(base_dir, uid)` | `{uid}_background.png` (single cumulative canvas) |
 
+## Depth cache — `core/depth_cache.py`
+
+Depth maps for the current session canvas are cached on disk keyed by SHA-256 of canvas bytes:
+
+| Helper | Role |
+|---|---|
+| `get_or_compute_depth(base_dir, session_id, image_bytes, map_depth_fn)` | Load or compute and save depth |
+| `load_depth_map` / `save_depth_map` | Read/write `{session_id}_depth_{content_hash}.npy` |
+| `compute_average_depth_over_mask` | Mean uint8 depth inside a mask (inpaint metadata) |
+| `sample_depth_at_point` | Single-pixel depth at `(x, y)`, clamped to bounds |
+| `compute_depth_scale_factor` | `target / source` for rescale-by-depth |
+| `delete_session_depth_maps` | Remove all `{session_id}_depth_*.npy` on session delete |
+
+Higher uint8 depth values mean closer to the camera (same convention as the AI pipeline).
+
+## Object metadata — `core/object_metadata.py`
+
+Each finalized object gets a UUID at inpaint time. Metadata is stored per object and indexed globally:
+
+| Artifact | Path |
+|---|---|
+| Per-object JSON | `{uid}_{object_id}_meta.json` in image storage dir |
+| UUID index | `tmp/object_index.json` (maps uuid → session_id + object_id) |
+
+Key helpers: `save_object_metadata`, `get_object_by_uuid`, `set_object_name`, `set_object_average_depth`, `delete_session_metadata`.
+
+`average_depth` is set from mask depth at inpaint and updated after each rescale-by-depth call.
+
 ## What's not configurable
 
-- CORS origins (hardcoded in [`fastApi-app/main.py`](../../fastApi-app/main.py) lines 36–42).
+- CORS origins (hardcoded in [`fastApi-app/main.py`](../../fastApi-app/main.py) lines 42–48).
 - Output format (hardcoded `"png"` in `segment_at_click`).
 - Debug overlay subdir name (`"point"` constant inside `_create_debug_click_image`).
 - Mask dilation radius, SD strength, depth model IDs — all live in the AI pipeline; see [ai-pipeline/](../ai-pipeline/README.md).

@@ -60,7 +60,53 @@ All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.
 
 | Field | Type | Description |
 |---|---|---|
-| `object_id` | `int` | Zero-based integer id assigned to the newly created object within the session. Defaults to `0` if the inpaint route does not supply one (legacy behavior). |
+| `object_id` | `int` | Zero-based integer id assigned to the newly created object within the session. |
+| `object_uuid` | `str` | Server-generated UUID; primary searchable key for object metadata endpoints. |
+
+## Object Metadata
+
+`ObjectMetadataResponse` is returned by `GET /images/objects/{object_uuid}`, `PATCH /images/objects/{object_uuid}`, and `setObjectName` on the frontend.
+
+| Field | Type | Description |
+|---|---|---|
+| `uuid` | `str` | Server-generated UUID. |
+| `session_id` | `str` | Session UID (same as upload `image_id`). |
+| `object_id` | `int` | Zero-based integer id within the session. |
+| `name` | `str \| null` | Optional human-readable label. |
+| `average_depth` | `float` | Mean uint8 depth over the mask at creation (updated after rescale-by-depth). |
+| `content_hash` | `str` | SHA-256 hex of canvas bytes when the object was created. |
+| `created_at` | `str` | ISO-8601 UTC timestamp. |
+| `has_3d` | `bool` | Whether a GLB exists for this object. |
+| `cutout_bounds` | `CutoutBounds \| null` | Derived from on-disk cutout PNG alpha. |
+
+`SetObjectNameRequest` is the body of `PATCH /images/objects/{object_uuid}`.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `str \| null` | New label, or `null` to clear. |
+
+## Rescale by Depth
+
+`RescaleByDepthRequest` is sent to `POST /images/objects/{object_uuid}/rescale-by-depth`.
+
+| Field | Type | Description |
+|---|---|---|
+| `x` | `int` | Placement X in natural-image pixels (`ge=0`). |
+| `y` | `int` | Placement Y in natural-image pixels (`ge=0`). |
+
+`RescaleByDepthResponse`:
+
+| Field | Type | Description |
+|---|---|---|
+| `object_uuid` | `str` | Object UUID. |
+| `session_id` | `str` | Session UID. |
+| `object_id` | `int` | Zero-based object id. |
+| `source_average_depth` | `float` | `average_depth` before this rescale. |
+| `target_depth` | `float` | Sampled uint8 depth at placement point. |
+| `scale_factor` | `float` | Applied factor (`target_depth / source_average_depth`). |
+| `cutout_b64` | `str` | Base64 rescaled BGRA cutout PNG. |
+| `format` | `str` | Currently `png`. |
+| `cutout_bounds` | `CutoutBounds \| null` | Bounds after rescale. |
 
 ## Object List
 
@@ -69,6 +115,9 @@ All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.
 | Field | Type | Description |
 |---|---|---|
 | `object_id` | `int` | Zero-based integer id. |
+| `uuid` | `str \| null` | Server UUID from metadata, if persisted. |
+| `name` | `str \| null` | Optional label. |
+| `average_depth` | `float \| null` | Mean uint8 depth over mask at creation. |
 | `cutout_b64` | `str` | Base64-encoded BGRA cutout PNG. |
 | `format` | `str` | Currently `png`. |
 | `cutout_bounds` | `CutoutBounds \| null` | Tight visible-object bounds inside the cutout PNG. |

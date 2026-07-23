@@ -21,12 +21,14 @@
 | `process_click_on_image` | `(image_id, base_dir, x, y, options=None) -> (bg_bytes, cutout_bytes, "png")` | `api/routes.handle_click` (legacy) |
 | `segment_candidates_on_image` | `(image_id, base_dir, x, y, options=None) -> list[(mask_id, cutout_bytes)]` | `api/routes.segment_image` |
 | `inpaint_selected_mask_on_image` | `(image_id, mask_id, base_dir) -> (bg_bytes, cutout_bytes, "png")` | `api/routes.inpaint_mask` |
+| `build_object_metadata_for_inpaint` | `(image_id, mask_id, object_id, base_dir) -> ObjectMetadata` | `api/routes.inpaint_mask` |
+| `rescale_cutout_by_depth` | `(base_dir, object_uuid, x, y) -> RescaleByDepthResult` | `api/routes.rescale_object_by_depth` |
 
-`_get_object_remover_class`, `_get_object_segmentor_class`, `_get_background_inpainter_class`, and `_create_debug_click_image` are private helpers.
+`_get_object_remover_class`, `_get_object_segmentor_class`, `_get_background_inpainter_class`, `_scale_cutout_bgra_about_alpha_center`, and `_create_debug_click_image` are private helpers.
 
 ## Progressive canvas — `load_canvas_bytes`
 
-`load_canvas_bytes` (lines 105–138) is the image loader used by the two-step pipeline (`segment_candidates_on_image` and `inpaint_selected_mask_on_image`). It enables **progressive removal**: if `{uid}_background.png` already exists, it loads that canvas (the accumulated result of all prior removals) rather than the original upload. If no background exists yet (first object), it falls back to `load_image_bytes`.
+`load_canvas_bytes` (lines 115–148) is the image loader used by the two-step pipeline (`segment_candidates_on_image`, `inpaint_selected_mask_on_image`, and `rescale_cutout_by_depth`). It enables **progressive removal**: if `{uid}_background.png` already exists, it loads that canvas (the accumulated result of all prior removals) rather than the original upload. If no background exists yet (first object), it falls back to `load_image_bytes`.
 
 This means each new segmentation and inpainting operates on the already-cleaned room image, not on the original with prior objects still visible.
 
@@ -41,12 +43,13 @@ return load_image_bytes(image_id, base_dir)  # first object: use original upload
 
 ## Lazy import of the AI pipeline
 
-```22:33:fastApi-app/core/image_processing.py
+```32:43:fastApi-app/core/image_processing.py
 def _get_object_remover_class():
     try:
         from avroom_object_removal import ObjectRemover
     except ModuleNotFoundError as exc:
         if exc.name == "avroom_object_removal":
+            logger.error("avroom_object_removal package not importable")
             raise RuntimeError(
                 "Missing local package `avroom_object_removal`. Install repo dependencies or run `pip install -e ./TestModules`."
             ) from exc
@@ -61,7 +64,7 @@ Why lazy? It keeps `import core.image_processing` cheap (the model loading happe
 
 ## File resolution
 
-```85:91:fastApi-app/core/image_processing.py
+```95:101:fastApi-app/core/image_processing.py
 def get_image_path(image_id: str, base_dir: Path) -> Path:
     """Resolve filesystem path for a stored image regardless of extension."""
 
@@ -77,7 +80,7 @@ This is why upload doesn't need to remember the extension — the click can find
 
 Every click writes a copy of the input with a red dot drawn at the click coordinates to `{base_dir}/point/{image_id}_debug.png`:
 
-```64:82:fastApi-app/core/image_processing.py
+```74:90:fastApi-app/core/image_processing.py
 def _create_debug_click_image(source_image: Image.Image, x: int, y: int, base_dir: Path, image_id: str):
     """Create RGB debug image with a marker drawn at click coordinates."""
 
@@ -92,29 +95,22 @@ def _create_debug_click_image(source_image: Image.Image, x: int, y: int, base_di
         outline="white",
         width=2,
     )
-
-    tmp_dir = base_dir / DEBUG_DIR_SUBPATH
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    debug_image_path = tmp_dir / f"{image_id}_debug.png"
-    debug_image.save(debug_image_path)
 ```
 
 These accumulate forever; there is no cleanup.
 
 ## The pipeline call (legacy `segment_at_click`)
 
-`segment_at_click` (lines 195–244) is used only by the legacy `POST /images/click` one-step endpoint. The modern two-step flow uses `segment_candidates_on_image` + `inpaint_selected_mask_on_image` instead.
+`segment_at_click` (lines 203–264) is used only by the legacy `POST /images/click` one-step endpoint. The modern two-step flow uses `segment_candidates_on_image` + `inpaint_selected_mask_on_image` instead.
 
-```212:227:fastApi-app/core/image_processing.py
-    remover = _get_object_remover_class()()
-    image_key = f"memory://{hashlib.sha256(image_bytes).hexdigest()}"
-
+```234:241:fastApi-app/core/image_processing.py
     logger.info("Running ObjectRemover: image_key=%s click=(%d,%d)", image_key, x, y)
     background_bgr, cutout_bgra = remover.remove_object(
         image_path=image_key,
         x=x,
         y=y,
         image_bytes=image_bytes,
+        depth_map=depth_map,
     )
 ```
 
@@ -123,6 +119,25 @@ Things to notice:
 - The `image_path` argument is a synthetic `memory://<sha256>` URI used only as a cache key inside `SamImageAdapter`. The real bytes are passed via `image_bytes=`.
 - `ObjectRemover()` is constructed **per call**. The strategy classes themselves are cheap; the heavy resources (SAM predictor, LaMa, SD pipe, HF depth pipelines) are loaded exactly once per process behind module-level `functools.lru_cache` factories, so subsequent calls only pay thin wrapper construction.
 - The output is always PNG today; the `format` field is hardcoded `"png"`.
+
+## Depth cache usage
+
+Segmentation, inpaint metadata, and rescale-by-depth all call [`get_or_compute_depth`](../../fastApi-app/core/depth_cache.py) on the current canvas bytes. Depth maps are cached as `{session_id}_depth_{content_hash}.npy` under the image storage dir. See [settings-and-storage.md](settings-and-storage.md).
+
+`build_object_metadata_for_inpaint` (lines 375–408) loads depth, averages over the selected refined mask, and returns an `ObjectMetadata` record (uuid assigned at save time in the route).
+
+## Rescale by depth — `rescale_cutout_by_depth`
+
+`rescale_cutout_by_depth` (lines 466–546) samples depth at a placement point, computes `scale_factor = target_depth / average_depth`, scales the cutout's alpha-bbox content about its center, overwrites the numbered cutout PNG, and updates metadata `average_depth` via `set_object_average_depth` so later rescales do not compound.
+
+```505:527:fastApi-app/core/image_processing.py
+    target_depth = sample_depth_at_point(depth_map, x, y)
+    scale_factor = compute_depth_scale_factor(source_average_depth, target_depth)
+    ...
+    write_path = object_cutout_path(base_dir, metadata.session_id, metadata.object_id)
+    write_path.write_bytes(cutout_bytes)
+    set_object_average_depth(base_dir, object_uuid, target_depth)
+```
 
 ## Notes / quirks worth knowing
 

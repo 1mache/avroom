@@ -2,14 +2,14 @@
 
 Welcome to the Avroom architecture documentation. These docs describe the **current state** of the project as found in the code (not aspirational design).
 
-> Last refresh: 2026-06-04
+> Last refresh: 2026-07-23
 
 What changed in this refresh:
 
-- AI pipeline depth: `EnhancedEdgeDepthMappingStrategy` is the actual default depth strategy (wraps `NearFarBlendedDepthMappingStrategy`, adds CLAHE + bilateral post-processing for sharper object-floor separation) — updated `ai-pipeline/ai-engines/depth/components.md`.
-- AI pipeline core flow: `ObjectSegmentor` runs **two independent SAM passes** (Pass A: depth-adapted input using routing context; Pass B: original RGB with fixed `expand_pixels=14`) — results concatenated, depth-pass first — updated `ai-pipeline/core/flow.md`.
-- AI pipeline core components: upstream callers section now lists all three `image_processing.py` functions and their orchestrators (`segment_at_click`→`ObjectRemover`, `segment_candidates_on_image`→`ObjectSegmentor`, `inpaint_selected_mask_on_image`→`BackgroundInpainter`) — updated `ai-pipeline/core/components.md`.
-- Backend settings: corrected CORS line reference in `main.py` from 16–22 to 36–42 — updated `backend/settings-and-storage.md`.
+- Backend: documented `POST /images/objects/{object_uuid}/rescale-by-depth` (depth-proportional cutout rescale; overwrites cutout PNG and updates `average_depth`) — updated `backend/api-endpoints.md`, `backend/schemas.md`, `backend/core-image-processing.md`, `backend/settings-and-storage.md`, `backend/data-flow.md`.
+- Backend: documented object metadata endpoints (`GET`/`PATCH /images/objects/{uuid}`), depth cache (`core/depth_cache.py`), and object metadata storage (`core/object_metadata.py`, `object_index.json`) — same backend pages plus `repo-structure.md`.
+- Backend: removed stale reference to non-existent `api/objects.py` — updated `backend/README.md`.
+- Frontend: noted `object_uuid`, `ObjectMetadataResponse`, and object metadata API helpers; rescale endpoint is backend-only (not wired in UI) — updated `frontend/api-integration.md`, `frontend/state-and-types.md`.
 
 If you change architecture, run the [`update-avroom-docs`](../.cursor/skills/update-avroom-docs/SKILL.md) skill to keep these files in sync with the code.
 

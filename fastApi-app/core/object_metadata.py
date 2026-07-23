@@ -1,0 +1,210 @@
+from __future__ import annotations
+
+"""Filesystem-backed metadata for finalized session objects.
+
+Each processed object receives a UUID at inpaint time alongside the existing
+sequential ``object_id``.  Metadata is stored per object as JSON and indexed
+globally by UUID for O(1) lookup.
+"""
+
+import json
+import logging
+import uuid
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Annotated
+
+from pydantic import BaseModel, Field
+
+from settings import get_image_storage_dir
+
+logger = logging.getLogger(__name__)
+
+
+class ObjectMetadata(BaseModel):
+    """Persistent metadata for one finalized object within a session."""
+
+    uuid: Annotated[
+        str,
+        Field(description="Server-generated UUID; primary searchable key."),
+    ]
+    session_id: Annotated[
+        str,
+        Field(description="Session UID (same as upload image_id)."),
+    ]
+    object_id: Annotated[
+        int,
+        Field(ge=0, description="Zero-based integer id within the session."),
+    ]
+    name: Annotated[
+        str | None,
+        Field(default=None, description="Optional human-readable label."),
+    ]
+    average_depth: Annotated[
+        float,
+        Field(description="Mean uint8 depth over the selected mask at creation."),
+    ]
+    content_hash: Annotated[
+        str,
+        Field(description="SHA-256 hex of canvas bytes when the object was created."),
+    ]
+    created_at: Annotated[
+        str,
+        Field(description="ISO-8601 UTC timestamp of object creation."),
+    ]
+
+
+class ObjectIndexEntry(BaseModel):
+    """Lightweight pointer from UUID to session-local object id."""
+
+    session_id: str
+    object_id: int
+
+
+def get_object_index_file() -> Path:
+    """Return path to the global UUID index (sibling of sessions.json)."""
+    return get_image_storage_dir().parent / "object_index.json"
+
+
+def object_meta_path(base_dir: Path, session_id: str, object_id: int) -> Path:
+    """Return canonical path for one object's metadata JSON file."""
+    return base_dir / f"{session_id}_{object_id}_meta.json"
+
+
+def _load_object_index() -> dict[str, ObjectIndexEntry]:
+    index_path = get_object_index_file()
+    if not index_path.exists():
+        return {}
+    try:
+        raw = json.loads(index_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return {}
+        return {
+            str(key): ObjectIndexEntry.model_validate(value)
+            for key, value in raw.items()
+        }
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("Malformed object index at %s — treating as empty", index_path)
+        return {}
+
+
+def _save_object_index(index: dict[str, ObjectIndexEntry]) -> None:
+    index_path = get_object_index_file()
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    serializable = {key: entry.model_dump() for key, entry in index.items()}
+    index_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
+
+
+def save_object_metadata(base_dir: Path, metadata: ObjectMetadata) -> None:
+    """Persist object metadata JSON and register the UUID in the global index."""
+    path = object_meta_path(base_dir, metadata.session_id, metadata.object_id)
+    path.write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
+
+    index = _load_object_index()
+    index[metadata.uuid] = ObjectIndexEntry(
+        session_id=metadata.session_id,
+        object_id=metadata.object_id,
+    )
+    _save_object_index(index)
+    logger.info(
+        "Saved object metadata: uuid=%s session_id=%s object_id=%d average_depth=%.2f",
+        metadata.uuid,
+        metadata.session_id,
+        metadata.object_id,
+        metadata.average_depth,
+    )
+
+
+def load_object_metadata(base_dir: Path, session_id: str, object_id: int) -> ObjectMetadata | None:
+    """Load metadata for one session object, or ``None`` if absent."""
+    path = object_meta_path(base_dir, session_id, object_id)
+    if not path.exists():
+        return None
+    try:
+        return ObjectMetadata.model_validate_json(path.read_text(encoding="utf-8"))
+    except ValueError:
+        logger.warning("Malformed metadata file: %s", path)
+        return None
+
+
+def get_object_by_uuid(base_dir: Path, object_uuid: str) -> ObjectMetadata | None:
+    """Resolve metadata by UUID using the global index."""
+    index = _load_object_index()
+    entry = index.get(object_uuid)
+    if entry is None:
+        return None
+    return load_object_metadata(base_dir, entry.session_id, entry.object_id)
+
+
+def list_session_metadata(base_dir: Path, session_id: str, object_ids: list[int]) -> list[ObjectMetadata]:
+    """Return metadata records for the given object ids (skips missing files)."""
+    records: list[ObjectMetadata] = []
+    for object_id in object_ids:
+        meta = load_object_metadata(base_dir, session_id, object_id)
+        if meta is not None:
+            records.append(meta)
+    return records
+
+
+def set_object_name(base_dir: Path, object_uuid: str, name: str | None) -> ObjectMetadata:
+    """Update the optional name on an existing object metadata record."""
+    metadata = get_object_by_uuid(base_dir, object_uuid)
+    if metadata is None:
+        raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
+
+    updated = metadata.model_copy(update={"name": name})
+    path = object_meta_path(base_dir, updated.session_id, updated.object_id)
+    path.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
+    logger.info("Updated object name: uuid=%s name=%r", object_uuid, name)
+    return updated
+
+
+def delete_session_metadata(base_dir: Path, session_id: str, object_ids: list[int]) -> int:
+    """Remove metadata JSON files and prune UUID index entries for a session."""
+    index = _load_object_index()
+    removed = 0
+    uuids_to_remove: list[str] = []
+
+    for object_id in object_ids:
+        meta = load_object_metadata(base_dir, session_id, object_id)
+        if meta is not None:
+            uuids_to_remove.append(meta.uuid)
+
+        path = object_meta_path(base_dir, session_id, object_id)
+        if path.exists():
+            path.unlink()
+            removed += 1
+
+    for object_uuid in uuids_to_remove:
+        index.pop(object_uuid, None)
+
+    if uuids_to_remove:
+        _save_object_index(index)
+
+    logger.debug(
+        "Deleted session metadata: session_id=%s files_removed=%d index_pruned=%d",
+        session_id,
+        removed,
+        len(uuids_to_remove),
+    )
+    return removed
+
+
+def create_object_metadata(
+    *,
+    session_id: str,
+    object_id: int,
+    average_depth: float,
+    content_hash: str,
+    name: str | None = None,
+) -> ObjectMetadata:
+    """Build a new metadata record with a fresh UUID and timestamp."""
+    return ObjectMetadata(
+        uuid=str(uuid.uuid4()),
+        session_id=session_id,
+        object_id=object_id,
+        name=name,
+        average_depth=average_depth,
+        content_hash=content_hash,
+        created_at=datetime.now(UTC).isoformat(),
+    )

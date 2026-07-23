@@ -191,6 +191,45 @@ class InpaintMaskResponse(ClickResultResponse):
             description="Zero-based integer id assigned to this newly created object within the session.",
         ),
     ]
+    object_uuid: Annotated[
+        str,
+        Field(description="Server-generated UUID for this object; primary searchable key."),
+    ]
+
+
+class SetObjectNameRequest(BaseModel):
+    """Request payload for renaming one object by UUID."""
+
+    name: Annotated[
+        str | None,
+        Field(default=None, description="New object name, or null to clear."),
+    ]
+
+
+class ObjectMetadataResponse(BaseModel):
+    """Metadata record for one finalized object."""
+
+    uuid: Annotated[str, Field(description="Server-generated UUID; primary searchable key.")]
+    session_id: Annotated[str, Field(description="Session UID.")]
+    object_id: Annotated[int, Field(ge=0, description="Zero-based integer id within the session.")]
+    name: Annotated[str | None, Field(default=None, description="Optional human-readable label.")]
+    average_depth: Annotated[
+        float,
+        Field(description="Mean uint8 depth over the selected mask at creation."),
+    ]
+    content_hash: Annotated[
+        str,
+        Field(description="SHA-256 hex of canvas bytes when the object was created."),
+    ]
+    created_at: Annotated[str, Field(description="ISO-8601 UTC timestamp of object creation.")]
+    has_3d: Annotated[
+        bool,
+        Field(default=False, description="Whether a GLB 3D model has been generated for this object."),
+    ]
+    cutout_bounds: Annotated[
+        CutoutBounds | None,
+        Field(default=None, description="Tight visible-object bounds inside the cutout PNG."),
+    ]
 
 
 class ObjectInfo(BaseModel):
@@ -199,6 +238,18 @@ class ObjectInfo(BaseModel):
     object_id: Annotated[
         int,
         Field(ge=0, description="Zero-based integer id for this object within the session."),
+    ]
+    uuid: Annotated[
+        str | None,
+        Field(default=None, description="Server-generated UUID, if metadata was persisted."),
+    ]
+    name: Annotated[
+        str | None,
+        Field(default=None, description="Optional human-readable label."),
+    ]
+    average_depth: Annotated[
+        float | None,
+        Field(default=None, description="Mean uint8 depth over mask at creation."),
     ]
     cutout_b64: Annotated[
         str,

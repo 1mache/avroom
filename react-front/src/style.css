@@ -221,14 +221,41 @@ input {
 
 .cutout-overlay {
   position: absolute;
-  z-index: 2;
   object-fit: contain;
   user-select: none;
   touch-action: none;
+  /* Cutouts are full-image-sized transparent PNGs. A topmost overlay would
+     otherwise swallow every pointer event, so hit-testing/dragging happens
+     via .result-interaction-overlay instead — see MainPage.tsx. */
+  pointer-events: none;
 }
 
 .model-overlay {
   z-index: 1;
+}
+
+.result-interaction-overlay {
+  position: absolute;
+  z-index: 100;
+  background: transparent;
+  touch-action: none;
+}
+
+.selection-highlight {
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft), 0 0 18px rgba(11, 127, 130, 0.35);
+  animation: selection-highlight-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes selection-highlight-pulse {
+  0%,
+  100% {
+    opacity: 0.9;
+  }
+  50% {
+    opacity: 0.5;
+  }
 }
 
 .upload-placeholder {
@@ -607,6 +634,7 @@ input {
     repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(16, 35, 67, 0.035) 40px);
   overflow: hidden;
   position: relative;
+  touch-action: none;
 }
 
 .model-3d-viewport canvas {
@@ -852,6 +880,11 @@ input {
   scrollbar-color: var(--border) transparent;
 }
 
+.object-thumbnail-row {
+  position: relative;
+  width: 100%;
+}
+
 .object-thumbnail-btn {
   width: 100%;
   aspect-ratio: 1;
@@ -891,6 +924,36 @@ input {
   height: 100%;
   object-fit: contain;
   display: block;
+}
+
+.object-visibility-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.85);
+  color: var(--ink-soft);
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.15s, color 0.15s;
+}
+
+.object-visibility-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+  color: var(--accent-strong);
+  transform: scale(1.08);
+}
+
+.object-visibility-btn:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .object-panel-add-btn {

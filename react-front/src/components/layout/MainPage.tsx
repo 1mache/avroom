@@ -41,6 +41,7 @@ interface CutoutAlphaBounds {
 }
 
 interface DragState {
+  objectId: number;
   pointerId: number;
   startClientX: number;
   startClientY: number;
@@ -54,6 +55,19 @@ interface CutoutObject {
   cutoutAlphaBounds: CutoutAlphaBounds | null;
   normalizedClickPos: ClickPosition | null;
   glbData: ArrayBuffer | null;
+  // Per-object visibility toggle. Hidden objects render nothing and cannot be
+  // selected/dragged; see ObjectPanel eye button.
+  hidden: boolean;
+  // Per-object drag offset, natural-image pixels. Every object stays composited
+  // on the background simultaneously now, so position can no longer live in a
+  // single shared piece of state.
+  offset: ClickPosition;
+}
+
+interface HitCanvasEntry {
+  canvas: HTMLCanvasElement;
+  width: number;
+  height: number;
 }
 
 // `object-fit: contain` means visible image may not fill stage. Drag math must
@@ -116,6 +130,31 @@ const clampCutoutOffset = (
   };
 };
 
+// Maps an object's alpha bounds (+ its drag offset) from natural-image pixels
+// into on-stage CSS pixels, using the same contained-rect scale as the
+// background/cutout images. Falls back to the full rendered rect when bounds
+// are unknown (e.g. legacy session data).
+const getBoundsStageRect = (
+  bounds: CutoutAlphaBounds | null,
+  offset: ClickPosition,
+  renderedRect: { x: number; y: number; width: number; height: number },
+  naturalSize: Size,
+): { left: number; top: number; width: number; height: number } => {
+  if (!bounds) {
+    return { left: renderedRect.x, top: renderedRect.y, width: renderedRect.width, height: renderedRect.height };
+  }
+
+  const scaleX = renderedRect.width / naturalSize.width;
+  const scaleY = renderedRect.height / naturalSize.height;
+
+  return {
+    left: renderedRect.x + (bounds.left + offset.x) * scaleX,
+    top: renderedRect.y + (bounds.top + offset.y) * scaleY,
+    width: (bounds.right - bounds.left) * scaleX,
+    height: (bounds.bottom - bounds.top) * scaleY,
+  };
+};
+
 const toCutoutAlphaBounds = (bounds: CutoutBounds | null | undefined): CutoutAlphaBounds | null => {
   if (!bounds) {
     return null;
@@ -131,6 +170,31 @@ const toCutoutAlphaBounds = (bounds: CutoutBounds | null | undefined): CutoutAlp
   };
 };
 
+// Minimum alpha (0-255) that counts as "clicked the object" rather than
+// transparent padding or an antialiased edge pixel.
+const ALPHA_HIT_THRESHOLD = 10;
+
+// Objects render back-to-front in array order (later = on top, see zIndex in
+// getCutoutOverlayStyle), so hit-testing must walk topmost-first. The
+// currently selected object is always drawn on top of everything else, so it
+// is tested first regardless of its position in the array.
+const buildHitTestOrder = (objects: CutoutObject[], selectedObjectId: number | null): CutoutObject[] => {
+  const visible = objects.filter((o) => !o.hidden);
+  const topmostFirst = [...visible].reverse();
+
+  if (selectedObjectId === null) {
+    return topmostFirst;
+  }
+
+  const selectedIndex = topmostFirst.findIndex((o) => o.objectId === selectedObjectId);
+  if (selectedIndex <= 0) {
+    return topmostFirst;
+  }
+
+  const [selected] = topmostFirst.splice(selectedIndex, 1);
+  return [selected, ...topmostFirst];
+};
+
 const DELETE_CONFIRM_SECONDS = 2;
 
 export const MainPage: React.FC = () => {
@@ -139,8 +203,9 @@ export const MainPage: React.FC = () => {
   const resultStageRef = useRef<HTMLDivElement>(null);
   const dragStateRef = useRef<DragState | null>(null);
   const backgroundNaturalSizeRef = useRef<Size | null>(null);
-  const cutoutAlphaBoundsRef = useRef<CutoutAlphaBounds | null>(null);
   const renderedBackgroundRectRef = useRef<ReturnType<typeof getContainedImageRect>>(null);
+  const objectsRef = useRef<CutoutObject[]>([]);
+  const hitCanvasesRef = useRef<Map<number, HitCanvasEntry>>(new Map());
 
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
@@ -151,8 +216,6 @@ export const MainPage: React.FC = () => {
   const [backgroundSrc, setBackgroundSrc] = useState<string | null>(null);
   const [backgroundNaturalSize, setBackgroundNaturalSize] = useState<Size | null>(null);
   const [resultStageSize, setResultStageSize] = useState<Size | null>(null);
-  const [cutoutOffset, setCutoutOffset] = useState<ClickPosition>({ x: 0, y: 0 });
-  const [showCutout, setShowCutout] = useState(false);
   const [show3D, setShow3D] = useState(false);
   const [maskOptions, setMaskOptions] = useState<SegmentMaskOption[]>([]);
   const [selectedMaskId, setSelectedMaskId] = useState<string | null>(null);
@@ -169,7 +232,9 @@ export const MainPage: React.FC = () => {
   const deleteConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [objects, setObjects] = useState<CutoutObject[]>([]);
-  const [activeObjectId, setActiveObjectId] = useState<number | null>(null);
+  // No object is selected at the start of a session; selection is set by
+  // clicking/dragging an object in the preview or clicking it in the panel.
+  const [selectedObjectId, setSelectedObjectId] = useState<number | null>(null);
   const [isAddingObject, setIsAddingObject] = useState(false);
   const [objectPanelCollapsed, setObjectPanelCollapsed] = useState(false);
 
@@ -190,15 +255,13 @@ export const MainPage: React.FC = () => {
     setBackgroundSrc(null);
     setBackgroundNaturalSize(null);
     setResultStageSize(null);
-    setCutoutOffset({ x: 0, y: 0 });
-    setShowCutout(false);
     setShow3D(false);
     setMaskOptions([]);
     setSelectedMaskId(null);
     setIsDraggingCutout(false);
     dragStateRef.current = null;
     setObjects([]);
-    setActiveObjectId(null);
+    setSelectedObjectId(null);
     setIsAddingObject(false);
     setError(null);
     if (deleteConfirmTimerRef.current) {
@@ -208,11 +271,11 @@ export const MainPage: React.FC = () => {
     setDeleteConfirming(false);
   }, []);
 
-  // Derive active-object values from the objects array
-  const activeObject = objects.find(o => o.objectId === activeObjectId) ?? null;
-  const cutoutSrc = activeObject?.cutoutSrc ?? null;
-  const cutoutAlphaBounds = activeObject?.cutoutAlphaBounds ?? null;
-  const glbData = activeObject?.glbData ?? null;
+  // Derive selected-object values from the objects array. Only the selected
+  // object may show a 3D model; every non-hidden object still renders on the
+  // stage regardless of selection.
+  const selectedObject = objects.find((o) => o.objectId === selectedObjectId) ?? null;
+  const glbData = selectedObject?.glbData ?? null;
 
   useEffect(() => {
     return () => {
@@ -294,11 +357,12 @@ export const MainPage: React.FC = () => {
             cutoutAlphaBounds: toCutoutAlphaBounds(info.cutout_bounds ?? null),
             normalizedClickPos: null,
             glbData: null,
+            hidden: false,
+            offset: { x: 0, y: 0 },
           }));
           setObjects(loadedObjects);
-          const lastObject = loadedObjects[loadedObjects.length - 1];
-          setActiveObjectId(lastObject.objectId);
-          setShowCutout(true);
+          // No selection on restore, same as a fresh upload — user picks an
+          // object explicitly before it can be dragged or sent to 3D.
         }
       }
     } catch {
@@ -398,14 +462,16 @@ export const MainPage: React.FC = () => {
         cutoutAlphaBounds: toCutoutAlphaBounds(result.cutout_bounds),
         normalizedClickPos: normalizedClickPos,
         glbData: null,
+        hidden: false,
+        offset: { x: 0, y: 0 },
       };
 
+      // Newly created object auto-selects — the user just made it, so it
+      // becomes the one draggable / 3D-able object until they pick another.
       setObjects((prev) => [...prev, newObject]);
-      setActiveObjectId(result.object_id);
+      setSelectedObjectId(result.object_id);
       setBackgroundSrc(`${base64Prefix}${result.background_b64}`);
       setIsAddingObject(false);
-      setCutoutOffset({ x: 0, y: 0 });
-      setShowCutout(true);
       setShow3D(false);
       setMaskOptions([]);
       setSelectedMaskId(null);
@@ -424,7 +490,7 @@ export const MainPage: React.FC = () => {
       return;
     }
 
-    if (!imageId || activeObjectId === null) {
+    if (!imageId || selectedObjectId === null) {
       setError("No object selected for 3D generation.");
       return;
     }
@@ -435,8 +501,8 @@ export const MainPage: React.FC = () => {
     }
 
     // Snapshot the target id before any await so we write to the right object
-    // even if the user switches active objects while generation is in flight.
-    const targetObjectId = activeObjectId;
+    // even if the user switches selection while generation is in flight.
+    const targetObjectId = selectedObjectId;
     setIsGenerating3D(true);
     setError(null);
 
@@ -446,8 +512,8 @@ export const MainPage: React.FC = () => {
         setObjects((prev) =>
           prev.map((o) => (o.objectId === targetObjectId ? { ...o, glbData: cached } : o))
         );
-        // Only surface the 3D view if the user hasn't switched away.
-        setActiveObjectId((current) => {
+        // Only surface the 3D view if the user hasn't switched selection away.
+        setSelectedObjectId((current) => {
           if (current === targetObjectId) setShow3D(true);
           return current;
         });
@@ -458,7 +524,7 @@ export const MainPage: React.FC = () => {
       setObjects((prev) =>
         prev.map((o) => (o.objectId === targetObjectId ? { ...o, glbData: buffer } : o))
       );
-      setActiveObjectId((current) => {
+      setSelectedObjectId((current) => {
         if (current === targetObjectId) setShow3D(true);
         return current;
       });
@@ -470,7 +536,7 @@ export const MainPage: React.FC = () => {
     } finally {
       setIsGenerating3D(false);
     }
-  }, [activeObjectId, glbData, imageId, show3D]);
+  }, [selectedObjectId, glbData, imageId, show3D]);
 
   const handleNameKeyDown = useCallback(async (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== "Enter" || !imageId || !sessionName.trim()) {
@@ -565,44 +631,71 @@ export const MainPage: React.FC = () => {
   }, [backgroundSrc, measureResultStage]);
 
   useEffect(() => {
-    if (showCutout) {
-      return;
-    }
-
-    dragStateRef.current = null;
-    setIsDraggingCutout(false);
-  }, [showCutout]);
-
-  useEffect(() => {
-    const naturalSize = backgroundNaturalSize
-      ?? (cutoutAlphaBounds
-        ? {
-            width: cutoutAlphaBounds.naturalWidth,
-            height: cutoutAlphaBounds.naturalHeight,
-          }
-        : null);
-
-    // Session restore can load bounds before background metrics are known.
-    // Clamp again whenever either side changes so stored offsets stay valid.
-    setCutoutOffset((previousOffset) => {
-      const nextOffset = clampCutoutOffset(previousOffset, cutoutAlphaBounds, naturalSize);
-      if (nextOffset.x === previousOffset.x && nextOffset.y === previousOffset.y) {
-        return previousOffset;
-      }
-
-      return nextOffset;
-    });
-  }, [backgroundNaturalSize, cutoutAlphaBounds]);
-
-  useEffect(() => {
     // Window-level listeners need fresh geometry without re-binding on every
     // mouse move, so keep latest derived values in refs.
     backgroundNaturalSizeRef.current = backgroundNaturalSize;
   }, [backgroundNaturalSize]);
 
   useEffect(() => {
-    cutoutAlphaBoundsRef.current = cutoutAlphaBounds;
-  }, [cutoutAlphaBounds]);
+    objectsRef.current = objects;
+  }, [objects]);
+
+  // Build (and prune) an offscreen per-object canvas so pointer-down hit
+  // testing can sample real alpha instead of only a bounding box. Cheap no-op
+  // for objects that already have a canvas (e.g. re-runs while dragging).
+  useEffect(() => {
+    const currentIds = new Set(objects.map((o) => o.objectId));
+    hitCanvasesRef.current.forEach((_entry, id) => {
+      if (!currentIds.has(id)) {
+        hitCanvasesRef.current.delete(id);
+      }
+    });
+
+    objects.forEach((obj) => {
+      if (hitCanvasesRef.current.has(obj.objectId)) {
+        return;
+      }
+
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext("2d", { willReadFrequently: true });
+        if (!ctx) {
+          return;
+        }
+        ctx.drawImage(img, 0, 0);
+        hitCanvasesRef.current.set(obj.objectId, {
+          canvas,
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+        });
+      };
+      img.src = obj.cutoutSrc;
+    });
+  }, [objects]);
+
+  const sampleObjectAlpha = useCallback((objectId: number, localX: number, localY: number): number => {
+    const entry = hitCanvasesRef.current.get(objectId);
+    if (!entry) {
+      // Canvas not built yet (object just created). Treat as opaque so the
+      // object stays clickable immediately; the alpha-bounds bbox check
+      // already filters out obviously-empty space before this runs.
+      return 255;
+    }
+
+    if (localX < 0 || localY < 0 || localX >= entry.width || localY >= entry.height) {
+      return 0;
+    }
+
+    const ctx = entry.canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) {
+      return 255;
+    }
+
+    return ctx.getImageData(Math.floor(localX), Math.floor(localY), 1, 1).data[3];
+  }, []);
 
   const handleBackgroundLoad: React.ReactEventHandler<HTMLImageElement> = useCallback((event) => {
     setBackgroundNaturalSize({
@@ -621,22 +714,96 @@ export const MainPage: React.FC = () => {
     renderedBackgroundRectRef.current = renderedBackgroundRect;
   }, [renderedBackgroundRect]);
 
-  const handleCutoutPointerDown: React.PointerEventHandler<HTMLImageElement> = useCallback((event) => {
+  const handleSelectObject = useCallback((objectId: number) => {
+    setSelectedObjectId(objectId);
+    // 3D is scoped to whichever object is selected — switching away hides it.
+    setShow3D(false);
+    setIsAddingObject(false);
+    setClickPosition(null);
+    setNaturalClickPos(null);
+    setNormalizedClickPos(null);
+  }, []);
+
+  const handleToggleHidden = useCallback((objectId: number) => {
+    const target = objects.find((o) => o.objectId === objectId);
+    if (!target) {
+      return;
+    }
+    const willBeHidden = !target.hidden;
+
+    setObjects((prev) =>
+      prev.map((o) => (o.objectId === objectId ? { ...o, hidden: willBeHidden } : o))
+    );
+
+    // Hiding the currently selected object clears selection, same as the
+    // start-of-session state — a hidden object can't be interacted with.
+    if (willBeHidden && selectedObjectId === objectId) {
+      setSelectedObjectId(null);
+      setShow3D(false);
+    }
+  }, [objects, selectedObjectId]);
+
+  // Pointer down anywhere on the result stage: alpha-precise hit-test against
+  // every visible object (topmost/selected first), select whichever object was
+  // hit, and arm it for dragging. A miss leaves the current selection alone.
+  const handleStagePointerDown: React.PointerEventHandler<HTMLDivElement> = useCallback((event) => {
     if (!backgroundNaturalSize || !renderedBackgroundRect) {
       return;
     }
 
-    event.preventDefault();
-    document.body.classList.add("cutout-dragging");
-    dragStateRef.current = {
-      pointerId: event.pointerId,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-      startOffsetX: cutoutOffset.x,
-      startOffsetY: cutoutOffset.y,
-    };
-    setIsDraggingCutout(true);
-  }, [backgroundNaturalSize, cutoutOffset.x, cutoutOffset.y, renderedBackgroundRect]);
+    const stageRect = event.currentTarget.getBoundingClientRect();
+    const localX = event.clientX - stageRect.left;
+    const localY = event.clientY - stageRect.top;
+    const scaleX = renderedBackgroundRect.width / backgroundNaturalSize.width;
+    const scaleY = renderedBackgroundRect.height / backgroundNaturalSize.height;
+    if (scaleX <= 0 || scaleY <= 0) {
+      return;
+    }
+
+    const naturalX = localX / scaleX;
+    const naturalY = localY / scaleY;
+
+    // While the selected object's 3D model is shown, its 2D cutout is hidden
+    // and that screen region belongs to the (higher z-index) 3D frame instead.
+    const hitOrder = buildHitTestOrder(objects, selectedObjectId).filter(
+      (obj) => !(show3D && obj.objectId === selectedObjectId),
+    );
+    for (const obj of hitOrder) {
+      const localObjX = naturalX - obj.offset.x;
+      const localObjY = naturalY - obj.offset.y;
+
+      if (obj.cutoutAlphaBounds) {
+        const bounds = obj.cutoutAlphaBounds;
+        if (
+          localObjX < bounds.left ||
+          localObjX > bounds.right ||
+          localObjY < bounds.top ||
+          localObjY > bounds.bottom
+        ) {
+          continue;
+        }
+      }
+
+      if (sampleObjectAlpha(obj.objectId, localObjX, localObjY) <= ALPHA_HIT_THRESHOLD) {
+        continue;
+      }
+
+      event.preventDefault();
+      document.body.classList.add("cutout-dragging");
+      dragStateRef.current = {
+        objectId: obj.objectId,
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startOffsetX: obj.offset.x,
+        startOffsetY: obj.offset.y,
+      };
+      setIsDraggingCutout(true);
+      handleSelectObject(obj.objectId);
+      return;
+    }
+    // No object under the pointer: keep the current selection unchanged.
+  }, [backgroundNaturalSize, renderedBackgroundRect, objects, selectedObjectId, show3D, sampleObjectAlpha, handleSelectObject]);
 
   useEffect(() => {
     if (!isDraggingCutout) {
@@ -661,6 +828,9 @@ export const MainPage: React.FC = () => {
         return;
       }
 
+      const targetObject = objectsRef.current.find((o) => o.objectId === dragState.objectId);
+      const bounds = targetObject?.cutoutAlphaBounds ?? null;
+
       // Mouse delta arrives in screen pixels. Convert back into natural-image
       // pixels so drag behavior stays stable under responsive resize.
       const nextOffset = clampCutoutOffset(
@@ -668,11 +838,13 @@ export const MainPage: React.FC = () => {
           x: dragState.startOffsetX + (event.clientX - dragState.startClientX) / scaleX,
           y: dragState.startOffsetY + (event.clientY - dragState.startClientY) / scaleY,
         },
-        cutoutAlphaBoundsRef.current,
+        bounds,
         naturalSize,
       );
 
-      setCutoutOffset(nextOffset);
+      setObjects((prev) =>
+        prev.map((o) => (o.objectId === dragState.objectId ? { ...o, offset: nextOffset } : o))
+      );
     };
 
     const finishDrag = (pointerId: number) => {
@@ -710,36 +882,99 @@ export const MainPage: React.FC = () => {
     setClickPosition(null);
     setNaturalClickPos(null);
     setNormalizedClickPos(null);
-    setShowCutout(false);
     setShow3D(false);
-  }, []);
-
-  const handleSelectObject = useCallback((objectId: number) => {
-    setActiveObjectId(objectId);
-    setIsAddingObject(false);
-    setCutoutOffset({ x: 0, y: 0 });
-    setShowCutout(true);
-    setShow3D(false);
-    setClickPosition(null);
-    setNaturalClickPos(null);
-    setNormalizedClickPos(null);
   }, []);
 
   const handleToggleObjectPanel = useCallback(() => {
     setObjectPanelCollapsed((c) => !c);
   }, []);
 
-  const cutoutOverlayStyle: React.CSSProperties | undefined =
+  // Every visible cutout is rendered at the same contained rect as the
+  // background, then shifted by its own offset — each object moves
+  // independently instead of sharing one position.
+  const getCutoutOverlayStyle = (obj: CutoutObject, zIndex: number): React.CSSProperties | undefined =>
     backgroundNaturalSize && renderedBackgroundRect
       ? {
-          // Render cutout at exactly same contained rect as background, then
-          // shift inside that rect using scaled natural-image offset.
-          left: `${renderedBackgroundRect.x + cutoutOffset.x * (renderedBackgroundRect.width / backgroundNaturalSize.width)}px`,
-          top: `${renderedBackgroundRect.y + cutoutOffset.y * (renderedBackgroundRect.height / backgroundNaturalSize.height)}px`,
+          left: `${renderedBackgroundRect.x + obj.offset.x * (renderedBackgroundRect.width / backgroundNaturalSize.width)}px`,
+          top: `${renderedBackgroundRect.y + obj.offset.y * (renderedBackgroundRect.height / backgroundNaturalSize.height)}px`,
+          width: `${renderedBackgroundRect.width}px`,
+          height: `${renderedBackgroundRect.height}px`,
+          zIndex,
+        }
+      : undefined;
+
+  // Transparent hit-testing layer sized to the contained background rect. The
+  // cutout <img>s themselves are pointer-events:none (see style.css) because
+  // they're full-image-sized and would otherwise swallow every click.
+  const interactionOverlayStyle: React.CSSProperties | undefined =
+    backgroundNaturalSize && renderedBackgroundRect
+      ? {
+          left: `${renderedBackgroundRect.x}px`,
+          top: `${renderedBackgroundRect.y}px`,
           width: `${renderedBackgroundRect.width}px`,
           height: `${renderedBackgroundRect.height}px`,
           cursor: isDraggingCutout ? "grabbing" : "grab",
         }
+      : undefined;
+
+  const visibleObjects = objects.filter((o) => !o.hidden);
+  // While the selected object's 3D model is shown, its 2D cutout is hidden so
+  // the 3D frame visually replaces it instead of stacking on top of it.
+  const stageCutoutObjects = visibleObjects.filter(
+    (obj) => !(show3D && obj.objectId === selectedObjectId),
+  );
+
+  // Position the 3D frame over roughly the same rect the selected object's 2D
+  // cutout occupies (its alpha bounds + current drag offset), so swapping
+  // between 2D and 3D doesn't jump the object to a different spot/scale.
+  const model3DFrameStyle: React.CSSProperties | undefined =
+    backgroundNaturalSize && renderedBackgroundRect && selectedObject
+      ? (() => {
+          const rect = getBoundsStageRect(
+            selectedObject.cutoutAlphaBounds,
+            selectedObject.offset,
+            renderedBackgroundRect,
+            backgroundNaturalSize,
+          );
+
+          return {
+            position: "absolute",
+            left: `${rect.left}px`,
+            top: `${rect.top}px`,
+            width: `${rect.width}px`,
+            height: `${rect.height}px`,
+            // Above .result-interaction-overlay (z-index 100) so OrbitControls
+            // receive pointer events instead of the 2D drag/hit-test layer.
+            zIndex: 200,
+            pointerEvents: "auto",
+            touchAction: "none",
+          } satisfies React.CSSProperties;
+        })()
+      : undefined;
+
+  // Highlight ring traced around whichever object is currently selected (2D or
+  // 3D), so the panel's "is-active" thumbnail has an on-canvas counterpart.
+  // Non-interactive: sits above everything but never intercepts pointer events.
+  const selectionHighlightStyle: React.CSSProperties | undefined =
+    backgroundNaturalSize && renderedBackgroundRect && selectedObject && !isAddingObject
+      ? (() => {
+          const rect = getBoundsStageRect(
+            selectedObject.cutoutAlphaBounds,
+            selectedObject.offset,
+            renderedBackgroundRect,
+            backgroundNaturalSize,
+          );
+
+          return {
+            position: "absolute",
+            left: `${rect.left}px`,
+            top: `${rect.top}px`,
+            width: `${rect.width}px`,
+            height: `${rect.height}px`,
+            zIndex: 210,
+            pointerEvents: "none",
+          } satisfies React.CSSProperties;
+        })()
       : undefined;
 
   const isChoosingMask = maskOptions.length > 0;
@@ -861,24 +1096,37 @@ export const MainPage: React.FC = () => {
                       onLoad={handleBackgroundLoad}
                     />
 
-                    {showCutout && cutoutSrc ? (
+                    {stageCutoutObjects.map((obj, index) => (
                       <img
-                        src={cutoutSrc}
-                        alt="Cutout result"
+                        key={obj.objectId}
+                        src={obj.cutoutSrc}
+                        alt={`Object ${obj.objectId}`}
                         className="cutout-overlay"
-                        style={cutoutOverlayStyle}
-                        onPointerDown={handleCutoutPointerDown}
-                        onDragStart={(event) => event.preventDefault()}
+                        style={getCutoutOverlayStyle(
+                          obj,
+                          obj.objectId === selectedObjectId ? stageCutoutObjects.length + 2 : index + 2,
+                        )}
+                        draggable={false}
                       />
-                    ) : null}
+                    ))}
+
+                    <div
+                      className="result-interaction-overlay"
+                      style={interactionOverlayStyle}
+                      onPointerDown={handleStagePointerDown}
+                    />
 
                     {show3D && glbData ? (
                       <Model3DFrame
                         glbData={glbData}
-                        clickNormalizedPos={activeObject?.normalizedClickPos ?? null}
-                        className="overlay-absolute model-overlay"
+                        clickNormalizedPos={selectedObject?.normalizedClickPos ?? null}
+                        style={model3DFrameStyle}
                         backgroundImage={null}
                       />
+                    ) : null}
+
+                    {selectionHighlightStyle ? (
+                      <div className="selection-highlight" style={selectionHighlightStyle} />
                     ) : null}
                   </div>
                 </div>
@@ -888,10 +1136,11 @@ export const MainPage: React.FC = () => {
             {imageId && objects.length > 0 ? (
               <ObjectPanel
                 objects={objects}
-                activeObjectId={activeObjectId}
+                selectedObjectId={selectedObjectId}
                 isAddingObject={isAddingObject}
                 disabled={isInpainting || isGenerating3D}
                 onSelectObject={handleSelectObject}
+                onToggleHidden={handleToggleHidden}
                 onAddObject={handleAddObject}
                 collapsed={objectPanelCollapsed}
                 onToggleCollapsed={handleToggleObjectPanel}
@@ -904,23 +1153,17 @@ export const MainPage: React.FC = () => {
               <label className="dashboard-toggle">
                 <input
                   type="checkbox"
-                  checked={showCutout}
-                  onChange={() => setShowCutout((value) => !value)}
-                />
-                <span>Show cutout</span>
-                {cutoutSrc ? (
-                  <img src={cutoutSrc} alt="Cutout preview" className="toggle-preview" />
-                ) : null}
-              </label>
-
-              <label className="dashboard-toggle">
-                <input
-                  type="checkbox"
                   checked={show3D}
                   onChange={handleToggle3D}
-                  disabled={isGenerating3D}
+                  disabled={isGenerating3D || selectedObjectId === null}
                 />
-                <span>{isGenerating3D ? "Generating..." : "Show 3D model"}</span>
+                <span>
+                  {isGenerating3D
+                    ? "Generating..."
+                    : selectedObjectId === null
+                      ? "Select an object to view its 3D model"
+                      : "Show 3D model"}
+                </span>
               </label>
             </div>
           ) : null}

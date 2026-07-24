@@ -137,6 +137,16 @@ Install: `pip install -e ./TrellisModule` (or `pip install -r requirements.txt` 
 - API base URL defaults to `http://127.0.0.1:8000`; override with `VITE_API_BASE_URL` env var.
 - Click coordinates are translated from display-space to natural image-space before sending to the API.
 
+### Multi-object preview & selection model
+
+All segmented objects for a session stay composited on the inpainted background simultaneously (each `CutoutObject` has its own `hidden` flag and drag `offset`; no per-object position or visibility ever lived on the backend — the cumulative canvas returned by `/images/inpaint` already has every object removed, so the frontend just layers cutout PNGs back on top of it). Key points if touching this area:
+
+- **Selection** (`selectedObjectId`) is independent of visibility. It starts `null` (no selection) on fresh upload *and* on session restore. Set by clicking an object's thumbnail in `ObjectPanel`, or by clicking/dragging it directly in the preview stage. Hiding the selected object clears selection. A newly created object auto-selects.
+- **Hit-testing is alpha-precise, not DOM stacking.** Cutout PNGs are full-image-sized with transparency outside the object, so a topmost DOM overlay would swallow every click. `MainPage.tsx` builds an offscreen `<canvas>` per object (`hitCanvasesRef`) and samples pixel alpha on pointer-down to find which object (if any) was clicked, testing the selected object first, then remaining visible objects topmost-first. The cutout `<img>` elements themselves are `pointer-events: none`; a single transparent `.result-interaction-overlay` div owns pointer-down handling.
+- **3D generation/display is scoped to the selected object only.** Changing selection always forces `show3D` back to `false`.
+- Eye-toggle button lives in `ObjectPanel` per thumbnail (`onToggleHidden`); hidden objects are excluded from render, hit-testing, and selection.
+- **When `show3D` is on, the 3D model replaces the selected object's 2D cutout in place**, not a full-stage overlay. `MainPage.tsx` computes `model3DFrameStyle` from that object's `cutoutAlphaBounds` + `offset` (same rect the 2D cutout would occupy) and gives `Model3DFrame` a z-index above `.result-interaction-overlay` so its `OrbitControls` actually receive pointer events — a full-stage overlay previously sat on top of the WebGL canvas and silently ate every drag. The selected object's 2D `<img>` is skipped from render (`stageCutoutObjects`) and from hit-testing while `show3D` is true, since that screen region now belongs to the 3D frame; other objects are unaffected.
+
 ## Planned but Not Yet Implemented
 
 Per the spec, the following are planned but absent from the codebase:

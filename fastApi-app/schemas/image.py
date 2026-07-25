@@ -343,3 +343,54 @@ class UidCacheStatusResponse(BaseModel):
         Field(default=None, description="Tight visible-object bounds for cached cutout PNG."),
     ]
 
+
+class NovelViewRequest(BaseModel):
+    """Request payload for POST /images/novel-view."""
+
+    uid: Annotated[
+        str,
+        Field(min_length=1, description="Session UID used to locate the cutout PNG."),
+    ]
+    object_id: Annotated[
+        int,
+        Field(ge=0, description="Zero-based object id within the session."),
+    ]
+    elevation_deg: Annotated[
+        float,
+        Field(description="Absolute elevation of the source view in degrees."),
+    ]
+    azimuth_deg: Annotated[
+        float,
+        Field(description="Relative azimuth to the target view in degrees."),
+    ]
+    relative_elevation_deg: Annotated[
+        float,
+        Field(default=0.0, description="Relative elevation delta to the target view."),
+    ] = 0.0
+    radius: Annotated[
+        float,
+        Field(default=0.0, description="Optional zoom / camera distance (0 = model default)."),
+    ] = 0.0
+    seed: Annotated[
+        int,
+        Field(default=0, description="RNG seed for reproducible generation."),
+    ] = 0
+
+
+class NovelViewResponse(BaseModel):
+    """Novel-view synthesis result for a segmented object cutout."""
+
+    uid: Annotated[str, Field(description="Echo of request session UID.")]
+    object_id: Annotated[int, Field(ge=0, description="Echo of request object id.")]
+    image_b64: Annotated[str, Field(description="Base64-encoded novel-view PNG (RGBA preferred).")]
+    format: Annotated[str, Field(description="Image encoding, e.g. 'png'.")]
+    cutout_bounds: Annotated[
+        CutoutBounds | None,
+        Field(default=None, description="Alpha bbox of the returned PNG when computable."),
+    ]
+    elevation_deg: Annotated[float, Field(description="Echo of source elevation used.")]
+    azimuth_deg: Annotated[float, Field(description="Echo of target azimuth used.")]
+    relative_elevation_deg: Annotated[float, Field(description="Echo of relative elevation used.")]
+    radius: Annotated[float, Field(description="Echo of radius used.")]
+    seed: Annotated[int, Field(description="Echo of seed used.")]
+

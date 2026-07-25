@@ -9,6 +9,7 @@ from contextlib import asynccontextmanager
 
 from api.routes import router as images_router
 from api.model_3d import router as model_3d_router
+from api.novel_view import router as novel_view_router
 from logging_config import setup_logging
 
 # Load fastApi-app/.env (gitignored) into os.environ before anything else runs,
@@ -57,4 +58,5 @@ async def read_root() -> dict[str, str]:
 
 app.include_router(images_router)
 app.include_router(model_3d_router)
+app.include_router(novel_view_router)
 logger.info("FastAPI app initialized")

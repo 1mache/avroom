@@ -13,6 +13,12 @@ from .inpainting import (
     LamaInpaintingStrategy,
     StableDiffusionInpaintingStrategy,
 )
+from .novel_view import (
+    NovelViewFacade,
+    NovelViewStrategy,
+    StableZero123NovelViewError,
+    StableZero123NovelViewStrategy,
+)
 from .reconstruction_3d import (
     Hunyuan3D2GenerationError,
     Hunyuan3D2ReconstructionStrategy,
@@ -40,6 +46,10 @@ __all__ = [
     "ImageSegmentationStrategy",
     "LamaInpaintingStrategy",
     "NearFarBlendedDepthMappingStrategy",
+    "NovelViewFacade",
+    "NovelViewStrategy",
+    "StableZero123NovelViewError",
+    "StableZero123NovelViewStrategy",
     "Hunyuan3D2GenerationError",
     "Hunyuan3D2ReconstructionStrategy",
     "OpenLrmReconstructionStrategy",

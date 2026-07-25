@@ -9,6 +9,7 @@ Pattern everywhere under [`TestModules/src/ai_engines/`](../../../TestModules/sr
 | Depth | `DepthMappingFacade` | Near/far blend (`NearFarBlendedDepthMappingStrategy`) |
 | Segmentation | `ImageSegmentationFacade` | SAM (`SamSegmentationStrategy`) |
 | Inpainting | `ImageInpaintingFacade` | LaMa + optional SD (`HybridInpaintingStrategy`) |
+| Novel view | `NovelViewFacade` | Stable Zero123 (`StableZero123NovelViewStrategy`) |
 | Reconstruction 3D | `Reconstruction3DFacade` | OpenLRM local (`OpenLrmReconstructionStrategy`, default); Trellis HF Space (`TrellisReconstructionStrategy`) when injected |
 
 Each facade holds one active `*Strategy` instance configured at construction.
@@ -18,6 +19,7 @@ Each facade holds one active `*Strategy` instance configured at construction.
 - `DepthMappingStrategy`
 - `ImageSegmentationStrategy`
 - `ImageInpaintingStrategy`
+- `NovelViewStrategy`
 - `Reconstruction3DStrategy`
 
 Concrete implementations live under each domain’s `strategies/` package.
@@ -31,4 +33,5 @@ Engines rely on [`utils/`](../utils/README.md) (`DebugImageSaver`, `MaskRefiner`
 - [depth/README.md](depth/README.md)
 - [segmentation/README.md](segmentation/README.md)
 - [inpainting/README.md](inpainting/README.md)
+- [novel-view/README.md](novel-view/README.md)
 - [reconstruction-3d/README.md](reconstruction-3d/README.md)

@@ -32,6 +32,20 @@ def object_cutout_path(base_dir: Path, uid: str, object_id: int) -> Path:
     return base_dir / f"{uid}_{object_id}_cutout.png"
 
 
+def object_novel_view_path(
+    base_dir: Path,
+    uid: str,
+    object_id: int,
+    azimuth_deg: float,
+    relative_elevation_deg: float,
+) -> Path:
+    """Return the canonical path for a cached novel-view PNG artifact."""
+
+    az_key = int(round(azimuth_deg))
+    el_key = int(round(relative_elevation_deg))
+    return base_dir / f"{uid}_{object_id}_novel_az{az_key}_el{el_key}.png"
+
+
 def resolve_object_cutout_path(base_dir: Path, uid: str, object_id: int) -> Path:
     """Return the object cutout path, falling back to the legacy name for id 0.
 

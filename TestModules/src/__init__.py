@@ -27,6 +27,8 @@ from .ai_engines import (
     ImageSegmentationStrategy,
     LamaInpaintingStrategy,
     NearFarBlendedDepthMappingStrategy,
+    NovelViewFacade,
+    NovelViewStrategy,
     OpenLrmReconstructionStrategy,
     Reconstruction3DFacade,
     Reconstruction3DStrategy,
@@ -34,6 +36,8 @@ from .ai_engines import (
     SamImageAdapter,
     SamSegmentationStrategy,
     StableDiffusionInpaintingStrategy,
+    StableZero123NovelViewError,
+    StableZero123NovelViewStrategy,
     TrellisReconstructionStrategy,
 )
 from .core import BackgroundInpainter, ObjectRemover, ObjectSegmentor
@@ -56,6 +60,8 @@ __all__ = [
     "ImageSegmentationStrategy",
     "LamaInpaintingStrategy",
     "NearFarBlendedDepthMappingStrategy",
+    "NovelViewFacade",
+    "NovelViewStrategy",
     "BackgroundInpainter",
     "ObjectRemover",
     "ObjectSegmentor",
@@ -67,5 +73,7 @@ __all__ = [
     "SamSegmentationStrategy",
     "SegmentationRoutingStrategy",
     "StableDiffusionInpaintingStrategy",
+    "StableZero123NovelViewError",
+    "StableZero123NovelViewStrategy",
     "TrellisReconstructionStrategy",
 ]

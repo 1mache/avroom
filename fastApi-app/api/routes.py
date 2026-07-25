@@ -61,6 +61,7 @@ from core.object_storage import (
     resolve_object_cutout_path,
     resolve_object_glb_path,
 )
+from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from settings import (
     deregister_uid,
     get_3d_storage_dir,
@@ -74,53 +75,6 @@ from settings import (
 
 router = APIRouter(prefix="/images", tags=["images"])
 logger = logging.getLogger(__name__)
-
-
-def _extract_cutout_bounds_from_png_bytes(image_bytes: bytes) -> CutoutBounds | None:
-    """Return tight alpha bounds for a BGRA cutout PNG."""
-
-    decoded = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
-    if decoded is None:
-        logger.warning("Failed to decode cutout bytes for bounds extraction")
-        return None
-
-    if decoded.ndim != 3 or decoded.shape[2] < 4:
-        logger.warning("Cutout image missing alpha channel: shape=%s", decoded.shape)
-        height, width = decoded.shape[:2]
-        return CutoutBounds(
-            left=0,
-            top=0,
-            right=width,
-            bottom=height,
-            natural_width=width,
-            natural_height=height,
-        )
-
-    alpha = decoded[:, :, 3]
-    non_zero_points = cv2.findNonZero(alpha)
-    height, width = alpha.shape
-
-    # Empty alpha should not crash cache/session restore. Fall back to full image
-    # box so frontend can still treat the cutout as bounded.
-    if non_zero_points is None:
-        return CutoutBounds(
-            left=0,
-            top=0,
-            right=width,
-            bottom=height,
-            natural_width=width,
-            natural_height=height,
-        )
-
-    x, y, w, h = cv2.boundingRect(non_zero_points)
-    return CutoutBounds(
-        left=int(x),
-        top=int(y),
-        right=int(x + w),
-        bottom=int(y + h),
-        natural_width=int(width),
-        natural_height=int(height),
-    )
 
 
 @router.get("/sessions")
@@ -239,7 +193,7 @@ async def handle_click(request: ClickRequest) -> ClickResultResponse:
     cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")
     # Frontend uses these bounds to clamp drag by visible object, not by the
     # transparent padding that exists around most cutouts.
-    cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_bytes)
+    cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_bytes)
 
     logger.info(
         "Click processed: image_id=%s background_bytes=%d cutout_bytes=%d format=%s",
@@ -298,7 +252,7 @@ async def segment_image(request: SegmentRequest) -> SegmentResponse:
                 mask_id=mask_id,
                 cutout_b64=base64.b64encode(cutout_bytes).decode("ascii"),
                 format="png",
-                cutout_bounds=_extract_cutout_bounds_from_png_bytes(cutout_bytes),
+                cutout_bounds=extract_cutout_bounds_from_png_bytes(cutout_bytes),
             )
         )
 
@@ -363,7 +317,7 @@ async def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
 
     background_b64 = base64.b64encode(background_bytes).decode("ascii")
     cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")
-    cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_bytes)
+    cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_bytes)
 
     logger.info(
         "Inpainting complete: image_id=%s mask_id=%s background_bytes=%d cutout_bytes=%d object_id=%d object_uuid=%s",
@@ -483,7 +437,7 @@ def _metadata_to_response(
     cutout_path = resolve_object_cutout_path(storage_dir, metadata.session_id, metadata.object_id)
     cutout_bounds = None
     if cutout_path.exists():
-        cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_path.read_bytes())
+        cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_path.read_bytes())
     has_3d = resolve_object_glb_path(three_d_dir, metadata.session_id, metadata.object_id).exists()
     return ObjectMetadataResponse(
         uuid=metadata.uuid,
@@ -559,7 +513,7 @@ async def rescale_object_by_depth(
         logger.error("Rescale by depth failed — invalid input: uuid=%s reason=%s", object_uuid, exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    cutout_bounds = _extract_cutout_bounds_from_png_bytes(result.cutout_bytes)
+    cutout_bounds = extract_cutout_bounds_from_png_bytes(result.cutout_bytes)
     logger.info(
         "Rescale by depth complete: uuid=%s scale_factor=%.4f target_depth=%.2f",
         object_uuid,
@@ -611,7 +565,7 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
                 continue
             cutout_bytes = cutout_path.read_bytes()
             cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")
-            cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_bytes)
+            cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_bytes)
             has_3d = resolve_object_glb_path(three_d_dir, uid, oid).exists()
             meta = load_object_metadata(storage_dir, uid, oid)
             objects_list.append(
@@ -656,7 +610,7 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     if cutout_path_to_check is not None and cutout_path_to_check.exists():
         # Session restore should not need to re-run segmentation just to recover
         # drag bounds, so cache metadata derives from stored PNG on demand.
-        cutout_bounds = _extract_cutout_bounds_from_png_bytes(cutout_path_to_check.read_bytes())
+        cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_path_to_check.read_bytes())
 
     three_d_dir = get_3d_storage_dir()
     has_3d = any(

@@ -84,6 +84,18 @@ def prepare_cutout_for_model(
     )
 
 
+def rgba_to_rgb_on_white(rgba: Image.Image) -> Image.Image:
+    """Composite ``rgba`` onto opaque white and return RGB.
+
+    Cutouts store transparent pixels as RGB=0; a bare ``.convert("RGB")`` would
+    leave a black background that Zero123 was not trained on.
+    """
+
+    rgba = rgba.convert("RGBA")
+    background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+    return Image.alpha_composite(background, rgba).convert("RGB")
+
+
 def rgb_to_rgba_with_white_background(
     rgb: Image.Image,
     *,

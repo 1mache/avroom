@@ -37,7 +37,7 @@ DEFAULT_CUTOUT = (
     / "fastApi-app"
     / "tmp"
     / "images"
-    / "00a77ae4-98ab-4419-bfbf-a584d9734708_0_cutout.png"
+    / "10643e68-0e33-4d5a-be49-41aeff9ac34f_0_cutout.png"
 )
 OUTPUT_DIR = (
     Path(__file__).resolve().parents[1]
@@ -83,6 +83,7 @@ def _save_preprocessing_stages(cutout_bgra: np.ndarray, azimuth: int) -> None:
         DEFAULT_MODEL_SIZE,
         crop_alpha_bbox,
         pad_to_square,
+        rgba_to_rgb_on_white,
     )
     from avroom_object_removal.ai_engines.reconstruction_3d.reconstruction_image_input import (
         to_pil_rgba,
@@ -126,7 +127,7 @@ def _save_preprocessing_stages(cutout_bgra: np.ndarray, azimuth: int) -> None:
         )
     )
 
-    model_input_rgb = resized_rgba.convert("RGB")
+    model_input_rgb = rgba_to_rgb_on_white(resized_rgba)
     model_input_rgb.save(
         OUTPUT_DIR
         / (

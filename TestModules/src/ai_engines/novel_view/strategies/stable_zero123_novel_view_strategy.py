@@ -14,6 +14,7 @@ from ..novel_view_preprocess import (
     composite_model_output_on_canvas,
     prepare_cutout_for_model,
     rgb_to_rgba_with_white_background,
+    rgba_to_rgb_on_white,
 )
 from ..novel_view_strategy import NovelViewStrategy
 
@@ -194,7 +195,7 @@ class StableZero123NovelViewStrategy(NovelViewStrategy):
 
         rgba = to_pil_rgba(image)
         prep = prepare_cutout_for_model(rgba, model_size=self._model_size)
-        model_input = prep.model_image.convert("RGB")
+        model_input = rgba_to_rgb_on_white(prep.model_image)
 
         target_elevation = elevation_deg + relative_elevation_deg
         pose = [target_elevation, azimuth_deg, radius]

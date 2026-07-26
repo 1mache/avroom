@@ -14,6 +14,7 @@ from avroom_object_removal.ai_engines.reconstruction_3d import (
 )
 
 from core.object_storage import object_glb_path, resolve_object_cutout_path, resolve_object_glb_path
+from core.inference_lock import inference_session
 from settings import get_3d_storage_dir, get_image_storage_dir
 
 router = APIRouter(prefix="/3d", tags=["3d"])
@@ -46,7 +47,7 @@ def _get_facade() -> Reconstruction3DFacade:
 
 
 @router.post("/test-3d")
-async def generate_test_3d(request: Test3DRequest) -> Response:
+def generate_test_3d(request: Test3DRequest) -> Response:
     """Generate a GLB 3D model from the stored cutout for the given uid.
 
     In non-debug mode the cutout is read from the image storage directory as
@@ -96,11 +97,12 @@ async def generate_test_3d(request: Test3DRequest) -> Response:
         )
 
     try:
-        glb_bytes = _get_facade().generate(
-            cutout_image_path,
-            quality=ReconstructionQuality.HIGH,
-            output="bytes",
-        )
+        with inference_session():
+            glb_bytes = _get_facade().generate(
+                cutout_image_path,
+                quality=ReconstructionQuality.HIGH,
+                output="bytes",
+            )
     except Exception as exc:
         logger.exception("3D generation failed")
         raise HTTPException(status_code=500, detail=f"3D generation failed: {exc}") from exc

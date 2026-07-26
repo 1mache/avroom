@@ -22,6 +22,7 @@ from core.depth_cache import (
     sample_depth_at_point,
 )
 from core.object_metadata import ObjectMetadata, create_object_metadata, get_object_by_uuid, set_object_average_depth
+from core.inference_lock import inference_session
 
 
 logger = logging.getLogger(__name__)
@@ -282,14 +283,15 @@ def process_click_on_image(
 
     _validate_click_coordinates(image_bytes, x, y, base_dir, image_id)
 
-    background_bytes, cutout_bytes, image_format = segment_at_click(
-        image_bytes=image_bytes,
-        x=x,
-        y=y,
-        options=options,
-        session_id=image_id,
-        base_dir=base_dir,
-    )
+    with inference_session():
+        background_bytes, cutout_bytes, image_format = segment_at_click(
+            image_bytes=image_bytes,
+            x=x,
+            y=y,
+            options=options,
+            session_id=image_id,
+            base_dir=base_dir,
+        )
 
     return background_bytes, cutout_bytes, image_format
 
@@ -312,35 +314,36 @@ def segment_candidates_on_image(
     image_bytes = load_canvas_bytes(image_id=image_id, base_dir=base_dir)
     _validate_click_coordinates(image_bytes, x, y, base_dir, image_id)
 
-    # New segmentation invalidates any older unchosen candidates for this image.
-    delete_candidates(base_dir, image_id)
+    with inference_session():
+        # New segmentation invalidates any older unchosen candidates for this image.
+        delete_candidates(base_dir, image_id)
 
-    segmentor = _get_object_segmentor_class()()
-    depth_map, _ = get_or_compute_depth(
-        base_dir,
-        image_id,
-        image_bytes,
-        segmentor.depth.map_depth,
-    )
-    # Hash image bytes → build cache key. memory:// prefix tells the AI pipeline
-    # "don't read disk, use this hash to find cached model state."
-    image_key = f"memory://{hashlib.sha256(image_bytes).hexdigest()}"
-    logger.info("Running ObjectSegmentor: image_key=%s click=(%d,%d)", image_key, x, y)
-    candidate_pairs = segmentor.get_mask_for_object_at_position(
-        image_path=image_key,
-        x=x,
-        y=y,
-        image_bytes=image_bytes,
-        depth_map=depth_map,
-    )
-    logger.info("ObjectSegmentor finished: image_id=%s candidates=%d", image_id, len(candidate_pairs))
+        segmentor = _get_object_segmentor_class()()
+        depth_map, _ = get_or_compute_depth(
+            base_dir,
+            image_id,
+            image_bytes,
+            segmentor.depth.map_depth,
+        )
+        # Hash image bytes → build cache key. memory:// prefix tells the AI pipeline
+        # "don't read disk, use this hash to find cached model state."
+        image_key = f"memory://{hashlib.sha256(image_bytes).hexdigest()}"
+        logger.info("Running ObjectSegmentor: image_key=%s click=(%d,%d)", image_key, x, y)
+        candidate_pairs = segmentor.get_mask_for_object_at_position(
+            image_path=image_key,
+            x=x,
+            y=y,
+            image_bytes=image_bytes,
+            depth_map=depth_map,
+        )
+        logger.info("ObjectSegmentor finished: image_id=%s candidates=%d", image_id, len(candidate_pairs))
 
-    results: list[tuple[str, bytes]] = []
-    for index, (refined_mask, cutout_bgra) in enumerate(candidate_pairs):
-        mask_id = mask_id_from_index(index)
-        cutout_bytes = _encode_png(cutout_bgra, f"candidate cutout {mask_id}")
-        save_candidate(base_dir, image_id, mask_id, refined_mask, cutout_bytes)
-        results.append((mask_id, cutout_bytes))
+        results: list[tuple[str, bytes]] = []
+        for index, (refined_mask, cutout_bgra) in enumerate(candidate_pairs):
+            mask_id = mask_id_from_index(index)
+            cutout_bytes = _encode_png(cutout_bgra, f"candidate cutout {mask_id}")
+            save_candidate(base_dir, image_id, mask_id, refined_mask, cutout_bytes)
+            results.append((mask_id, cutout_bytes))
 
     return results
 
@@ -357,16 +360,17 @@ def inpaint_selected_mask_on_image(
     refined_mask = load_refined_mask(base_dir, image_id, mask_id)
     cutout_bytes = load_cutout_bytes(base_dir, image_id, mask_id)
 
-    inpainter = _get_background_inpainter_class()()
-    logger.info(
-        "Running BackgroundInpainter: image_id=%s mask_id=%s image_shape=%s mask_shape=%s",
-        image_id,
-        mask_id,
-        source_bgr.shape,
-        refined_mask.shape,
-    )
-    background_bgr = inpainter.cut_mask_from_image(original_image=source_bgr, mask=refined_mask)
-    logger.info("BackgroundInpainter finished: image_id=%s mask_id=%s bg_shape=%s", image_id, mask_id, background_bgr.shape)
+    with inference_session():
+        inpainter = _get_background_inpainter_class()()
+        logger.info(
+            "Running BackgroundInpainter: image_id=%s mask_id=%s image_shape=%s mask_shape=%s",
+            image_id,
+            mask_id,
+            source_bgr.shape,
+            refined_mask.shape,
+        )
+        background_bgr = inpainter.cut_mask_from_image(original_image=source_bgr, mask=refined_mask)
+        logger.info("BackgroundInpainter finished: image_id=%s mask_id=%s bg_shape=%s", image_id, mask_id, background_bgr.shape)
 
     background_bytes = _encode_png(background_bgr, "background")
     return background_bytes, cutout_bytes, "png"
@@ -384,15 +388,16 @@ def build_object_metadata_for_inpaint(
     segmentation ran on the same canvas state immediately before inpaint.
     """
     image_bytes = load_canvas_bytes(image_id=image_id, base_dir=base_dir)
-    segmentor = _get_object_segmentor_class()()
-    depth_map, content_hash = get_or_compute_depth(
-        base_dir,
-        image_id,
-        image_bytes,
-        segmentor.depth.map_depth,
-    )
-    refined_mask = load_refined_mask(base_dir, image_id, mask_id)
-    average_depth = compute_average_depth_over_mask(depth_map, refined_mask)
+    with inference_session():
+        segmentor = _get_object_segmentor_class()()
+        depth_map, content_hash = get_or_compute_depth(
+            base_dir,
+            image_id,
+            image_bytes,
+            segmentor.depth.map_depth,
+        )
+        refined_mask = load_refined_mask(base_dir, image_id, mask_id)
+        average_depth = compute_average_depth_over_mask(depth_map, refined_mask)
     logger.info(
         "Object metadata prepared: image_id=%s object_id=%d mask_id=%s average_depth=%.2f",
         image_id,
@@ -494,15 +499,17 @@ def rescale_cutout_by_depth(
 
     source_average_depth = metadata.average_depth
     image_bytes = load_canvas_bytes(image_id=metadata.session_id, base_dir=base_dir)
-    segmentor = _get_object_segmentor_class()()
-    depth_map, _ = get_or_compute_depth(
-        base_dir,
-        metadata.session_id,
-        image_bytes,
-        segmentor.depth.map_depth,
-    )
 
-    target_depth = sample_depth_at_point(depth_map, x, y)
+    with inference_session():
+        segmentor = _get_object_segmentor_class()()
+        depth_map, _ = get_or_compute_depth(
+            base_dir,
+            metadata.session_id,
+            image_bytes,
+            segmentor.depth.map_depth,
+        )
+        target_depth = sample_depth_at_point(depth_map, x, y)
+
     scale_factor = compute_depth_scale_factor(source_average_depth, target_depth)
     logger.info(
         "Depth scale computed: object_uuid=%s source_depth=%.2f target_depth=%.2f scale=%.4f",

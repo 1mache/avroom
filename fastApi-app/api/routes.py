@@ -148,7 +148,7 @@ async def upload_image(
 
 
 @router.post("/click", response_model=ClickResultResponse)
-async def handle_click(request: ClickRequest) -> ClickResultResponse:
+def handle_click(request: ClickRequest) -> ClickResultResponse:
     """Handle a user's click on a previously uploaded image.
 
     The coordinates are expressed in pixels with origin at the top-left of the image.
@@ -213,7 +213,7 @@ async def handle_click(request: ClickRequest) -> ClickResultResponse:
 
 
 @router.post("/segment", response_model=SegmentResponse)
-async def segment_image(request: SegmentRequest) -> SegmentResponse:
+def segment_image(request: SegmentRequest) -> SegmentResponse:
     """Return all mask candidates for a click without running inpainting."""
 
     logger.info(
@@ -265,7 +265,7 @@ async def segment_image(request: SegmentRequest) -> SegmentResponse:
 
 
 @router.post("/inpaint", response_model=InpaintMaskResponse)
-async def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
+def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
     """Inpaint background using one user-selected cached mask candidate."""
 
     logger.info(
@@ -487,7 +487,7 @@ async def rename_object(object_uuid: str, request: SetObjectNameRequest) -> Obje
 
 
 @router.post("/objects/{object_uuid}/rescale-by-depth", response_model=RescaleByDepthResponse)
-async def rescale_object_by_depth(
+def rescale_object_by_depth(
     object_uuid: str,
     request: RescaleByDepthRequest,
 ) -> RescaleByDepthResponse:

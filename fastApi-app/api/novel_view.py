@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException
 from avroom_object_removal.ai_engines.novel_view import NovelViewFacade, NovelViewRotationAdapter
 
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
+from core.inference_lock import inference_session
 from core.object_storage import object_novel_view_path, resolve_object_cutout_path
 from schemas.image import NovelViewRequest, NovelViewResponse
 from settings import get_image_storage_dir
@@ -37,7 +38,7 @@ def _bgra_to_png_bytes(bgra: np.ndarray) -> bytes:
 
 
 @router.post("/novel-view")
-async def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
+def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
     """Synthesize a novel 2D view of an existing object cutout at a requested pose.
 
     The cutout must already exist from the normal segment → inpaint flow.
@@ -96,14 +97,15 @@ async def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
         )
 
     try:
-        result_bgra = _get_facade().synthesize(
-            cutout_path,
-            elevation_deg=request.elevation_deg,
-            azimuth_deg=resolved_pose.azimuth_deg,
-            relative_elevation_deg=resolved_pose.relative_elevation_deg,
-            radius=resolved_pose.radius,
-            seed=0,
-        )
+        with inference_session():
+            result_bgra = _get_facade().synthesize(
+                cutout_path,
+                elevation_deg=request.elevation_deg,
+                azimuth_deg=resolved_pose.azimuth_deg,
+                relative_elevation_deg=resolved_pose.relative_elevation_deg,
+                radius=resolved_pose.radius,
+                seed=0,
+            )
     except Exception as exc:
         logger.exception("Novel view synthesis failed")
         raise HTTPException(

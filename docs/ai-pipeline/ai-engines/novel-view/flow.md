@@ -5,21 +5,25 @@ Invoked via `NovelViewFacade.synthesize(...)` or `POST /images/novel-view`.
 ## Stable Zero123 (default)
 
 1. Resolve cutout path on disk (`{uid}_{object_id}_cutout.png`).
-2. Normalize to PIL RGBA (`to_pil_rgba`).
-3. Crop to alpha bounding box; pad to square; resize to 256×256.
-4. Lazy-load Diffusers Zero1to3 pipeline on `kxic/stable-zero123` (override via `NOVEL_VIEW_MODEL_ID`).
-5. Run inference with pose `[elevation_deg + relative_elevation_deg, azimuth_deg, radius]`, `guidance_scale≈3`.
-6. Remask generated RGB (white background → transparent alpha).
-7. Upscale and composite back onto full-size transparent canvas.
-8. Encode PNG → base64; compute `cutout_bounds`; optionally persist disk cache.
+2. **(HTTP only)** Normalize optional pose directions through `NovelViewRotationAdapter.resolve_pose(...)`.
+3. Normalize to PIL RGBA (`to_pil_rgba`).
+4. Crop to alpha bounding box; pad to square; resize to 256×256; composite onto white before RGB model input.
+5. Lazy-load Diffusers Zero1to3 pipeline on `kxic/stable-zero123` (override via `NOVEL_VIEW_MODEL_ID`).
+6. Run inference with pose `[elevation_deg + relative_elevation_deg, azimuth_deg, radius]`, `guidance_scale≈3`.
+7. Remask generated RGB (white background → transparent alpha).
+8. Upscale and composite back onto full-size transparent canvas.
+9. Encode PNG → base64; compute `cutout_bounds`; optionally persist disk cache.
 
 ```mermaid
 sequenceDiagram
   participant API
+  participant Adapter as NovelViewRotationAdapter
   participant Facade as NovelViewFacade
   participant Strategy as StableZero123
   participant Model as Zero123Pipeline
 
+  API->>Adapter: resolve_pose(request)
+  Adapter-->>API: signed azimuth elevation radius
   API->>Facade: synthesize(cutout_path, pose)
   Facade->>Strategy: synthesize(...)
   Strategy->>Strategy: crop pad resize 256

@@ -4,6 +4,12 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
+from avroom_object_removal.ai_engines.novel_view import (
+    AzimuthDirection,
+    ElevationDirection,
+    ZoomDirection,
+)
+
 
 class SessionInfo(BaseModel):
     """Lightweight session descriptor returned by the sessions list endpoint."""
@@ -361,16 +367,60 @@ class NovelViewRequest(BaseModel):
     ]
     azimuth_deg: Annotated[
         float,
-        Field(description="Relative azimuth to the target view in degrees."),
+        Field(
+            description=(
+                "Relative azimuth to the target view in degrees. Signed when no "
+                "azimuth_direction is set; otherwise an unsigned magnitude."
+            ),
+        ),
     ]
+    azimuth_direction: Annotated[
+        AzimuthDirection | None,
+        Field(
+            default=None,
+            description=(
+                "Optional horizontal orbit hint. CLOCKWISE -> positive azimuth, "
+                "C_CLOCKWISE -> negative (viewed from above)."
+            ),
+        ),
+    ] = None
     relative_elevation_deg: Annotated[
         float,
-        Field(default=0.0, description="Relative elevation delta to the target view."),
+        Field(
+            default=0.0,
+            description=(
+                "Relative elevation delta to the target view. Signed when no "
+                "elevation_direction is set; otherwise an unsigned magnitude."
+            ),
+        ),
     ] = 0.0
+    elevation_direction: Annotated[
+        ElevationDirection | None,
+        Field(
+            default=None,
+            description="Optional tilt hint. UP -> positive delta, DOWN -> negative.",
+        ),
+    ] = None
     radius: Annotated[
         float,
-        Field(default=0.0, description="Optional zoom / camera distance (0 = model default)."),
+        Field(
+            default=0.0,
+            description=(
+                "Optional zoom / camera distance delta. Signed when no zoom_direction "
+                "is set; otherwise an unsigned magnitude (0 = model default)."
+            ),
+        ),
     ] = 0.0
+    zoom_direction: Annotated[
+        ZoomDirection | None,
+        Field(
+            default=None,
+            description=(
+                "Optional zoom hint. ZOOM_IN -> closer (negative radius), "
+                "ZOOM_OUT -> farther (positive radius)."
+            ),
+        ),
+    ] = None
     seed: Annotated[
         int,
         Field(default=0, description="RNG seed for reproducible generation."),
@@ -389,8 +439,26 @@ class NovelViewResponse(BaseModel):
         Field(default=None, description="Alpha bbox of the returned PNG when computable."),
     ]
     elevation_deg: Annotated[float, Field(description="Echo of source elevation used.")]
-    azimuth_deg: Annotated[float, Field(description="Echo of target azimuth used.")]
-    relative_elevation_deg: Annotated[float, Field(description="Echo of relative elevation used.")]
-    radius: Annotated[float, Field(description="Echo of radius used.")]
+    azimuth_deg: Annotated[
+        float,
+        Field(description="Resolved signed target azimuth passed to the model."),
+    ]
+    azimuth_direction: Annotated[
+        AzimuthDirection | None,
+        Field(default=None, description="Echo of azimuth_direction when supplied."),
+    ] = None
+    relative_elevation_deg: Annotated[
+        float,
+        Field(description="Resolved signed relative elevation passed to the model."),
+    ]
+    elevation_direction: Annotated[
+        ElevationDirection | None,
+        Field(default=None, description="Echo of elevation_direction when supplied."),
+    ] = None
+    radius: Annotated[float, Field(description="Resolved signed radius passed to the model.")]
+    zoom_direction: Annotated[
+        ZoomDirection | None,
+        Field(default=None, description="Echo of zoom_direction when supplied."),
+    ] = None
     seed: Annotated[int, Field(description="Echo of seed used.")]
 

@@ -79,17 +79,77 @@ From repo root (requires deps; CUDA recommended):
 python TestModules/tests/test_novel_view_stable_zero123.py [path/to/cutout.png]
 ```
 
-First run downloads `kxic/stable-zero123` (~5 GB). Outputs: `TestModules/outputs/novel_view_az{0,45,90,180}.png`
+First run downloads `kxic/stable-zero123` (~5 GB). Debug outputs:
+
+- `TestModules/outputs/novel_view_rotation_debug/preprocessing/` — stages 00–05 per azimuth
+- `TestModules/outputs/novel_view_rotation_debug/final_results/` — generated novel views
+
+## Pose direction constants (Python)
+
+```python
+from avroom_object_removal.ai_engines.novel_view import (
+    BACK,
+    FRONT,
+    HIGH_TILT,
+    LOW_TILT,
+    QUARTER,
+    SIDE,
+    THREE_QUARTER,
+    ZOOM_STEP,
+    AzimuthDirection,
+    ElevationDirection,
+    NovelViewRotationAdapter,
+    ZoomDirection,
+)
+
+# Counter-clockwise quarter turn
+az = NovelViewRotationAdapter.to_signed_azimuth(QUARTER, AzimuthDirection.C_CLOCKWISE)
+# -> -45.0
+```
 
 ## API smoke test
 
-After segment → inpaint has produced a cutout:
+After segment → inpaint has produced a cutout.
+
+**Signed azimuth (backward compatible):**
 
 ```bash
 curl -X POST http://127.0.0.1:8000/images/novel-view \
   -H "Content-Type: application/json" \
   -d '{"uid":"<session-uuid>","object_id":0,"elevation_deg":0,"azimuth_deg":45}'
 ```
+
+**Readable directions (unsigned magnitudes):**
+
+```bash
+# 90° clockwise (side view), slight upward tilt, zoom in
+curl -X POST http://127.0.0.1:8000/images/novel-view \
+  -H "Content-Type: application/json" \
+  -d '{
+    "uid":"<session-uuid>",
+    "object_id":0,
+    "elevation_deg":0,
+    "azimuth_deg":90,
+    "azimuth_direction":"CLOCKWISE",
+    "relative_elevation_deg":15,
+    "elevation_direction":"UP",
+    "radius":0.5,
+    "zoom_direction":"ZOOM_IN"
+  }'
+
+# Back view via named constant magnitude
+curl -X POST http://127.0.0.1:8000/images/novel-view \
+  -H "Content-Type: application/json" \
+  -d '{
+    "uid":"<session-uuid>",
+    "object_id":0,
+    "elevation_deg":0,
+    "azimuth_deg":180,
+    "azimuth_direction":"C_CLOCKWISE"
+  }'
+```
+
+Responses echo optional direction fields and return the resolved signed pose values.
 
 ## Disk cache
 
@@ -99,4 +159,5 @@ Successful responses write `{uid}_{object_id}_novel_az{azimuth}_el{rel_el}.png` 
 
 - **`StableZero123NovelViewError`** — inference or pipeline failure inside TestModules. Load failures hint that `stabilityai/stable-zero123` is ckpt-only.
 - HTTP **404** — cutout missing (run inpaint first).
+- HTTP **422** — invalid pose direction combination (e.g. negative magnitude with a direction set).
 - HTTP **500** — model load or inference failure (`logger.exception` before raise).

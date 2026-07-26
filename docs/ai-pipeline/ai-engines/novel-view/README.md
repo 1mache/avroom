@@ -1,6 +1,6 @@
 # Novel view synthesis
 
-**What this is:** Optional **image-to-image** novel view synthesis from an object cutout plus camera pose. The facade picks a concrete `NovelViewStrategy`.
+**What this is:** Optional **image-to-image** novel view synthesis from an object cutout plus camera pose. The facade picks a concrete `NovelViewStrategy`. The HTTP layer optionally accepts readable pose directions (`CLOCKWISE`, `UP`, `ZOOM_IN`, …) via `NovelViewRotationAdapter`.
 
 **When it runs:** When application code calls `NovelViewFacade` directly (smoke tests) or via `POST /images/novel-view` (FastAPI).
 

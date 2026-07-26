@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 from fastapi import APIRouter, HTTPException
 
-from avroom_object_removal.ai_engines.novel_view import NovelViewFacade
+from avroom_object_removal.ai_engines.novel_view import NovelViewFacade, NovelViewRotationAdapter
 
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.object_storage import object_novel_view_path, resolve_object_cutout_path
@@ -45,14 +45,38 @@ async def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
     """
     logger.info(
         "novel-view called: uid=%s object_id=%d elevation=%.1f azimuth=%.1f "
-        "rel_elevation=%.1f radius=%.1f seed=%d",
+        "azimuth_dir=%s rel_elevation=%.1f elevation_dir=%s radius=%.1f "
+        "zoom_dir=%s seed=%d",
         request.uid,
         request.object_id,
         request.elevation_deg,
         request.azimuth_deg,
+        request.azimuth_direction,
         request.relative_elevation_deg,
+        request.elevation_direction,
         request.radius,
+        request.zoom_direction,
         request.seed,
+    )
+
+    try:
+        resolved_pose = NovelViewRotationAdapter.resolve_pose(
+            azimuth_deg=request.azimuth_deg,
+            relative_elevation_deg=request.relative_elevation_deg,
+            radius=request.radius,
+            azimuth_direction=request.azimuth_direction,
+            elevation_direction=request.elevation_direction,
+            zoom_direction=request.zoom_direction,
+        )
+    except ValueError as exc:
+        logger.error("Invalid novel-view pose: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    logger.info(
+        "novel-view resolved pose: azimuth=%.1f rel_elevation=%.1f radius=%.1f",
+        resolved_pose.azimuth_deg,
+        resolved_pose.relative_elevation_deg,
+        resolved_pose.radius,
     )
 
     storage_dir = get_image_storage_dir()
@@ -77,9 +101,9 @@ async def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
         result_bgra = _get_facade().synthesize(
             cutout_path,
             elevation_deg=request.elevation_deg,
-            azimuth_deg=request.azimuth_deg,
-            relative_elevation_deg=request.relative_elevation_deg,
-            radius=request.radius,
+            azimuth_deg=resolved_pose.azimuth_deg,
+            relative_elevation_deg=resolved_pose.relative_elevation_deg,
+            radius=resolved_pose.radius,
             seed=request.seed,
         )
     except Exception as exc:
@@ -96,8 +120,8 @@ async def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
         storage_dir,
         request.uid,
         request.object_id,
-        request.azimuth_deg,
-        request.relative_elevation_deg,
+        resolved_pose.azimuth_deg,
+        resolved_pose.relative_elevation_deg,
     )
     cache_path.write_bytes(png_bytes)
 
@@ -117,8 +141,11 @@ async def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
         format="png",
         cutout_bounds=cutout_bounds,
         elevation_deg=request.elevation_deg,
-        azimuth_deg=request.azimuth_deg,
-        relative_elevation_deg=request.relative_elevation_deg,
-        radius=request.radius,
+        azimuth_deg=resolved_pose.azimuth_deg,
+        azimuth_direction=request.azimuth_direction,
+        relative_elevation_deg=resolved_pose.relative_elevation_deg,
+        elevation_direction=request.elevation_direction,
+        radius=resolved_pose.radius,
+        zoom_direction=request.zoom_direction,
         seed=request.seed,
     )

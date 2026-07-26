@@ -10,8 +10,10 @@ Usage (from repo root):
 If no cutout path is given, uses ``fastApi-app/res/test/toilet.png`` with a
 synthetic alpha matte when that file has no alpha channel.
 
-All preprocessing snapshots and generated views are written to
-``TestModules/outputs/novel_view_rotation_debug/``.
+Debug outputs land under ``TestModules/outputs/novel_view_rotation_debug/``:
+
+- ``preprocessing/`` — input transforms before Zero123 sees the image
+- ``final_results/`` — model-generated novel views (one PNG per azimuth)
 """
 
 from __future__ import annotations
@@ -44,7 +46,9 @@ OUTPUT_DIR = (
     / "outputs"
     / "novel_view_rotation_debug"
 )
-AZIMUTHS = (0, 45, 90, 180)
+PREPROCESS_DIR = OUTPUT_DIR / "preprocessing"
+FINAL_RESULTS_DIR = OUTPUT_DIR / "final_results"
+AZIMUTHS = (-40, -30, -20, -10, 0, 10, 20, 30, 40)
 
 
 def _load_or_synthesize_cutout(path: Path) -> np.ndarray:
@@ -89,29 +93,29 @@ def _save_preprocessing_stages(cutout_bgra: np.ndarray, azimuth: int) -> None:
         to_pil_rgba,
     )
 
-    filename_prefix = f"azimuth_{azimuth:03d}deg"
+    filename_prefix = f"azimuth_{azimuth:+04d}deg"
 
     original_path = (
-        OUTPUT_DIR
+        PREPROCESS_DIR
         / f"{filename_prefix}_stage_00_original_full_canvas_bgra.png"
     )
     cv2.imwrite(str(original_path), cutout_bgra)
 
     normalized_rgba = to_pil_rgba(cutout_bgra)
     normalized_rgba.save(
-        OUTPUT_DIR
+        PREPROCESS_DIR
         / f"{filename_prefix}_stage_01_normalized_full_canvas_rgba.png"
     )
 
     cropped_rgba, _ = crop_alpha_bbox(normalized_rgba)
     cropped_rgba.save(
-        OUTPUT_DIR
+        PREPROCESS_DIR
         / f"{filename_prefix}_stage_02_tight_alpha_bounding_box_crop_rgba.png"
     )
 
     square_padded_rgba = pad_to_square(cropped_rgba)
     square_padded_rgba.save(
-        OUTPUT_DIR
+        PREPROCESS_DIR
         / f"{filename_prefix}_stage_03_centered_square_transparent_padding_rgba.png"
     )
 
@@ -120,7 +124,7 @@ def _save_preprocessing_stages(cutout_bgra: np.ndarray, azimuth: int) -> None:
         Image.Resampling.LANCZOS,
     )
     resized_rgba.save(
-        OUTPUT_DIR
+        PREPROCESS_DIR
         / (
             f"{filename_prefix}_stage_04_resized_"
             f"{DEFAULT_MODEL_SIZE}x{DEFAULT_MODEL_SIZE}_rgba.png"
@@ -129,7 +133,7 @@ def _save_preprocessing_stages(cutout_bgra: np.ndarray, azimuth: int) -> None:
 
     model_input_rgb = rgba_to_rgb_on_white(resized_rgba)
     model_input_rgb.save(
-        OUTPUT_DIR
+        PREPROCESS_DIR
         / (
             f"{filename_prefix}_stage_05_exact_model_input_"
             f"{DEFAULT_MODEL_SIZE}x{DEFAULT_MODEL_SIZE}_rgb.png"
@@ -139,7 +143,7 @@ def _save_preprocessing_stages(cutout_bgra: np.ndarray, azimuth: int) -> None:
     logger.info(
         "Saved preprocessing debug stages: azimuth=%d directory=%s",
         azimuth,
-        OUTPUT_DIR,
+        PREPROCESS_DIR,
     )
 
 
@@ -150,7 +154,8 @@ def run_smoke(cutout_path: Path) -> None:
     logger.info("Loaded cutout: shape=%s path=%s", cutout_bgra.shape, cutout_path)
 
     facade = NovelViewFacade()
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    PREPROCESS_DIR.mkdir(parents=True, exist_ok=True)
+    FINAL_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     for azimuth in AZIMUTHS:
         logger.info("Generating novel view at azimuth=%d", azimuth)
@@ -166,14 +171,18 @@ def run_smoke(cutout_path: Path) -> None:
         assert result_bgra.dtype == np.uint8
         assert result_bgra.ndim == 3 and result_bgra.shape[2] == 4
 
-        out_path = OUTPUT_DIR / (
-            f"azimuth_{azimuth:03d}deg_"
-            "stage_06_generated_novel_view_full_canvas_bgra.png"
+        out_path = FINAL_RESULTS_DIR / (
+            f"azimuth_{azimuth:+04d}deg_"
+            "generated_novel_view_full_canvas_bgra.png"
         )
         cv2.imwrite(str(out_path), result_bgra)
         logger.info("Wrote %s shape=%s", out_path, result_bgra.shape)
 
-    logger.info("SUCCESS - inspect PNGs under %s", OUTPUT_DIR)
+    logger.info(
+        "SUCCESS - inspect PNGs under %s (preprocessing/) and %s (final_results/)",
+        PREPROCESS_DIR,
+        FINAL_RESULTS_DIR,
+    )
 
 
 if __name__ == "__main__":

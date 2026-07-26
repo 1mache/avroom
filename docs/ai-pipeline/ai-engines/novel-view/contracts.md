@@ -18,11 +18,36 @@
 | `object_id` | `int` (≥ 0) | yes |
 | `elevation_deg` | `float` | yes |
 | `azimuth_deg` | `float` | yes |
+| `azimuth_direction` | `"CLOCKWISE"` \| `"C_CLOCKWISE"` | no |
 | `relative_elevation_deg` | `float` | no (default `0`) |
+| `elevation_direction` | `"UP"` \| `"DOWN"` | no |
 | `radius` | `float` | no (default `0`) |
+| `zoom_direction` | `"ZOOM_IN"` \| `"ZOOM_OUT"` | no |
 | `seed` | `int` | no (default `0`) |
 
 The client does **not** upload the cutout; the server resolves it from disk.
+
+### Pose direction adapter (HTTP)
+
+Optional direction fields are normalized by `NovelViewRotationAdapter` before inference:
+
+| Axis | Direction field | Magnitude field | Signed result |
+|------|-----------------|-----------------|---------------|
+| Azimuth | `azimuth_direction` | `azimuth_deg` | `CLOCKWISE` → `+`, `C_CLOCKWISE` → `-` (viewed from above) |
+| Elevation delta | `elevation_direction` | `relative_elevation_deg` | `UP` → `+`, `DOWN` → `-` |
+| Zoom / radius | `zoom_direction` | `radius` | `ZOOM_OUT` → `+` (farther), `ZOOM_IN` → `-` (closer) |
+
+Rules:
+
+- **No direction on an axis:** the supplied signed value is passed through unchanged (backward compatible).
+- **Direction supplied:** the magnitude must be a finite non-negative number; negative magnitudes return **422**.
+- **Response:** echoes optional direction fields and returns the **resolved signed** `azimuth_deg`, `relative_elevation_deg`, and `radius` actually sent to Zero123.
+
+Python named magnitudes (optional, for readability):
+
+- Azimuth: `FRONT=0`, `QUARTER=45`, `SIDE=90`, `THREE_QUARTER=135`, `BACK=180`
+- Elevation: `LEVEL=0`, `LOW_TILT=15`, `HIGH_TILT=45`
+- Zoom: `NO_ZOOM=0`, `ZOOM_STEP=0.5`
 
 **Response** (JSON):
 
@@ -32,7 +57,10 @@ The client does **not** upload the cutout; the server resolves it from disk.
 | `image_b64` | base64 PNG |
 | `format` | `"png"` |
 | `cutout_bounds` | `CutoutBounds \| null` |
-| pose fields | echoed |
+| `elevation_deg` | echoed (source view; no direction adapter) |
+| `azimuth_deg`, `relative_elevation_deg`, `radius` | resolved signed values |
+| `azimuth_direction`, `elevation_direction`, `zoom_direction` | echoed when supplied |
+| `seed` | echoed |
 
 **Status codes:** `200` success, `404` missing cutout, `422` validation, `500` inference failure.
 
@@ -40,3 +68,4 @@ The client does **not** upload the cutout; the server resolves it from disk.
 
 - Do **not** implement as `Reconstruction3DStrategy` (returns GLB, not 2D).
 - Do **not** feed the full room photo — use the object cutout only.
+- Do **not** send a negative magnitude together with a direction on the same axis — use signed values without a direction instead.

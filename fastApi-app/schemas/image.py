@@ -421,10 +421,6 @@ class NovelViewRequest(BaseModel):
             ),
         ),
     ] = None
-    seed: Annotated[
-        int,
-        Field(default=0, description="RNG seed for reproducible generation."),
-    ] = 0
 
 
 class NovelViewResponse(BaseModel):
@@ -460,5 +456,4 @@ class NovelViewResponse(BaseModel):
         ZoomDirection | None,
         Field(default=None, description="Echo of zoom_direction when supplied."),
     ] = None
-    seed: Annotated[int, Field(description="Echo of seed used.")]
 

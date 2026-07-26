@@ -5,8 +5,8 @@
   - `azimuth_deg` — relative azimuth to the **target** view (degrees)
   - `relative_elevation_deg` — relative elevation delta (default `0`)
   - `radius` — optional zoom / distance (default `0` = model default)
-  - `seed` — RNG seed (default `0`)
 - **Outputs:** uint8 `numpy.ndarray` shape `(H, W, 4)` in **BGRA** channel order (OpenCV convention), matching existing cutout PNG layout.
+- **RNG seed:** fixed at `0` for HTTP requests (not exposed on the API).
 
 ## HTTP contract
 
@@ -23,7 +23,6 @@
 | `elevation_direction` | `"UP"` \| `"DOWN"` | no |
 | `radius` | `float` | no (default `0`) |
 | `zoom_direction` | `"ZOOM_IN"` \| `"ZOOM_OUT"` | no |
-| `seed` | `int` | no (default `0`) |
 
 The client does **not** upload the cutout; the server resolves it from disk.
 
@@ -60,7 +59,6 @@ Python named magnitudes (optional, for readability):
 | `elevation_deg` | echoed (source view; no direction adapter) |
 | `azimuth_deg`, `relative_elevation_deg`, `radius` | resolved signed values |
 | `azimuth_direction`, `elevation_direction`, `zoom_direction` | echoed when supplied |
-| `seed` | echoed |
 
 **Status codes:** `200` success, `404` missing cutout, `422` validation, `500` inference failure.
 

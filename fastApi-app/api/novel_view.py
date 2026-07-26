@@ -45,8 +45,7 @@ async def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
     """
     logger.info(
         "novel-view called: uid=%s object_id=%d elevation=%.1f azimuth=%.1f "
-        "azimuth_dir=%s rel_elevation=%.1f elevation_dir=%s radius=%.1f "
-        "zoom_dir=%s seed=%d",
+        "azimuth_dir=%s rel_elevation=%.1f elevation_dir=%s radius=%.1f zoom_dir=%s",
         request.uid,
         request.object_id,
         request.elevation_deg,
@@ -56,7 +55,6 @@ async def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
         request.elevation_direction,
         request.radius,
         request.zoom_direction,
-        request.seed,
     )
 
     try:
@@ -104,7 +102,7 @@ async def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
             azimuth_deg=resolved_pose.azimuth_deg,
             relative_elevation_deg=resolved_pose.relative_elevation_deg,
             radius=resolved_pose.radius,
-            seed=request.seed,
+            seed=0,
         )
     except Exception as exc:
         logger.exception("Novel view synthesis failed")
@@ -147,5 +145,4 @@ async def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
         elevation_direction=request.elevation_direction,
         radius=resolved_pose.radius,
         zoom_direction=request.zoom_direction,
-        seed=request.seed,
     )

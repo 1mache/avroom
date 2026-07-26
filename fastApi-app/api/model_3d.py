@@ -8,13 +8,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from avroom_object_removal.ai_engines.reconstruction_3d import (
-    Reconstruction3DFacade,
-    ReconstructionQuality,
-)
-
+from core.inference_pool.client import get_inference_client
 from core.object_storage import object_glb_path, resolve_object_cutout_path, resolve_object_glb_path
-from core.inference_lock import inference_session
 from settings import get_3d_storage_dir, get_image_storage_dir
 
 router = APIRouter(prefix="/3d", tags=["3d"])
@@ -22,8 +17,6 @@ logger = logging.getLogger(__name__)
 
 _DEBUG_MODE = False
 _DEBUG_MODEL_PATH = Path(__file__).resolve().parent.parent / "res" / "test" / "debug_toilet.glb"
-
-_facade: Reconstruction3DFacade | None = None
 
 
 class Test3DRequest(BaseModel):
@@ -37,13 +30,6 @@ class Test3DRequest(BaseModel):
         int,
         Field(ge=0, description="Zero-based object id within the session to generate 3D from."),
     ] = 0
-
-
-def _get_facade() -> Reconstruction3DFacade:
-    global _facade
-    if _facade is None:
-        _facade = Reconstruction3DFacade()
-    return _facade
 
 
 @router.post("/test-3d")
@@ -97,12 +83,7 @@ def generate_test_3d(request: Test3DRequest) -> Response:
         )
 
     try:
-        with inference_session():
-            glb_bytes = _get_facade().generate(
-                cutout_image_path,
-                quality=ReconstructionQuality.HIGH,
-                output="bytes",
-            )
+        glb_bytes = get_inference_client().run_generate_3d(cutout_path=cutout_image_path)
     except Exception as exc:
         logger.exception("3D generation failed")
         raise HTTPException(status_code=500, detail=f"3D generation failed: {exc}") from exc

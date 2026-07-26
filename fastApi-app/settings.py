@@ -6,6 +6,7 @@ This module centralizes configuration such as the image storage directory so tha
 both the API layer and core logic can share the same behavior.
 """
 
+import os
 from pathlib import Path
 
 
@@ -152,4 +153,29 @@ def register_uid(uid: str) -> None:
         uids.append(uid)
 
     sessions_file.write_text(json.dumps(uids, indent=2), encoding="utf-8")
+
+
+def get_inference_worker_count() -> int:
+    """Return configured inference worker subprocess count.
+
+    ``INFERENCE_WORKERS=0`` (default) keeps inline execution with the existing
+    process-wide inference lock. Values above zero spawn that many GPU worker
+    subprocesses (~one full model stack per worker in VRAM).
+    """
+    raw = os.environ.get("INFERENCE_WORKERS", "0").strip()
+    try:
+        count = int(raw)
+    except ValueError:
+        count = 0
+    return max(0, min(count, 8))
+
+
+def get_inference_job_timeout_sec() -> int:
+    """Maximum seconds the API waits for one inference worker job to finish."""
+    raw = os.environ.get("INFERENCE_JOB_TIMEOUT_SEC", "600").strip()
+    try:
+        timeout = int(raw)
+    except ValueError:
+        timeout = 600
+    return max(1, timeout)
 

@@ -1,0 +1,221 @@
+from __future__ import annotations
+
+import logging
+import uuid
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+import numpy as np
+
+from core.inference_pool.dispatch import execute
+from core.inference_pool.pool import InferencePool
+from core.inference_pool.types import JobKind, JobRequest, JobResult
+from schemas.image import ImageProcessingOptions
+from settings import get_inference_worker_count
+
+if TYPE_CHECKING:
+    from core.image_processing import RescaleByDepthResult
+
+logger = logging.getLogger(__name__)
+
+_pool: InferencePool | None = None
+_client: InferenceClient | None = None
+
+
+class InferenceJobError(RuntimeError):
+    """Raised when an inference job fails in a worker or inline."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
+class InferenceClient:
+    """Submit inference jobs inline or via the worker pool."""
+
+    def __init__(self, pool: InferencePool | None) -> None:
+        self._pool = pool
+
+    def _run(self, job: JobRequest) -> JobResult:
+        if self._pool is None:
+            logger.debug("Running inference inline: job_id=%s kind=%s", job.job_id, job.kind)
+            return execute(job)
+
+        logger.debug("Submitting inference to pool: job_id=%s kind=%s", job.job_id, job.kind)
+        return self._pool.submit_and_wait(job)
+
+    @staticmethod
+    def _raise_if_failed(result: JobResult) -> None:
+        if not result.ok:
+            raise InferenceJobError(result.error or "Inference job failed")
+
+    def run_segment(
+        self,
+        *,
+        image_id: str,
+        base_dir: Path,
+        x: int,
+        y: int,
+        options: ImageProcessingOptions | None = None,
+    ) -> list[tuple[str, bytes]]:
+        job = JobRequest(
+            job_id=str(uuid.uuid4()),
+            kind=JobKind.SEGMENT,
+            storage_dir=str(base_dir.resolve()),
+            image_id=image_id,
+            x=x,
+            y=y,
+            options=options.model_dump() if options is not None else None,
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.candidates is not None
+        return result.candidates
+
+    def run_inpaint(
+        self,
+        *,
+        image_id: str,
+        mask_id: str,
+        base_dir: Path,
+    ) -> tuple[bytes, bytes, str]:
+        job = JobRequest(
+            job_id=str(uuid.uuid4()),
+            kind=JobKind.INPAINT,
+            storage_dir=str(base_dir.resolve()),
+            image_id=image_id,
+            mask_id=mask_id,
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.background_bytes is not None
+        assert result.cutout_bytes is not None
+        assert result.image_format is not None
+        return result.background_bytes, result.cutout_bytes, result.image_format
+
+    def run_click(
+        self,
+        *,
+        image_id: str,
+        base_dir: Path,
+        x: int,
+        y: int,
+        options: ImageProcessingOptions | None = None,
+    ) -> tuple[bytes, bytes, str]:
+        job = JobRequest(
+            job_id=str(uuid.uuid4()),
+            kind=JobKind.CLICK,
+            storage_dir=str(base_dir.resolve()),
+            image_id=image_id,
+            x=x,
+            y=y,
+            options=options.model_dump() if options is not None else None,
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.background_bytes is not None
+        assert result.cutout_bytes is not None
+        assert result.image_format is not None
+        return result.background_bytes, result.cutout_bytes, result.image_format
+
+    def run_rescale_by_depth(
+        self,
+        *,
+        base_dir: Path,
+        object_uuid: str,
+        x: int,
+        y: int,
+    ) -> RescaleByDepthResult:
+        from core.image_processing import RescaleByDepthResult
+
+        job = JobRequest(
+            job_id=str(uuid.uuid4()),
+            kind=JobKind.RESCALE_BY_DEPTH,
+            storage_dir=str(base_dir.resolve()),
+            object_uuid=object_uuid,
+            x=x,
+            y=y,
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.object_uuid is not None
+        assert result.session_id is not None
+        assert result.object_id is not None
+        assert result.source_average_depth is not None
+        assert result.target_depth is not None
+        assert result.scale_factor is not None
+        assert result.cutout_bytes is not None
+        return RescaleByDepthResult(
+            object_uuid=result.object_uuid,
+            session_id=result.session_id,
+            object_id=result.object_id,
+            source_average_depth=result.source_average_depth,
+            target_depth=result.target_depth,
+            scale_factor=result.scale_factor,
+            cutout_bytes=result.cutout_bytes,
+        )
+
+    def run_generate_3d(self, *, cutout_path: Path) -> bytes:
+        job = JobRequest(
+            job_id=str(uuid.uuid4()),
+            kind=JobKind.GENERATE_3D,
+            storage_dir=str(cutout_path.parent.resolve()),
+            cutout_path=str(cutout_path.resolve()),
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.glb_bytes is not None
+        return result.glb_bytes
+
+    def run_novel_view(
+        self,
+        *,
+        cutout_path: Path,
+        elevation_deg: float,
+        azimuth_deg: float,
+        relative_elevation_deg: float,
+        radius: float,
+    ) -> np.ndarray:
+        job = JobRequest(
+            job_id=str(uuid.uuid4()),
+            kind=JobKind.NOVEL_VIEW,
+            storage_dir=str(cutout_path.parent.resolve()),
+            cutout_path=str(cutout_path.resolve()),
+            elevation_deg=elevation_deg,
+            azimuth_deg=azimuth_deg,
+            relative_elevation_deg=relative_elevation_deg,
+            radius=radius,
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.novel_view_bgra is not None
+        return result.novel_view_bgra
+
+
+def init_inference_client(pool: InferencePool | None = None) -> None:
+    """Initialize the process-wide inference client."""
+    global _pool, _client
+    _pool = pool
+    _client = InferenceClient(pool)
+    mode = "pool" if pool is not None else "inline"
+    logger.info(
+        "Inference client initialized: mode=%s workers=%d",
+        mode,
+        get_inference_worker_count(),
+    )
+
+
+def get_inference_client() -> InferenceClient:
+    """Return the initialized inference client."""
+    if _client is None:
+        init_inference_client(None)
+    assert _client is not None
+    return _client
+
+
+def shutdown_inference_client() -> None:
+    """Shut down the worker pool if one was started."""
+    global _pool, _client
+    if _pool is not None:
+        _pool.shutdown()
+        _pool = None
+    _client = None

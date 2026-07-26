@@ -17,11 +17,9 @@ from pathlib import Path
 from core.image_processing import (
     build_object_metadata_for_inpaint,
     get_image_path,
-    inpaint_selected_mask_on_image,
-    process_click_on_image,
-    rescale_cutout_by_depth,
-    segment_candidates_on_image,
 )
+from core.inference_pool.client import get_inference_client
+from core.inference_pool.session_lock import session_lock
 from core.mask_cache import delete_candidates
 from core.depth_cache import delete_session_depth_maps
 from core.object_metadata import (
@@ -166,7 +164,7 @@ def handle_click(request: ClickRequest) -> ClickResultResponse:
     storage_dir: Path = get_image_storage_dir()
 
     try:
-        background_bytes, cutout_bytes, image_format = process_click_on_image(
+        background_bytes, cutout_bytes, image_format = get_inference_client().run_click(
             image_id=request.image_id,
             base_dir=storage_dir,
             x=request.x,
@@ -226,7 +224,7 @@ def segment_image(request: SegmentRequest) -> SegmentResponse:
     storage_dir: Path = get_image_storage_dir()
 
     try:
-        candidates = segment_candidates_on_image(
+        candidates = get_inference_client().run_segment(
             image_id=request.image_id,
             base_dir=storage_dir,
             x=request.x,
@@ -277,7 +275,7 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
     storage_dir: Path = get_image_storage_dir()
 
     try:
-        background_bytes, cutout_bytes, image_format = inpaint_selected_mask_on_image(
+        background_bytes, cutout_bytes, image_format = get_inference_client().run_inpaint(
             image_id=request.image_id,
             mask_id=request.mask_id,
             base_dir=storage_dir,
@@ -292,28 +290,29 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
         logger.exception("Inpainting failed")
         raise HTTPException(status_code=500, detail=f"Inpainting failed: {exc}") from exc
 
-    # Allocate next sequential object id for this session.
-    object_id = next_object_id(storage_dir, request.image_id)
+    with session_lock(request.image_id):
+        # Allocate next sequential object id for this session.
+        object_id = next_object_id(storage_dir, request.image_id)
 
-    object_metadata = build_object_metadata_for_inpaint(
-        image_id=request.image_id,
-        mask_id=request.mask_id,
-        object_id=object_id,
-        base_dir=storage_dir,
-    )
-    save_object_metadata(storage_dir, object_metadata)
+        object_metadata = build_object_metadata_for_inpaint(
+            image_id=request.image_id,
+            mask_id=request.mask_id,
+            object_id=object_id,
+            base_dir=storage_dir,
+        )
+        save_object_metadata(storage_dir, object_metadata)
 
-    # Background always written to the single cumulative canvas path (overwrites → becomes new canvas).
-    background_image_path = current_background_path(storage_dir, request.image_id)
-    background_image_path.write_bytes(background_bytes)
+        # Background always written to the single cumulative canvas path (overwrites → becomes new canvas).
+        background_image_path = current_background_path(storage_dir, request.image_id)
+        background_image_path.write_bytes(background_bytes)
 
-    # Cutout written to the per-object numbered path (never overwrites a prior object).
-    cutout_image_path = object_cutout_path(storage_dir, request.image_id, object_id)
-    cutout_image_path.write_bytes(cutout_bytes)
+        # Cutout written to the per-object numbered path (never overwrites a prior object).
+        cutout_image_path = object_cutout_path(storage_dir, request.image_id, object_id)
+        cutout_image_path.write_bytes(cutout_bytes)
 
-    # Selected candidate is now promoted to final artifacts. Remove all
-    # temporary candidates so stale alternatives cannot be selected later.
-    delete_candidates(storage_dir, request.image_id)
+        # Selected candidate is now promoted to final artifacts. Remove all
+        # temporary candidates so stale alternatives cannot be selected later.
+        delete_candidates(storage_dir, request.image_id)
 
     background_b64 = base64.b64encode(background_bytes).decode("ascii")
     cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")
@@ -500,7 +499,7 @@ def rescale_object_by_depth(
     )
     storage_dir = get_image_storage_dir()
     try:
-        result = rescale_cutout_by_depth(
+        result = get_inference_client().run_rescale_by_depth(
             base_dir=storage_dir,
             object_uuid=object_uuid,
             x=request.x,

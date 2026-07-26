@@ -10,7 +10,10 @@ from contextlib import asynccontextmanager
 from api.routes import router as images_router
 from api.model_3d import router as model_3d_router
 from api.novel_view import router as novel_view_router
+from core.inference_pool.client import init_inference_client, shutdown_inference_client
+from core.inference_pool.pool import InferencePool
 from logging_config import setup_logging
+from settings import get_inference_worker_count
 
 # Load fastApi-app/.env (gitignored) into os.environ before anything else runs,
 # so HF_TOKEN is available when the 3D reconstruction strategies are lazily
@@ -26,9 +29,15 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # startup
+    pool: InferencePool | None = None
+    worker_count = get_inference_worker_count()
+    if worker_count > 0:
+        pool = InferencePool.start()
+    init_inference_client(pool)
     logger.info("Image processing service started")
     yield
     # shutdown
+    shutdown_inference_client()
     logger.info("Image processing service shutting down")
 
 app = FastAPI(

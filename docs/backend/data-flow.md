@@ -14,7 +14,8 @@ sequenceDiagram
     Client->>Router: POST /images/upload
     Router->>Settings: get_image_storage_dir()
     Router->>Disk: write {image_id}.{ext}
-    Router-->>Client: ImageUploadResponse
+    Router->>Settings: register_uid + touch_session
+    Router-->>Client: ImageUploadResponse (includes last_changed)
 ```
 
 ## Segment Flow
@@ -70,8 +71,25 @@ sequenceDiagram
     Router->>Disk: write {uid}_{object_id}_cutout.png
     Router->>Disk: write {uid}_{object_id}_meta.json + object_index.json
     Router->>Cache: delete_candidate(selected mask_id only)
+    Router->>Settings: touch_session(uid)
     Router->>Router: drop lease, release canvas writer
     Router-->>Client: InpaintMaskResponse (object_id, object_uuid)
+```
+
+## Session sync check
+
+Clients that cache session state locally can poll `POST /images/{uid}/sync-check` with their last known `client_last_changed` timestamp. The server compares it against `session_timestamps.json` and returns `needs_refresh=true` when the client should re-fetch objects, background, names, 3D status, or novel-view artifacts.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Router as "api/routes.py"
+    participant Settings as "settings.py"
+
+    Client->>Router: POST /images/{uid}/sync-check {client_last_changed}
+    Router->>Settings: evaluate_session_sync(uid, client_last_changed)
+    Settings-->>Router: server_last_changed, needs_refresh
+    Router-->>Client: SessionSyncCheckResponse
 ```
 
 ## Rescale-by-Depth Flow

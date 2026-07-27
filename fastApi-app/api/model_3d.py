@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from core.inference_pool.client import get_inference_client
 from core.object_storage import object_glb_path, resolve_object_cutout_path, resolve_object_glb_path
-from settings import get_3d_storage_dir, get_image_storage_dir
+from settings import get_3d_storage_dir, get_image_storage_dir, touch_session
 
 router = APIRouter(prefix="/3d", tags=["3d"])
 logger = logging.getLogger(__name__)
@@ -94,6 +94,7 @@ def generate_test_3d(request: Test3DRequest) -> Response:
     glb_dir.mkdir(parents=True, exist_ok=True)
     glb_path = object_glb_path(glb_dir, request.uid, request.object_id)
     glb_path.write_bytes(glb_bytes)
+    touch_session(request.uid)
     logger.info(
         "test-3d complete: uid=%s object_id=%d glb_bytes=%d saved=%s",
         request.uid,

@@ -6,7 +6,9 @@ This module centralizes configuration such as the image storage directory so tha
 both the API layer and core logic can share the same behavior.
 """
 
+import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -58,6 +60,11 @@ def get_sessions_file() -> Path:
 def get_names_file() -> Path:
     """Return path to tmp/names.json, a uid->name mapping sibling of sessions.json."""
     return get_image_storage_dir().parent / "names.json"
+
+
+def get_session_timestamps_file() -> Path:
+    """Return path to tmp/session_timestamps.json, sibling of sessions.json."""
+    return get_image_storage_dir().parent / "session_timestamps.json"
 
 
 def load_names() -> dict[str, str]:
@@ -135,9 +142,81 @@ def remove_session_name(uid: str) -> None:
     names_file.write_text(json.dumps(names, indent=2), encoding="utf-8")
 
 
+def _load_session_timestamps() -> dict[str, str]:
+    """Load uid->last_changed ISO timestamps from session_timestamps.json."""
+    timestamps_file = get_session_timestamps_file()
+    if not timestamps_file.exists():
+        return {}
+    try:
+        data = json.loads(timestamps_file.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return {str(k): str(v) for k, v in data.items()}
+        return {}
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
+
+def _save_session_timestamps(timestamps: dict[str, str]) -> None:
+    """Persist the uid->last_changed mapping to session_timestamps.json."""
+    timestamps_file = get_session_timestamps_file()
+    timestamps_file.parent.mkdir(parents=True, exist_ok=True)
+    timestamps_file.write_text(json.dumps(timestamps, indent=2), encoding="utf-8")
+
+
+def touch_session(uid: str) -> str:
+    """Record a fresh last-changed timestamp for one session and return it."""
+    timestamps = _load_session_timestamps()
+    now = datetime.now(UTC).isoformat()
+    timestamps[uid] = now
+    _save_session_timestamps(timestamps)
+    return now
+
+
+def get_session_last_changed(uid: str) -> str | None:
+    """Return the persisted last-changed timestamp for a session, if any."""
+    return _load_session_timestamps().get(uid)
+
+
+def clear_session_last_changed(uid: str) -> None:
+    """Remove one session's last-changed entry. No-op when absent."""
+    timestamps = _load_session_timestamps()
+    if timestamps.pop(uid, None) is None:
+        return
+    _save_session_timestamps(timestamps)
+
+
+def is_session_registered(uid: str) -> bool:
+    """Return whether ``uid`` appears in sessions.json."""
+    sessions_file = get_sessions_file()
+    if not sessions_file.exists():
+        return False
+    try:
+        uids: list[str] = json.loads(sessions_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError):
+        return False
+    return uid in uids
+
+
+class SessionNotFoundError(LookupError):
+    """Raised when a sync-check targets a uid absent from sessions.json."""
+
+
+def evaluate_session_sync(uid: str, client_last_changed: str | None) -> tuple[str, bool]:
+    """Compare client and server session timestamps.
+
+    Returns:
+        Tuple of ``(server_last_changed, needs_refresh)``. ``server_last_changed``
+        is an empty string when the session exists but has no recorded timestamp.
+    """
+    if not is_session_registered(uid):
+        raise SessionNotFoundError(uid)
+    server_last_changed = get_session_last_changed(uid) or ""
+    needs_refresh = client_last_changed != server_last_changed
+    return server_last_changed, needs_refresh
+
+
 def register_uid(uid: str) -> None:
     """Append uid to sessions.json, creating the file if absent."""
-    import json
 
     sessions_file = get_sessions_file()
     sessions_file.parent.mkdir(parents=True, exist_ok=True)

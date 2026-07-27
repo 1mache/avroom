@@ -19,6 +19,43 @@ class SessionInfo(BaseModel):
         str | None,
         Field(default=None, description="Human-readable label set by the user, or None if unnamed."),
     ]
+    last_changed: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="ISO-8601 UTC timestamp of the last client-visible session mutation, if any.",
+        ),
+    ]
+
+
+class SessionSyncCheckRequest(BaseModel):
+    """Request payload for checking whether a client session snapshot is still current."""
+
+    client_last_changed: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="ISO-8601 UTC timestamp the client believes is current; null when unknown.",
+        ),
+    ]
+
+
+class SessionSyncCheckResponse(BaseModel):
+    """Result of comparing a client session timestamp against server truth."""
+
+    last_changed: Annotated[
+        str,
+        Field(
+            description=(
+                "Server-side last-changed ISO-8601 UTC timestamp. Empty string when "
+                "the session exists but has not been touched since this feature was added."
+            ),
+        ),
+    ]
+    needs_refresh: Annotated[
+        bool,
+        Field(description="True when the client must re-poll session data from the server."),
+    ]
 
 
 class SetNameRequest(BaseModel):
@@ -67,6 +104,10 @@ class ImageUploadResponse(BaseModel):
             default=None,
             description="Absolute or relative filesystem path where the image is stored (for debugging).",
         ),
+    ]
+    last_changed: Annotated[
+        str,
+        Field(description="ISO-8601 UTC timestamp recorded when this session was created."),
     ]
 
 

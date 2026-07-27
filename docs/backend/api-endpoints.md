@@ -10,6 +10,7 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `POST` | `/images/inpaint` | `InpaintMaskRequest` | `InpaintMaskResponse` |
 | `POST` | `/images/click` | `ClickRequest` | `ClickResultResponse` legacy one-step flow |
 | `POST` | `/images/{uid}/name` | `SetNameRequest` | `SessionInfo` |
+| `POST` | `/images/{uid}/sync-check` | `SessionSyncCheckRequest` | `SessionSyncCheckResponse` |
 | `DELETE` | `/images/{uid}` | path `uid` | 204 No Content |
 | `GET` | `/images/{uid}/cache` | path `uid` | `UidCacheStatusResponse` |
 | `GET` | `/images/{uid}/objects` | path `uid` | `ObjectListResponse` |
@@ -62,7 +63,8 @@ Behavior:
 11. Write cutout to `{uid}_{object_id}_cutout.png` (numbered — not overwritten by later inpaints).
 12. Delete **only** the selected candidate (`delete_candidate`, not all masks).
 13. Drop lease and release canvas writer.
-14. Return `InpaintMaskResponse` with `object_id`, `object_uuid`, plus background/cutout base64.
+14. Bump session `last_changed` via `touch_session`.
+15. Return `InpaintMaskResponse` with `object_id`, `object_uuid`, plus background/cutout base64.
 
 If `mask_id` is unknown or candidate cache is gone, endpoint returns `404`. Overlap or canvas-busy conflicts return `409`. See [concurrency.md](concurrency.md).
 
@@ -80,7 +82,7 @@ Returns `404` when the UUID is absent from `object_index.json`.
 
 ## `PATCH /images/objects/{object_uuid}`
 
-Updates the optional human-readable name on one object. Body: `SetObjectNameRequest` (`name` string or `null` to clear). Returns updated `ObjectMetadataResponse`.
+Updates the optional human-readable name on one object. Body: `SetObjectNameRequest` (`name` string or `null` to clear). Returns updated `ObjectMetadataResponse`. Bumps the parent session's `last_changed` timestamp.
 
 ## `POST /images/objects/{object_uuid}/rescale-by-depth`
 
@@ -96,6 +98,7 @@ Behavior:
 6. Overwrite `{uid}_{object_id}_cutout.png` with the rescaled PNG.
 7. Update metadata `average_depth` to `target_depth` so repeated rescales do not compound.
 8. Return `RescaleByDepthResponse` with pre-update `source_average_depth`, `target_depth`, `scale_factor`, and base64 cutout.
+9. Bump the parent session's `last_changed` timestamp.
 
 Returns `404` when object or cutout is missing; `400` when depth values are invalid or the cutout has no visible alpha.
 
@@ -104,7 +107,7 @@ Not wired in the React frontend today.
 ## `DELETE /images/{uid}`
 
 Deletes a session and all its associated files from disk:
-- Removes `uid` from `sessions.json` and `names.json`.
+- Removes `uid` from `sessions.json`, `names.json`, and `session_timestamps.json`.
 - Removes the original upload (`{uid}.*`), final background, all numbered cutouts (`{uid}_{oid}_cutout.png`), all numbered GLBs (`{uid}_{oid}.glb`), candidate masks, depth cache files (`{uid}_depth_*.npy`), object metadata JSON (`{uid}_{oid}_meta.json`), UUID index entries, and the click-debug overlay.
 - Legacy `{uid}_cutout.png` and `{uid}.glb` are also removed for pre-numbering sessions.
 - Missing files are silently ignored.
@@ -123,13 +126,45 @@ Behavior:
 
 1. Call `set_session_name(uid, name)` in `settings.py`.
 2. If `name` already belongs to a different uid, raise `409 Conflict` with error text.
-3. On success, write `{uid: name}` entry to `tmp/names.json` and return `SessionInfo`.
+3. On success, write `{uid: name}` entry to `tmp/names.json`, bump `last_changed`, and return `SessionInfo`.
 
 Names are unique across all sessions. Renaming a uid to its current name is a no-op (allowed).
 
+## `POST /images/{uid}/sync-check`
+
+Compares a client-held session timestamp against server truth so the frontend can detect stale local state.
+
+Body: `SessionSyncCheckRequest` with `client_last_changed` (ISO-8601 UTC string the client believes is current, or `null` when unknown).
+
+Behavior:
+
+1. Return **404** when `uid` is absent from `sessions.json`.
+2. Read server truth from `session_timestamps.json` via `get_session_last_changed`. Legacy sessions with no recorded timestamp use an empty string.
+3. Set `needs_refresh = (client_last_changed != server_last_changed)`.
+4. Always return the current server `last_changed` so the client can correct its local copy.
+
+Returns `SessionSyncCheckResponse` with `last_changed` and `needs_refresh`.
+
+## Session dirty timestamps
+
+Client-visible durable mutations bump `last_changed` through `touch_session` in [`settings.py`](../../fastApi-app/settings.py):
+
+| Endpoint | Module |
+|---|---|
+| `POST /images/upload` | `api/routes.py` |
+| `POST /images/click` | `api/routes.py` |
+| `POST /images/inpaint` | `api/routes.py` |
+| `POST /images/{uid}/name` | `api/routes.py` |
+| `PATCH /images/objects/{object_uuid}` | `api/routes.py` |
+| `POST /images/objects/{object_uuid}/rescale-by-depth` | `api/routes.py` |
+| `POST /3d/test-3d` | `api/model_3d.py` |
+| `POST /images/novel-view` | `api/novel_view.py` |
+
+These do **not** bump session dirty state: `POST /images/segment` candidate caches, depth `.npy` cache writes, in-memory region leases.
+
 ## `GET /images/sessions`
 
-Returns all registered UIDs enriched with human-readable names from `names.json`. Uids without a saved name have `name: null`.
+Returns all registered UIDs enriched with human-readable names from `names.json` and each session's `last_changed` timestamp when recorded. Uids without a saved name have `name: null`.
 
 ## `GET /images/{uid}/cache`
 

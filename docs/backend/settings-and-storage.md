@@ -88,7 +88,35 @@ The file is a JSON object mapping uid strings to human-readable names:
 
 `load_names()` ([`settings.py`](../../fastApi-app/settings.py) lines 62–79) reads this file and returns a `dict[str, str]`. Returns `{}` if file absent or malformed — callers never need to handle a missing-file case.
 
-`set_session_name(uid, name)` ([`settings.py`](../../fastApi-app/settings.py) lines 82–101) writes a new entry. Raises `ValueError` if `name` is already assigned to a *different* uid (uniqueness enforced here, not at the HTTP layer). Called by `POST /images/{uid}/name`.
+`set_session_name(uid, name)` ([`settings.py`](../../fastApi-app/settings.py) lines 90–109) writes a new entry. Raises `ValueError` if `name` is already assigned to a *different* uid (uniqueness enforced here, not at the HTTP layer). Called by `POST /images/{uid}/name`.
+
+## Session timestamps file
+
+`get_session_timestamps_file()` returns:
+
+```
+<image_storage_dir>/../session_timestamps.json   →   fastApi-app/tmp/session_timestamps.json
+```
+
+The file is a JSON object mapping uid strings to ISO-8601 UTC timestamps:
+
+```json
+{
+  "f5e0edc4-fe7a-48bf-bd76-d706d32b61c1": "2026-07-27T01:44:12.345678+00:00"
+}
+```
+
+Key helpers in [`settings.py`](../../fastApi-app/settings.py):
+
+| Helper | Role |
+|---|---|
+| `touch_session(uid)` | Set a fresh `last_changed` timestamp and persist it |
+| `get_session_last_changed(uid)` | Read one session's timestamp, or `None` |
+| `clear_session_last_changed(uid)` | Remove one uid entry (called on session delete) |
+| `evaluate_session_sync(uid, client_last_changed)` | Compare client vs server timestamps; raises `SessionNotFoundError` when uid is unknown |
+| `is_session_registered(uid)` | Return whether uid appears in `sessions.json` |
+
+`touch_session` is called after client-visible durable writes (upload, inpaint, legacy click, rename, object rename, rescale, 3D GLB write, novel-view PNG write). Segment candidate caches and depth `.npy` cache writes do not bump the timestamp.
 
 ## 3D model storage
 
@@ -100,6 +128,7 @@ The file is a JSON object mapping uid strings to human-readable names:
 fastApi-app/tmp/
 ├── sessions.json                    - array of all registered UIDs
 ├── names.json                       - uid → human-readable name map
+├── session_timestamps.json          - uid → last_changed ISO timestamp map
 ├── object_index.json                - object UUID → {session_id, object_id}
 ├── images/
 │   ├── {image_id}.{ext}             - one per upload (jpg/png/...)

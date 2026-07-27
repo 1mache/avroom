@@ -10,12 +10,26 @@ All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.
 |---|---|---|
 | `uid` | `str` | Session UUID. |
 | `name` | `str \| null` | Human-readable label, or `null` if unnamed. |
+| `last_changed` | `str \| null` | ISO-8601 UTC timestamp of the last client-visible session mutation, or `null` when absent. |
 
 `SetNameRequest` is the body of `POST /images/{uid}/name`.
 
 | Field | Type | Description |
 |---|---|---|
 | `name` | `str` | Desired label (min length 1). |
+
+`SessionSyncCheckRequest` is the body of `POST /images/{uid}/sync-check`.
+
+| Field | Type | Description |
+|---|---|---|
+| `client_last_changed` | `str \| null` | ISO-8601 UTC timestamp the client believes is current; `null` when unknown. |
+
+`SessionSyncCheckResponse` is returned by `POST /images/{uid}/sync-check`.
+
+| Field | Type | Description |
+|---|---|---|
+| `last_changed` | `str` | Server-side last-changed timestamp. Empty string when the session exists but has no recorded timestamp yet. |
+| `needs_refresh` | `bool` | `true` when the client must re-poll session data from the server. |
 
 ## Upload
 
@@ -26,6 +40,7 @@ All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.
 | `image_id` | `str` | Server UUID used by later requests. |
 | `original_filename` | `str \| null` | Filename sent by client. |
 | `stored_path` | `str \| null` | Debug filesystem path. |
+| `last_changed` | `str` | ISO-8601 UTC timestamp recorded when the session was created. |
 
 ## Segmentation
 

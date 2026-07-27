@@ -54,9 +54,10 @@ HTTP endpoints (MVP):
 
 | Endpoint | Request | Response |
 |---|---|---|
-| `POST /images/upload` | `multipart/form-data` with `file` | `ImageUploadResponse` (`image_id`, `original_filename`, `stored_path`) |
+| `POST /images/upload` | `multipart/form-data` with `file` | `ImageUploadResponse` (`image_id`, `original_filename`, `stored_path`, `last_changed`) |
 | `POST /images/segment` | `SegmentRequest` (`image_id`, `x`, `y`, optional `options`) | `SegmentResponse` (`masks[]` with `mask_id`, `cutout_b64`, `cutout_bounds`) |
 | `POST /images/inpaint` | `InpaintMaskRequest` (`image_id`, `mask_id`) | `InpaintMaskResponse` (`background_b64`, `cutout_b64`, `format`, `object_id`) |
+| `POST /images/{uid}/sync-check` | `SessionSyncCheckRequest` (`client_last_changed`) | `SessionSyncCheckResponse` (`last_changed`, `needs_refresh`) |
 | `GET /images/{uid}/objects` | path `uid` | `ObjectListResponse` (`uid`, `objects[]`) |
 | `POST /images/click` | `ClickRequest` | Legacy `ClickResultResponse` |
 | `POST /3d/test-3d` | `{"uid": "...", "object_id": 0}` | raw GLB bytes (`model/gltf-binary`) |

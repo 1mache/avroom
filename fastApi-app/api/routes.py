@@ -52,6 +52,8 @@ from schemas.image import (
     SegmentRequest,
     SegmentResponse,
     SessionInfo,
+    SessionSyncCheckRequest,
+    SessionSyncCheckResponse,
     SetNameRequest,
     SetObjectNameRequest,
     RescaleByDepthRequest,
@@ -69,14 +71,19 @@ from core.object_storage import (
 )
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from settings import (
+    clear_session_last_changed,
     deregister_uid,
     get_3d_storage_dir,
     get_image_storage_dir,
+    get_session_last_changed,
     get_sessions_file,
+    evaluate_session_sync,
     load_names,
     register_uid,
     remove_session_name,
+    SessionNotFoundError,
     set_session_name,
+    touch_session,
 )
 
 router = APIRouter(prefix="/images", tags=["images"])
@@ -96,7 +103,10 @@ async def get_sessions() -> list[SessionInfo]:
             uids = []
 
     names = load_names()
-    result = [SessionInfo(uid=u, name=names.get(u)) for u in uids]
+    result = [
+        SessionInfo(uid=u, name=names.get(u), last_changed=get_session_last_changed(u))
+        for u in uids
+    ]
     logger.info("Sessions list returned: count=%d", len(result))
     return result
 
@@ -145,11 +155,13 @@ async def upload_image(
     )
 
     register_uid(image_id)
+    last_changed = touch_session(image_id)
 
     return ImageUploadResponse(
         image_id=image_id,
         original_filename=original_filename,
         stored_path=str(image_path),
+        last_changed=last_changed,
     )
 
 
@@ -194,6 +206,7 @@ def handle_click(request: ClickRequest) -> ClickResultResponse:
     background_image_path.write_bytes(background_bytes)
     cutout_image_path = storage_dir / f"{request.image_id}_cutout.png"
     cutout_image_path.write_bytes(cutout_bytes)
+    touch_session(request.image_id)
 
     background_b64 = base64.b64encode(background_bytes).decode("ascii")
     cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")
@@ -341,6 +354,7 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
 
         # Selected candidate is promoted; remove only that mask's temp files.
         delete_candidate(storage_dir, request.image_id, request.mask_id)
+        touch_session(request.image_id)
     finally:
         if lease is not None:
             drop_lease(request.image_id, lease)
@@ -388,6 +402,7 @@ async def delete_session(uid: str) -> Response:
     try:
         deregister_uid(uid)
         remove_session_name(uid)
+        clear_session_last_changed(uid)
 
         for path in storage_dir.glob(f"{uid}.*"):
             path.unlink(missing_ok=True)
@@ -455,8 +470,37 @@ async def set_name(uid: str, request: SetNameRequest) -> SessionInfo:
         logger.error("Name conflict: uid=%s name=%r reason=%s", uid, request.name, exc)
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    last_changed = touch_session(uid)
     logger.info("Name set: uid=%s name=%r", uid, request.name)
-    return SessionInfo(uid=uid, name=request.name)
+    return SessionInfo(uid=uid, name=request.name, last_changed=last_changed)
+
+
+@router.post("/{uid}/sync-check", response_model=SessionSyncCheckResponse)
+async def sync_check_session(uid: str, request: SessionSyncCheckRequest) -> SessionSyncCheckResponse:
+    """Compare a client-held session timestamp against server truth."""
+    logger.info(
+        "Session sync-check requested: uid=%s client_last_changed=%r",
+        uid,
+        request.client_last_changed,
+    )
+    try:
+        server_last_changed, needs_refresh = evaluate_session_sync(
+            uid,
+            request.client_last_changed,
+        )
+    except SessionNotFoundError:
+        logger.warning("Session sync-check failed — unknown uid: %s", uid)
+        raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'") from None
+    logger.info(
+        "Session sync-check complete: uid=%s needs_refresh=%s last_changed=%r",
+        uid,
+        needs_refresh,
+        server_last_changed,
+    )
+    return SessionSyncCheckResponse(
+        last_changed=server_last_changed,
+        needs_refresh=needs_refresh,
+    )
 
 
 def _metadata_to_response(
@@ -512,6 +556,7 @@ async def rename_object(object_uuid: str, request: SetObjectNameRequest) -> Obje
     except FileNotFoundError as exc:
         logger.warning("Object rename failed — not found: uuid=%s", object_uuid)
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    touch_session(metadata.session_id)
     response = _metadata_to_response(metadata, storage_dir, get_3d_storage_dir())
     logger.info("Object renamed: uuid=%s name=%r", object_uuid, request.name)
     return response
@@ -544,6 +589,7 @@ def rescale_object_by_depth(
         logger.error("Rescale by depth failed — invalid input: uuid=%s reason=%s", object_uuid, exc)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    touch_session(result.session_id)
     cutout_bounds = extract_cutout_bounds_from_png_bytes(result.cutout_bytes)
     logger.info(
         "Rescale by depth complete: uuid=%s scale_factor=%.4f target_depth=%.2f",

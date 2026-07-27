@@ -3,7 +3,9 @@ from __future__ import annotations
 """Filesystem cache helpers for temporary segmentation candidates."""
 
 import logging
+import re
 from pathlib import Path
+from typing import AbstractSet
 
 import numpy as np
 
@@ -75,18 +77,68 @@ def load_cutout_bytes(base_dir: Path, image_id: str, mask_id: str) -> bytes:
     return path.read_bytes()
 
 
-def delete_candidates(base_dir: Path, image_id: str) -> None:
-    """Delete all temporary candidate files for one image id.
+_REFINED_MASK_PATTERN = re.compile(r"^.+_mask_(?P<mask_id>.+)_refined\.npy$")
+_CUTOUT_MASK_PATTERN = re.compile(r"^.+_mask_(?P<mask_id>.+)_cutout\.png$")
+
+
+def _mask_id_from_candidate_path(path: Path, pattern: re.Pattern[str]) -> str | None:
+    """Extract the public mask id embedded in one candidate filename."""
+
+    match = pattern.match(path.name)
+    if match is None:
+        return None
+    return match.group("mask_id")
+
+
+def delete_candidate(base_dir: Path, image_id: str, mask_id: str) -> None:
+    """Delete one temporary candidate pair for the given mask id."""
+
+    refined = refined_mask_path(base_dir, image_id, mask_id)
+    cutout = cutout_path(base_dir, image_id, mask_id)
+    removed = 0
+    if refined.exists():
+        refined.unlink(missing_ok=True)
+        removed += 1
+    if cutout.exists():
+        cutout.unlink(missing_ok=True)
+        removed += 1
+    logger.debug(
+        "Deleted mask candidate: image_id=%s mask_id=%s removed=%d",
+        image_id,
+        mask_id,
+        removed,
+    )
+
+
+def delete_candidates(
+    base_dir: Path,
+    image_id: str,
+    exclude_mask_ids: AbstractSet[str] | None = None,
+) -> None:
+    """Delete temporary candidate files for one image id.
 
     Only files with the candidate naming pattern are removed, so final
     background/cutout outputs and original uploads are left untouched.
+    Pinned mask ids are skipped so in-flight inpaints keep their files.
     """
 
+    excluded = exclude_mask_ids or set()
     removed = 0
     for path in base_dir.glob(f"{image_id}_mask_*_refined.npy"):
+        mask_id = _mask_id_from_candidate_path(path, _REFINED_MASK_PATTERN)
+        if mask_id is not None and mask_id in excluded:
+            continue
         path.unlink(missing_ok=True)
         removed += 1
     for path in base_dir.glob(f"{image_id}_mask_*_cutout.png"):
+        mask_id = _mask_id_from_candidate_path(path, _CUTOUT_MASK_PATTERN)
+        if mask_id is not None and mask_id in excluded:
+            continue
         path.unlink(missing_ok=True)
         removed += 1
-    logger.debug("Deleted mask candidates: image_id=%s removed=%d", image_id, removed)
+    logger.debug(
+        "Deleted mask candidates: image_id=%s removed=%d excluded=%s",
+        image_id,
+        removed,
+        sorted(excluded),
+    )

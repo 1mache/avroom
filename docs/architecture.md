@@ -77,6 +77,7 @@ The backend ↔ pipeline contract is now split:
 
 - The frontend builds to static assets via `vite build`; in dev, `npm run dev` (port 5173) talks to a local FastAPI (port 8000 by default).
 - The FastAPI service runs as a normal ASGI app (`main:app` per [`fastApi-app/pyproject.toml`](../fastApi-app/pyproject.toml)). It needs CUDA + torch + the SAM checkpoint to actually run inference, otherwise the pipeline import will succeed but the call will fail at SAM/SD load time.
+- GPU work runs **inline** by default (`INFERENCE_WORKERS=0`) or in an optional **worker pool** (`INFERENCE_WORKERS=N`). Same-session canvas writer and region leases always live in the API process — see [backend/concurrency.md](backend/concurrency.md).
 - The AI pipeline writes debug PNGs to `TestModules/outputs/` during every call (see [ai-pipeline/core/README.md](ai-pipeline/core/README.md)).
 
 ## Where to read next

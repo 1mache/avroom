@@ -30,6 +30,7 @@ def _execute_impl(job: JobRequest) -> JobResult:
             x=job.x,
             y=job.y,
             options=options,
+            exclude_mask_ids=frozenset(job.exclude_mask_ids or ()),
         )
         return JobResult(job_id=job.job_id, ok=True, candidates=candidates)
 

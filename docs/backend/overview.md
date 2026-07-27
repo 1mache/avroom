@@ -75,6 +75,7 @@ Things to notice:
 | Routes | [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py) | `/images/upload`, `/images/segment`, `/images/inpaint`, and legacy `/images/click`. |
 | Routes (3D) | [`fastApi-app/api/model_3d.py`](../../fastApi-app/api/model_3d.py) | `POST /3d/test-3d`, `GET /3d/{uid}/{object_id}`, `GET /3d/{uid}` (legacy). |
 | Core | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | Bridges HTTP requests to `ObjectSegmentor`, `BackgroundInpainter`, and legacy `ObjectRemover`. |
+| Inference pool | [`fastApi-app/core/inference_pool/`](../../fastApi-app/core/inference_pool/) | Optional worker subprocess pool + session runtime (canvas writer, region leases). See [concurrency.md](concurrency.md). |
 | Object storage | [`fastApi-app/core/object_storage.py`](../../fastApi-app/core/object_storage.py) | All `{uid}_{object_id}_…` path helpers (`object_cutout_path`, `list_object_ids`, `next_object_id`, etc.). |
 | Schemas | [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.py) | Pydantic models. |
 
@@ -107,6 +108,9 @@ pip install -e ./TestModules
 
 - No authentication / sessions / users.
 - No image cleanup — uploads accumulate in `fastApi-app/tmp/images/` (and `point/` for debug overlays).
-- No background workers; processing is synchronous within the request.
-- No streaming; `/images/segment` and `/images/inpaint` return full JSON payloads after each synchronous model phase.
+- No streaming; `/images/segment` and `/images/inpaint` return full JSON payloads after each model phase completes.
 - No options pass-through to the new split pipeline yet; `options` is parsed but reserved.
+
+## Concurrency
+
+GPU work runs either **inline** (`INFERENCE_WORKERS=0`, default) or in an optional **worker pool** (`INFERENCE_WORKERS=N`). Same-session segment/inpaint coordination (canvas writer, region leases, candidate pinning) always lives in the API process — see [concurrency.md](concurrency.md).

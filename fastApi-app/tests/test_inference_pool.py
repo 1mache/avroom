@@ -34,9 +34,11 @@ def test_job_request_pickle_round_trip() -> None:
         image_id="session-1",
         x=10,
         y=20,
+        exclude_mask_ids=("pinned",),
     )
     restored = pickle.loads(pickle.dumps(job))
     assert restored == job
+    assert restored.exclude_mask_ids == ("pinned",)
 
 
 def test_job_result_pickle_round_trip() -> None:
@@ -130,6 +132,7 @@ def test_novel_view_execute_uses_dispatch_level_lock_inline() -> None:
 
 
 def test_session_lock_serializes_same_session() -> None:
+    """Canvas writer acquired via session_lock must serialize same-session work."""
     active = 0
     max_active = 0
     guard = threading.Lock()

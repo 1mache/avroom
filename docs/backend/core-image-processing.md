@@ -19,7 +19,7 @@
 | `load_canvas_bytes` | `(image_id, base_dir) -> bytes` | `segment_candidates_on_image`, `inpaint_selected_mask_on_image` |
 | `segment_at_click` | `(image_bytes, x, y, options=None) -> (bg_bytes, cutout_bytes, "png")` | `process_click_on_image` |
 | `process_click_on_image` | `(image_id, base_dir, x, y, options=None) -> (bg_bytes, cutout_bytes, "png")` | `api/routes.handle_click` (legacy) |
-| `segment_candidates_on_image` | `(image_id, base_dir, x, y, options=None) -> list[(mask_id, cutout_bytes)]` | `api/routes.segment_image` |
+| `segment_candidates_on_image` | `(image_id, base_dir, x, y, options=None, exclude_mask_ids=None) -> list[(mask_id, cutout_bytes)]` | `api/routes.segment_image` via inference client |
 | `inpaint_selected_mask_on_image` | `(image_id, mask_id, base_dir) -> (bg_bytes, cutout_bytes, "png")` | `api/routes.inpaint_mask` |
 | `build_object_metadata_for_inpaint` | `(image_id, mask_id, object_id, base_dir) -> ObjectMetadata` | `api/routes.inpaint_mask` |
 | `rescale_cutout_by_depth` | `(base_dir, object_uuid, x, y) -> RescaleByDepthResult` | `api/routes.rescale_object_by_depth` |
@@ -138,6 +138,15 @@ Segmentation, inpaint metadata, and rescale-by-depth all call [`get_or_compute_d
     write_path.write_bytes(cutout_bytes)
     set_object_average_depth(base_dir, object_uuid, target_depth)
 ```
+
+## Concurrency (route-level, not in this module)
+
+Same-session segment/inpaint coordination is enforced in [`api/routes.py`](../../fastApi-app/api/routes.py) via [`core/inference_pool/session_runtime.py`](../../fastApi-app/core/inference_pool/session_runtime.py):
+
+- Inpaint: admit lease → acquire canvas writer → `run_inpaint` → commit → `delete_candidate` → release.
+- Segment: click vs leases → `run_segment(exclude_mask_ids=pinned)`.
+
+`segment_candidates_on_image` accepts `exclude_mask_ids` so segment wipes and new mask ids skip pinned in-flight masks. See [concurrency.md](concurrency.md).
 
 ## Notes / quirks worth knowing
 

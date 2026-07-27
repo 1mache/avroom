@@ -29,13 +29,14 @@ sequenceDiagram
     participant AI as "ObjectSegmentor"
 
     Client->>Router: POST /images/segment {image_id,x,y}
-    Router->>Core: segment_candidates_on_image(...)
+    Router->>Router: assert_segment_click_allowed (409 if click in lease)
+    Router->>Core: segment_candidates_on_image(..., exclude_mask_ids=pinned)
     Core->>Core: load_canvas_bytes + validate natural click
     Core->>Depth: get_or_compute_depth(canvas)
-    Core->>Cache: delete stale candidates
+    Core->>Cache: delete stale candidates (skip pinned mask ids)
     Core->>AI: get_mask_for_object_at_position(..., depth_map)
     AI-->>Core: (refined_mask, cutout_bgra)[]
-    Core->>Cache: save .npy masks + PNG cutouts
+    Core->>Cache: save .npy masks + PNG cutouts (skip pinned ids)
     Router-->>Client: SegmentResponse(masks[])
 ```
 
@@ -53,6 +54,8 @@ sequenceDiagram
     participant Disk as "tmp/images"
 
     Client->>Router: POST /images/inpaint {image_id,mask_id}
+    Router->>Router: try_admit_inpaint (409 on overlap, pin mask)
+    Router->>Router: acquire_canvas_writer (block; 409 on timeout)
     Router->>Core: inpaint_selected_mask_on_image(...)
     Core->>Core: load_canvas_bytes (background if exists, else original)
     Core->>Cache: load selected refined mask + cutout
@@ -66,7 +69,8 @@ sequenceDiagram
     Router->>Disk: write {uid}_background.png (new canvas)
     Router->>Disk: write {uid}_{object_id}_cutout.png
     Router->>Disk: write {uid}_{object_id}_meta.json + object_index.json
-    Router->>Cache: delete temporary candidates
+    Router->>Cache: delete_candidate(selected mask_id only)
+    Router->>Router: drop lease, release canvas writer
     Router-->>Client: InpaintMaskResponse (object_id, object_uuid)
 ```
 
@@ -95,14 +99,16 @@ sequenceDiagram
 
 ## Cache Rules
 
-- Candidate cache exists only between segmentation response and user selection.
-- New segmentation for same image deletes older candidates first.
+- Candidate cache exists only between segmentation response and user selection (or until promoted by inpaint).
+- New segmentation for same image deletes older candidates first, **except** mask ids pinned by active inpaint leases.
 - Segmentation reads from the current canvas (`{uid}_background.png` if present, original otherwise) — each new object is cut from the already-cleaned room image.
 - Successful inpaint writes the new background to `{uid}_background.png` (overwrites — becomes the canvas for the next object) and the cutout to `{uid}_{object_id}_cutout.png` (numbered — not overwritten by later inpaints).
 - Rescale-by-depth overwrites `{uid}_{object_id}_cutout.png` for the targeted object and updates its metadata `average_depth`.
-- Successful inpaint deletes every `{uid}_mask_*` temporary file.
+- Successful inpaint deletes **only** the selected `{uid}_mask_{mask_id}_*` temporary files (not all candidates).
 - Depth maps (`{uid}_depth_{hash}.npy`) persist until session delete; one file per distinct canvas content hash.
 
-## Synchronous Model
+## Concurrency model
 
-Endpoints remain synchronous. Segmentation returns only after all mask candidates are ready; inpainting returns only after selected background is generated. There is no queue, progress stream, or worker pool.
+Endpoints remain synchronous from the client's perspective: segmentation returns after all mask candidates are ready; inpainting returns after the selected background is generated and committed.
+
+GPU execution may run inline or in optional worker subprocesses (`INFERENCE_WORKERS`). Same-session coordination uses a **canvas writer** (one inpaint commit at a time) and **region leases** (overlap → 409; segment allowed on non-overlapping regions during inpaint). See [concurrency.md](concurrency.md).

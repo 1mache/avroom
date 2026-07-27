@@ -13,7 +13,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw, UnidentifiedImageError
 
 from schemas.image import ImageProcessingOptions
-from core.mask_cache import delete_candidates, load_cutout_bytes, load_refined_mask, mask_id_from_index, save_candidate
+from core.mask_cache import delete_candidates, load_cutout_bytes, load_refined_mask, save_candidate
+from core.inference_pool.session_runtime import mask_id_for_candidate_slot
 from core.object_storage import current_background_path, object_cutout_path, resolve_object_cutout_path
 from core.depth_cache import (
     compute_average_depth_over_mask,
@@ -302,6 +303,7 @@ def segment_candidates_on_image(
     x: int,
     y: int,
     options: ImageProcessingOptions | None = None,
+    exclude_mask_ids: frozenset[str] | None = None,
 ) -> list[tuple[str, bytes]]:
     """Run segmentation only and cache every candidate mask.
 
@@ -311,12 +313,13 @@ def segment_candidates_on_image(
     """
 
     del options  # TODO: parameter not used. legacy click options. remove it or use
+    pinned = exclude_mask_ids or frozenset()
     image_bytes = load_canvas_bytes(image_id=image_id, base_dir=base_dir)
     _validate_click_coordinates(image_bytes, x, y, base_dir, image_id)
 
     with inference_session():
-        # New segmentation invalidates any older unchosen candidates for this image.
-        delete_candidates(base_dir, image_id)
+        # New segmentation invalidates older unchosen candidates except pinned masks.
+        delete_candidates(base_dir, image_id, exclude_mask_ids=pinned)
 
         segmentor = _get_object_segmentor_class()()
         depth_map, _ = get_or_compute_depth(
@@ -340,7 +343,7 @@ def segment_candidates_on_image(
 
         results: list[tuple[str, bytes]] = []
         for index, (refined_mask, cutout_bgra) in enumerate(candidate_pairs):
-            mask_id = mask_id_from_index(index)
+            mask_id = mask_id_for_candidate_slot(index, pinned)
             cutout_bytes = _encode_png(cutout_bgra, f"candidate cutout {mask_id}")
             save_candidate(base_dir, image_id, mask_id, refined_mask, cutout_bytes)
             results.append((mask_id, cutout_bytes))

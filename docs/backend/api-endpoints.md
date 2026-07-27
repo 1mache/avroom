@@ -29,14 +29,17 @@ Runs segmentation only and returns every candidate mask as a visible BGRA cutout
 
 Behavior:
 
-1. Validate `image_id`, natural-image `x/y`, and stored image bytes.
-2. Load current canvas via `load_canvas_bytes` (progressive background if present).
-3. Get or compute depth map for the canvas (`get_or_compute_depth`).
-4. Delete stale temporary candidates for this `image_id`.
-5. Run `ObjectSegmentor.get_mask_for_object_at_position(...)` with depth map.
-6. Cache each `refined_mask` as `{uid}_mask_{mask_id}_refined.npy`.
-7. Cache each cutout preview as `{uid}_mask_{mask_id}_cutout.png`.
-8. Return candidate ids plus base64 cutout previews and `cutout_bounds`.
+1. Reject with **409 Conflict** if click `(x, y)` falls inside an active inpaint region lease.
+2. Validate `image_id`, natural-image `x/y`, and stored image bytes.
+3. Load current canvas via `load_canvas_bytes` (progressive background if present).
+4. Get or compute depth map for the canvas (`get_or_compute_depth`).
+5. Delete stale temporary candidates for this `image_id`, **skipping mask ids pinned by active inpaint leases**.
+6. Run `ObjectSegmentor.get_mask_for_object_at_position(...)` with depth map.
+7. Cache each `refined_mask` as `{uid}_mask_{mask_id}_refined.npy` (mask ids skip pinned slots).
+8. Cache each cutout preview as `{uid}_mask_{mask_id}_cutout.png`.
+9. Return candidate ids plus base64 cutout previews and `cutout_bounds`.
+
+Segment may run while an inpaint is in flight on a non-overlapping region. See [concurrency.md](concurrency.md).
 
 The raw refined mask is not sent to frontend. It is model input for inpainting, while the cutout is user-facing preview.
 
@@ -46,19 +49,22 @@ Runs inpainting for the one mask selected by user.
 
 Behavior:
 
-1. Load the current canvas: `{uid}_background.png` if it exists (prior removals already applied), otherwise the original upload. This enables progressive removal — each inpaint stacks on the previous one.
-2. Load selected cached `{uid}_mask_{mask_id}_refined.npy`.
-3. Load matching cached `{uid}_mask_{mask_id}_cutout.png`.
-4. Run `BackgroundInpainter.cut_mask_from_image(...)`.
-5. Compute depth on the current canvas and derive `average_depth` over the selected mask (`build_object_metadata_for_inpaint`).
-6. Allocate the next sequential `object_id` for this session (0, 1, 2 …).
-7. Persist object metadata JSON (`{uid}_{object_id}_meta.json`) and register UUID in `object_index.json`.
-8. Write updated canvas to `{uid}_background.png` (overwrites — becomes the new starting point for the next object).
-9. Write cutout to `{uid}_{object_id}_cutout.png` (numbered — not overwritten by later inpaints).
-10. Delete all temporary candidate files for that `image_id`.
-11. Return `InpaintMaskResponse` with `object_id`, `object_uuid`, plus background/cutout base64.
+1. **Admit** inpaint: load selected mask, register region lease, pin `mask_id` on disk. Returns **409** if mask overlaps an in-flight removal.
+2. **Acquire canvas writer** for this session (blocks until free; **409** on timeout via `INFERENCE_JOB_TIMEOUT_SEC`).
+3. Load the current canvas: `{uid}_background.png` if it exists (prior removals already applied), otherwise the original upload.
+4. Load selected cached `{uid}_mask_{mask_id}_refined.npy`.
+5. Load matching cached `{uid}_mask_{mask_id}_cutout.png`.
+6. Run `BackgroundInpainter.cut_mask_from_image(...)`.
+7. Compute depth on the current canvas and derive `average_depth` over the selected mask (`build_object_metadata_for_inpaint`).
+8. Allocate the next sequential `object_id` for this session (0, 1, 2 …).
+9. Persist object metadata JSON (`{uid}_{object_id}_meta.json`) and register UUID in `object_index.json`.
+10. Write updated canvas to `{uid}_background.png` (overwrites — becomes the new starting point for the next object).
+11. Write cutout to `{uid}_{object_id}_cutout.png` (numbered — not overwritten by later inpaints).
+12. Delete **only** the selected candidate (`delete_candidate`, not all masks).
+13. Drop lease and release canvas writer.
+14. Return `InpaintMaskResponse` with `object_id`, `object_uuid`, plus background/cutout base64.
 
-If `mask_id` is unknown or candidate cache is gone, endpoint returns `404`.
+If `mask_id` is unknown or candidate cache is gone, endpoint returns `404`. Overlap or canvas-busy conflicts return `409`. See [concurrency.md](concurrency.md).
 
 ## `GET /images/{uid}/objects`
 

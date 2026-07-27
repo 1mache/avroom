@@ -35,6 +35,7 @@ class JobRequest:
     relative_elevation_deg: float | None = None
     radius: float | None = None
     options: dict[str, Any] | None = None
+    exclude_mask_ids: tuple[str, ...] | None = None
 
 
 @dataclass

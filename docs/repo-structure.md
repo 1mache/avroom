@@ -34,7 +34,16 @@ fastApi-app/
 │   ├── depth_cache.py        - session depth map cache (.npy keyed by canvas hash)
 │   ├── object_metadata.py    - per-object JSON metadata + UUID index
 │   ├── mask_cache.py         - filesystem helpers for temporary segmentation candidates
-│   └── object_storage.py     - filesystem path helpers for finalized per-object artifacts
+│   ├── object_storage.py     - filesystem path helpers for finalized per-object artifacts
+│   ├── inference_lock.py     - process-wide GPU lock (inline mode)
+│   └── inference_pool/       - optional worker pool + session runtime (canvas writer, region leases)
+│       ├── client.py         - inline vs pool dispatch
+│       ├── dispatch.py         - job → image_processing / facade calls
+│       ├── pool.py             - spawn-based worker pool
+│       ├── session_runtime.py  - per-session canvas writer + region leases
+│       ├── session_lock.py     - thin canvas-writer wrapper for tests
+│       ├── types.py            - JobKind, JobRequest, JobResult
+│       └── worker.py           - subprocess inference loop
 ├── schemas/
 │   ├── __init__.py
 │   └── image.py        - Pydantic models for requests/responses

@@ -19,8 +19,16 @@ from core.image_processing import (
     get_image_path,
 )
 from core.inference_pool.client import get_inference_client
-from core.inference_pool.session_lock import session_lock
-from core.mask_cache import delete_candidates
+from core.inference_pool.session_runtime import (
+    SessionConflictError,
+    acquire_canvas_writer,
+    assert_segment_click_allowed,
+    drop_lease,
+    pinned_mask_ids,
+    release_canvas_writer,
+    try_admit_inpaint,
+)
+from core.mask_cache import delete_candidate, delete_candidates
 from core.depth_cache import delete_session_depth_maps
 from core.object_metadata import (
     ObjectMetadata,
@@ -224,13 +232,18 @@ def segment_image(request: SegmentRequest) -> SegmentResponse:
     storage_dir: Path = get_image_storage_dir()
 
     try:
+        assert_segment_click_allowed(request.image_id, request.x, request.y)
         candidates = get_inference_client().run_segment(
             image_id=request.image_id,
             base_dir=storage_dir,
             x=request.x,
             y=request.y,
             options=request.options,
+            exclude_mask_ids=frozenset(pinned_mask_ids(request.image_id)),
         )
+    except SessionConflictError as exc:
+        logger.warning("Segmentation rejected due to session conflict: %s", exc)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         logger.exception("Segmentation failed due to invalid input")
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -273,24 +286,40 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
     )
 
     storage_dir: Path = get_image_storage_dir()
+    lease = None
 
     try:
-        background_bytes, cutout_bytes, image_format = get_inference_client().run_inpaint(
-            image_id=request.image_id,
-            mask_id=request.mask_id,
-            base_dir=storage_dir,
-        )
+        lease = try_admit_inpaint(request.image_id, request.mask_id, storage_dir)
     except FileNotFoundError as exc:
         logger.exception("Inpainting failed due to missing cached mask or image")
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        logger.exception("Inpainting failed due to invalid input")
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Inpainting failed")
-        raise HTTPException(status_code=500, detail=f"Inpainting failed: {exc}") from exc
+    except SessionConflictError as exc:
+        logger.warning("Inpainting rejected due to session conflict: %s", exc)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    with session_lock(request.image_id):
+    try:
+        try:
+            acquire_canvas_writer(request.image_id)
+        except SessionConflictError as exc:
+            logger.warning("Inpainting rejected due to canvas writer timeout: %s", exc)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        try:
+            background_bytes, cutout_bytes, image_format = get_inference_client().run_inpaint(
+                image_id=request.image_id,
+                mask_id=request.mask_id,
+                base_dir=storage_dir,
+            )
+        except FileNotFoundError as exc:
+            logger.exception("Inpainting failed due to missing cached mask or image")
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            logger.exception("Inpainting failed due to invalid input")
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.exception("Inpainting failed")
+            raise HTTPException(status_code=500, detail=f"Inpainting failed: {exc}") from exc
+
         # Allocate next sequential object id for this session.
         object_id = next_object_id(storage_dir, request.image_id)
 
@@ -310,9 +339,12 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
         cutout_image_path = object_cutout_path(storage_dir, request.image_id, object_id)
         cutout_image_path.write_bytes(cutout_bytes)
 
-        # Selected candidate is now promoted to final artifacts. Remove all
-        # temporary candidates so stale alternatives cannot be selected later.
-        delete_candidates(storage_dir, request.image_id)
+        # Selected candidate is promoted; remove only that mask's temp files.
+        delete_candidate(storage_dir, request.image_id, request.mask_id)
+    finally:
+        if lease is not None:
+            drop_lease(request.image_id, lease)
+        release_canvas_writer(request.image_id)
 
     background_b64 = base64.b64encode(background_bytes).decode("ascii")
     cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")

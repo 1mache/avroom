@@ -10,6 +10,7 @@ The FastAPI service in [`fastApi-app/`](../../fastApi-app/) is a thin HTTP shell
 - [schemas.md](schemas.md) — Pydantic models.
 - [settings-and-storage.md](settings-and-storage.md) — image storage directory resolution.
 - [data-flow.md](data-flow.md) — request lifecycle for upload + click.
+- [concurrency.md](concurrency.md) — inference pool, canvas writer, region leases, 409 conflicts.
 
 ## At a glance
 

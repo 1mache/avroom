@@ -18,6 +18,7 @@ This page is a quick index to help you find information fast. If you change code
   - Schemas: [`backend/schemas.md`](backend/schemas.md)
   - Storage + settings: [`backend/settings-and-storage.md`](backend/settings-and-storage.md)
   - Backend→pipeline bridge: [`backend/core-image-processing.md`](backend/core-image-processing.md)
+  - Concurrency (pool, canvas writer, leases): [`backend/concurrency.md`](backend/concurrency.md)
 
 - **Frontend (React)**: [`frontend/README.md`](frontend/README.md)
   - API calls + env vars: [`frontend/api-integration.md`](frontend/api-integration.md)

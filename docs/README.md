@@ -2,10 +2,11 @@
 
 Welcome to the Avroom architecture documentation. These docs describe the **current state** of the project as found in the code (not aspirational design).
 
-> Last refresh: 2026-07-23
+> Last refresh: 2026-07-27
 
 What changed in this refresh:
 
+- Backend: documented session concurrency — canvas writer, region leases, candidate pinning, optional inference worker pool — new `backend/concurrency.md`; updated `backend/overview.md`, `backend/data-flow.md`, `backend/api-endpoints.md`, `backend/core-image-processing.md`, `architecture.md`, `repo-structure.md`, `docs-map.md`.
 - Backend: documented `POST /images/objects/{object_uuid}/rescale-by-depth` (depth-proportional cutout rescale; overwrites cutout PNG and updates `average_depth`) — updated `backend/api-endpoints.md`, `backend/schemas.md`, `backend/core-image-processing.md`, `backend/settings-and-storage.md`, `backend/data-flow.md`.
 - Backend: documented object metadata endpoints (`GET`/`PATCH /images/objects/{uuid}`), depth cache (`core/depth_cache.py`), and object metadata storage (`core/object_metadata.py`, `object_index.json`) — same backend pages plus `repo-structure.md`.
 - Backend: removed stale reference to non-existent `api/objects.py` — updated `backend/README.md`.

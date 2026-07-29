@@ -41,6 +41,7 @@ Inpainting (stage 7 of `remove_object`) is intentionally omitted.
 Accepts an original BGR image and a mask (typically a `refined_mask` from `ObjectSegmentor`):
 
 4. **Inpaint** — `ImageInpaintingFacade.inpaint(original_image, mask)` fills the masked region.
+5. **Compose** — Mask-region pixels from the model output replace the corresponding pixels in `original_image`; all other pixels are preserved from the original.
 
 Returns `result_image` (BGR, same spatial size as input).
 

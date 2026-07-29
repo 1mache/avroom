@@ -43,10 +43,12 @@ class BackgroundInpainter:
     ) -> np.ndarray:
         """Inpaint the masked region and return the reconstructed background.
 
-        Delegates directly to :meth:`ImageInpaintingFacade.inpaint`. The
-        inpainting strategy (default: :class:`HybridInpaintingStrategy`) uses
-        LaMa for structural fill and optionally Stable Diffusion for texture
-        refinement, matching step 4 of :meth:`ObjectRemover.remove_object`.
+        Delegates to :meth:`ImageInpaintingFacade.inpaint`, then composes the
+        model output onto ``original_image`` so only mask-region pixels are
+        replaced. The inpainting strategy (default:
+        :class:`HybridInpaintingStrategy`) uses LaMa for structural fill and
+        optionally Stable Diffusion for texture refinement, matching step 4 of
+        :meth:`ObjectRemover.remove_object`.
 
         Args:
             original_image: BGR ``np.ndarray`` of the full scene. Must match
@@ -57,11 +59,15 @@ class BackgroundInpainter:
                 :meth:`ObjectSegmentor.get_mask_for_object_at_position`.
 
         Returns:
-            A BGR ``np.ndarray`` of the same spatial size as ``original_image``
-            with the masked region filled by the inpainting model.
+            A BGR ``np.ndarray`` of the same spatial size as ``original_image``.
+            Pixels inside ``mask`` are taken from the inpainting model output;
+            all other pixels are preserved from ``original_image``.
         """
         logger.info("Step 4: Inpainting masked region...")
+        mask_bool = mask > 127
         result_image = self.inpainting.inpaint(original_image, mask)
-        self.image_saver.save("final_removed_object", result_image)
+        composed = original_image.copy()
+        composed[mask_bool] = result_image[mask_bool]
+        self.image_saver.save("final_removed_object", composed)
         logger.info("Inpainting completed successfully")
-        return result_image
+        return composed

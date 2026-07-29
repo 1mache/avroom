@@ -5,5 +5,6 @@
 3. If SD `strength` exceeds skip threshold (~0.2), run SD inpainting at working resolution then resize back.
 4. Align outputs if shapes drift.
 5. Apply sharpening + subtle interior color blend toward boundary statistics.
+6. **Compose onto original** — `BackgroundInpainter` copies `original_image` and replaces only mask-region pixels with the model output; non-mask pixels stay unchanged.
 
 Returns single BGR frame matching input geometry.

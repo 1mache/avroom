@@ -46,4 +46,4 @@ Typically 3 pairs (SAM's three multimask candidates). Inpainting is not performe
 - **`original_image`** — BGR `np.ndarray` of the full scene.
 - **`mask`** — Binary 2-D mask (0 / 255). Typically a `refined_mask` from `ObjectSegmentor`.
 
-**Returns** `result_image` — BGR `np.ndarray`, same spatial size as `original_image`, with the masked region filled by the inpainting model.
+**Returns** `result_image` — BGR `np.ndarray`, same spatial size as `original_image`. Pixels inside `mask` are taken from the inpainting model output; all other pixels are preserved from `original_image`.

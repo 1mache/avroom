@@ -192,6 +192,23 @@ def _decode_original_bgr(image_bytes: bytes, image_id: str) -> np.ndarray:
     return decoded
 
 
+def _decode_cutout_alpha(cutout_bytes: bytes, image_id: str, mask_id: str) -> np.ndarray:
+    """Decode cached cutout PNG alpha channel as a compose mask."""
+
+    decoded = cv2.imdecode(np.frombuffer(cutout_bytes, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
+    if decoded is None or decoded.ndim < 3 or decoded.shape[2] < 4:
+        logger.error(
+            "Could not decode cutout alpha: image_id=%s mask_id=%s shape=%s",
+            image_id,
+            mask_id,
+            None if decoded is None else decoded.shape,
+        )
+        raise ValueError(
+            f"Cached cutout for image_id='{image_id}', mask_id='{mask_id}' is not a valid BGRA PNG."
+        )
+    return decoded[:, :, 3]
+
+
 def _encode_png(image: np.ndarray, label: str) -> bytes:
     """Encode OpenCV image array as PNG bytes."""
 
@@ -362,17 +379,23 @@ def inpaint_selected_mask_on_image(
     source_bgr = _decode_original_bgr(image_bytes, image_id)
     refined_mask = load_refined_mask(base_dir, image_id, mask_id)
     cutout_bytes = load_cutout_bytes(base_dir, image_id, mask_id)
+    compose_mask = _decode_cutout_alpha(cutout_bytes, image_id, mask_id)
 
     with inference_session():
         inpainter = _get_background_inpainter_class()()
         logger.info(
-            "Running BackgroundInpainter: image_id=%s mask_id=%s image_shape=%s mask_shape=%s",
+            "Running BackgroundInpainter: image_id=%s mask_id=%s image_shape=%s mask_shape=%s compose_shape=%s",
             image_id,
             mask_id,
             source_bgr.shape,
             refined_mask.shape,
+            compose_mask.shape,
         )
-        background_bgr = inpainter.cut_mask_from_image(original_image=source_bgr, mask=refined_mask)
+        background_bgr = inpainter.cut_mask_from_image(
+            original_image=source_bgr,
+            mask=refined_mask,
+            compose_mask=compose_mask,
+        )
         logger.info("BackgroundInpainter finished: image_id=%s mask_id=%s bg_shape=%s", image_id, mask_id, background_bgr.shape)
 
     background_bytes = _encode_png(background_bgr, "background")

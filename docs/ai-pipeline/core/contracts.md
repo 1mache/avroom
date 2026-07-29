@@ -41,9 +41,11 @@ Typically 3 pairs (SAM's three multimask candidates). Inpainting is not performe
 
 ## `BackgroundInpainter.cut_mask_from_image`
 
-**Signature:** `cut_mask_from_image(original_image, mask)`
+**Signature:** `cut_mask_from_image(original_image, mask, compose_mask=None)`
 
 - **`original_image`** — BGR `np.ndarray` of the full scene.
-- **`mask`** — Binary 2-D mask (0 / 255). Typically a `refined_mask` from `ObjectSegmentor`.
+- **`mask`** — Binary 2-D mask (0 / 255) passed to the inpainting model. Typically a `refined_mask` from `ObjectSegmentor`.
+- **`compose_mask`** — Optional tighter binary mask for paste-back. FastAPI passes the cached cutout PNG alpha (raw SAM mask). When omitted, `mask` is used for composition.
+- **`COMPOSE_MASK_PADDING_RADIUS`** — Class constant on `BackgroundInpainter` (default `0`). When greater than zero, the compose mask is dilated by this many pixels before paste-back.
 
-**Returns** `result_image` — BGR `np.ndarray`, same spatial size as `original_image`. Pixels inside `mask` are taken from the inpainting model output; all other pixels are preserved from `original_image`.
+**Returns** `result_image` — BGR `np.ndarray`, same spatial size as `original_image`. Pixels inside the compose mask are taken from the inpainting model output; all other pixels are preserved from `original_image`.

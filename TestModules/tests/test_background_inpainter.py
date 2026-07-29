@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+import pytest
 
 from avroom_object_removal import (
     BackgroundInpainter,
@@ -21,34 +22,73 @@ class _SolidColorInpaintStrategy(ImageInpaintingStrategy):
         return np.full_like(image, self._color)
 
 
-def test_cut_mask_from_image_preserves_pixels_outside_mask() -> None:
-    """Only mask-region pixels should come from the inpainting model output."""
+def test_cut_mask_from_image_preserves_pixels_outside_compose_mask() -> None:
+    """Only compose-mask pixels should come from the inpainting model output."""
     original = np.zeros((4, 4, 3), dtype=np.uint8)
     original[:, :] = (10, 20, 30)
 
-    mask = np.zeros((4, 4), dtype=np.uint8)
-    mask[1:3, 1:3] = 255
+    inpaint_mask = np.zeros((4, 4), dtype=np.uint8)
+    inpaint_mask[1:3, 1:3] = 255
+    compose_mask = np.zeros((4, 4), dtype=np.uint8)
+    compose_mask[2, 2] = 255
 
     model_color = (200, 100, 50)
     stub_facade = ImageInpaintingFacade(strategy=_SolidColorInpaintStrategy(model_color))
     inpainter = BackgroundInpainter(inpainting_facade=stub_facade)
 
-    result = inpainter.cut_mask_from_image(original_image=original, mask=mask)
+    result = inpainter.cut_mask_from_image(
+        original_image=original,
+        mask=inpaint_mask,
+        compose_mask=compose_mask,
+    )
 
-    mask_bool = mask > 127
-    assert np.all(result[mask_bool] == np.array(model_color, dtype=np.uint8))
-    assert np.array_equal(result[~mask_bool], original[~mask_bool])
+    compose_bool = compose_mask > 127
+    inpaint_only_bool = (inpaint_mask > 127) & (~compose_bool)
+    assert np.all(result[compose_bool] == np.array(model_color, dtype=np.uint8))
+    assert np.array_equal(result[inpaint_only_bool], original[inpaint_only_bool])
+    assert np.array_equal(result[~(inpaint_mask > 127)], original[~(inpaint_mask > 127)])
 
 
-def test_cut_mask_from_image_empty_mask_returns_original() -> None:
-    """An empty mask should leave the original image unchanged."""
+def test_cut_mask_from_image_empty_compose_mask_returns_original() -> None:
+    """An empty compose mask should leave the original image unchanged."""
     original = np.full((3, 3, 3), (5, 15, 25), dtype=np.uint8)
-    mask = np.zeros((3, 3), dtype=np.uint8)
+    inpaint_mask = np.ones((3, 3), dtype=np.uint8) * 255
+    compose_mask = np.zeros((3, 3), dtype=np.uint8)
 
     model_color = (99, 88, 77)
     stub_facade = ImageInpaintingFacade(strategy=_SolidColorInpaintStrategy(model_color))
     inpainter = BackgroundInpainter(inpainting_facade=stub_facade)
 
-    result = inpainter.cut_mask_from_image(original_image=original, mask=mask)
+    result = inpainter.cut_mask_from_image(
+        original_image=original,
+        mask=inpaint_mask,
+        compose_mask=compose_mask,
+    )
 
     assert np.array_equal(result, original)
+
+
+def test_compose_mask_padding_radius_expands_paste_region(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Padding should expand the compose region beyond the base compose mask."""
+    original = np.zeros((5, 5, 3), dtype=np.uint8)
+    original[:, :] = (10, 20, 30)
+
+    inpaint_mask = np.ones((5, 5), dtype=np.uint8) * 255
+    compose_mask = np.zeros((5, 5), dtype=np.uint8)
+    compose_mask[2, 2] = 255
+
+    model_color = (200, 100, 50)
+    stub_facade = ImageInpaintingFacade(strategy=_SolidColorInpaintStrategy(model_color))
+    inpainter = BackgroundInpainter(inpainting_facade=stub_facade)
+    monkeypatch.setattr(BackgroundInpainter, "COMPOSE_MASK_PADDING_RADIUS", 1)
+
+    result = inpainter.cut_mask_from_image(
+        original_image=original,
+        mask=inpaint_mask,
+        compose_mask=compose_mask,
+    )
+
+    center_neighbors = [(1, 2), (2, 1), (2, 3), (3, 2)]
+    for row, col in center_neighbors:
+        assert np.array_equal(result[row, col], np.array(model_color, dtype=np.uint8))
+    assert np.array_equal(result[0, 0], original[0, 0])

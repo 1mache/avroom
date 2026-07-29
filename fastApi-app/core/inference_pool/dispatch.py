@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 # Facade-only jobs do not pass through image_processing helpers that already
 # acquire inference_session(); they need the lock here in inline mode.
-_FACADE_JOB_KINDS = frozenset({JobKind.GENERATE_3D, JobKind.NOVEL_VIEW})
+_FACADE_JOB_KINDS = frozenset({JobKind.GENERATE_3D, JobKind.NOVEL_VIEW, JobKind.VALIDATE_CONTENT})
 
 
 def _execute_impl(job: JobRequest) -> JobResult:
@@ -127,6 +127,20 @@ def _execute_impl(job: JobRequest) -> JobResult:
             seed=0,
         )
         return JobResult(job_id=job.job_id, ok=True, novel_view_bgra=result_bgra)
+
+    if job.kind == JobKind.VALIDATE_CONTENT:
+        from core.content_validation import validate_upload_content
+
+        assert job.image_bytes is not None
+        outcome = validate_upload_content(job.image_bytes)
+        return JobResult(
+            job_id=job.job_id,
+            ok=True,
+            validation_ok=outcome.is_valid,
+            validation_checks=outcome.checks,
+            validation_scores=outcome.scores,
+            validation_messages=outcome.messages,
+        )
 
     raise ValueError(f"Unsupported job kind: {job.kind}")
 

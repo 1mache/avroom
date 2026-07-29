@@ -258,3 +258,84 @@ def get_inference_job_timeout_sec() -> int:
         timeout = 600
     return max(1, timeout)
 
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def get_upload_min_bytes() -> int:
+    return max(1, _env_int("UPLOAD_MIN_BYTES", 1024))
+
+
+def get_upload_max_bytes() -> int:
+    return max(get_upload_min_bytes(), _env_int("UPLOAD_MAX_BYTES", 25 * 1024 * 1024))
+
+
+def get_upload_min_width() -> int:
+    return max(1, _env_int("UPLOAD_MIN_WIDTH", 640))
+
+
+def get_upload_min_height() -> int:
+    return max(1, _env_int("UPLOAD_MIN_HEIGHT", 480))
+
+
+def get_upload_max_width() -> int:
+    return max(get_upload_min_width(), _env_int("UPLOAD_MAX_WIDTH", 8192))
+
+
+def get_upload_max_height() -> int:
+    return max(get_upload_min_height(), _env_int("UPLOAD_MAX_HEIGHT", 8192))
+
+
+def get_upload_max_megapixels() -> float:
+    return max(0.1, _env_float("UPLOAD_MAX_MEGAPIXELS", 24.0))
+
+
+def get_upload_max_aspect_ratio() -> float:
+    return max(1.0, _env_float("UPLOAD_MAX_ASPECT_RATIO", 3.5))
+
+
+def get_upload_blur_min_variance() -> float:
+    return max(0.0, _env_float("UPLOAD_BLUR_MIN_VARIANCE", 50.0))
+
+
+def get_upload_exposure_mean_min() -> float:
+    return max(0.0, _env_float("UPLOAD_EXPOSURE_MEAN_MIN", 20.0))
+
+
+def get_upload_exposure_mean_max() -> float:
+    return min(255.0, _env_float("UPLOAD_EXPOSURE_MEAN_MAX", 235.0))
+
+
+def get_upload_clip_fraction_max() -> float:
+    return min(1.0, max(0.0, _env_float("UPLOAD_CLIP_FRACTION_MAX", 0.85)))
+
+
+def get_upload_min_spatial_variance() -> float:
+    return max(0.0, _env_float("UPLOAD_MIN_SPATIAL_VARIANCE", 100.0))
+
+
+def get_upload_min_alpha_opaque_ratio() -> float:
+    return min(1.0, max(0.0, _env_float("UPLOAD_MIN_ALPHA_OPAQUE_RATIO", 0.05)))
+
+
+def get_upload_allowed_mime_types() -> frozenset[str]:
+    raw = os.environ.get(
+        "UPLOAD_ALLOWED_MIME_TYPES",
+        "image/jpeg,image/png,image/webp",
+    )
+    values = {part.strip() for part in raw.split(",") if part.strip()}
+    return frozenset(values or {"image/jpeg", "image/png", "image/webp"})
+

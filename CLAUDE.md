@@ -120,6 +120,15 @@ Use `logger = logging.getLogger(__name__)` at module level. No `print()`. Level 
 
 Uploaded images are stored in `fastApi-app/tmp/images/{uuid}.ext`. Debug overlays go to `fastApi-app/tmp/images/`.
 
+### Upload validation (two-stage gate)
+
+`POST /images/upload` validates before persisting:
+
+1. **Technical** — `fastApi-app/core/image_validation/` (`ImageValidator`): format/MIME, size, decode, resolution, blur, exposure, alpha emptiness, uniform scene. Env thresholds via `UPLOAD_*` in `settings.py`. Fail → HTTP 422, no disk write.
+2. **Content** — `ContentImageValidator` + `ContentValidationFacade` (CLIP zero-shot default) via inference pool job `VALIDATE_CONTENT`. Fail → HTTP 422, no disk write.
+
+Not wired into segment/inpaint/removal pipelines.
+
 ## Trellis 2 3D Generation
 
 `TrellisModule/` (package `avroom_trellis`) wraps Microsoft's Trellis 2 image-to-3D model **via the public Hugging Face Space** (`microsoft/TRELLIS.2`) using `gradio_client`. Local install is not supported on this machine (Linux + 24 GB VRAM only).
@@ -156,5 +165,4 @@ Per the spec, the following are planned but absent from the codebase:
 - Drag-and-drop / Smart Paste
 - Object rotation, depth adjustment
 - NLP/prompt-based generative editing
-- Image validation (blurriness, room detection)
 - Obstruction detection

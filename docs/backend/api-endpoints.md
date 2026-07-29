@@ -5,7 +5,7 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | Method | Path | Request | Response |
 |---|---|---|---|
 | `GET` | `/images/sessions` | none | `list[SessionInfo]` |
-| `POST` | `/images/upload` | multipart file | `ImageUploadResponse` |
+| `POST` | `/images/upload` | multipart file | `ImageUploadResponse` (422 on failed technical or content validation) |
 | `POST` | `/images/segment` | `SegmentRequest` | `SegmentResponse` |
 | `POST` | `/images/inpaint` | `InpaintMaskRequest` | `InpaintMaskResponse` |
 | `POST` | `/images/click` | `ClickRequest` | `ClickResultResponse` legacy one-step flow |
@@ -23,6 +23,20 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `POST` | `/3d/test-3d` | `{"uid":"...", "object_id": 0}` | GLB bytes |
 | `GET` | `/3d/{uid}/{object_id}` | path `uid`, `object_id` | GLB file |
 | `GET` | `/3d/{uid}` | path `uid` | GLB file (legacy id-0 fallback) |
+
+## `POST /images/upload`
+
+Accepts a multipart image file and persists it when validation passes.
+
+Behavior:
+
+1. Read upload bytes from the multipart field `file`.
+2. Run deterministic technical checks via `ImageValidator` ([`core/image_validation/`](../../fastApi-app/core/image_validation/)): format/MIME, size, decode, resolution, blur, exposure, alpha emptiness, uniform scene. Returns **422** on failure; nothing is written to disk.
+3. Run ML content validation via `InferenceClient.run_validate_content` → `ContentImageValidator` → `ContentValidationFacade`. Returns **422** with rejection messages on failure.
+4. Write `{image_id}.{ext}` under the configured image storage directory.
+5. Register `image_id` in `sessions.json` and bump `last_changed`.
+
+Thresholds for technical checks are env-configurable — see [`settings.py`](../../fastApi-app/settings.py) (`UPLOAD_*` helpers).
 
 ## `POST /images/segment`
 

@@ -30,6 +30,8 @@ dependencies = [
 packages = [
     "avroom_object_removal",
     "avroom_object_removal.ai_engines",
+    "avroom_object_removal.ai_engines.content_validation",
+    "avroom_object_removal.ai_engines.content_validation.strategies",
     "avroom_object_removal.ai_engines.depth",
     "avroom_object_removal.ai_engines.depth.strategies",
     "avroom_object_removal.ai_engines.inpainting",

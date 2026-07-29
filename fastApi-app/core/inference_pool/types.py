@@ -14,6 +14,7 @@ class JobKind(str, Enum):
     RESCALE_BY_DEPTH = "rescale_by_depth"
     GENERATE_3D = "generate_3d"
     NOVEL_VIEW = "novel_view"
+    VALIDATE_CONTENT = "validate_content"
     SHUTDOWN = "shutdown"
 
 
@@ -36,6 +37,7 @@ class JobRequest:
     radius: float | None = None
     options: dict[str, Any] | None = None
     exclude_mask_ids: tuple[str, ...] | None = None
+    image_bytes: bytes | None = None
 
 
 @dataclass
@@ -57,3 +59,7 @@ class JobResult:
     scale_factor: float | None = None
     glb_bytes: bytes | None = None
     novel_view_bgra: Any | None = field(default=None, repr=False)
+    validation_ok: bool | None = None
+    validation_checks: dict[str, bool] | None = None
+    validation_scores: dict[str, float] | None = None
+    validation_messages: tuple[str, ...] | None = None

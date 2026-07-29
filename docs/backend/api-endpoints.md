@@ -26,17 +26,18 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 
 ## `POST /images/upload`
 
-Accepts a multipart image file and persists it when validation passes.
+Accepts a multipart image file and persists it when validation passes (or when validation is disabled).
 
 Behavior:
 
 1. Read upload bytes from the multipart field `file`.
-2. Run deterministic technical checks via `ImageValidator` ([`core/image_validation/`](../../fastApi-app/core/image_validation/)): format/MIME, size, decode, resolution, blur, exposure, alpha emptiness, uniform scene. Returns **422** on failure; nothing is written to disk.
-3. Run ML content validation via `InferenceClient.run_validate_content` → `ContentImageValidator` → `ContentValidationFacade`. Returns **422** with rejection messages on failure.
-4. Write `{image_id}.{ext}` under the configured image storage directory.
-5. Register `image_id` in `sessions.json` and bump `last_changed`.
+2. When `VALIDATE` is enabled (default), run deterministic technical checks via `ImageValidator` ([`core/image_validation/`](../../fastApi-app/core/image_validation/)): format/MIME, size, decode, resolution, blur, exposure, alpha emptiness, uniform scene. Returns **422** on failure; nothing is written to disk.
+3. When `VALIDATE` is enabled, run ML content validation via `InferenceClient.run_validate_content` → `ContentImageValidator` → `ContentValidationFacade`. Returns **422** with rejection messages on failure.
+4. When `VALIDATE=false`, skip steps 2–3 and persist immediately.
+5. Write `{image_id}.{ext}` under the configured image storage directory.
+6. Register `image_id` in `sessions.json` and bump `last_changed`.
 
-Thresholds for technical checks are env-configurable — see [`settings.py`](../../fastApi-app/settings.py) (`UPLOAD_*` helpers).
+Thresholds for technical checks are env-configurable — see [`settings.py`](../../fastApi-app/settings.py) (`UPLOAD_*` helpers). Set `VALIDATE=false` before starting the server to disable both validation stages.
 
 ## `POST /images/segment`
 

@@ -127,6 +127,8 @@ Uploaded images are stored in `fastApi-app/tmp/images/{uuid}.ext`. Debug overlay
 1. **Technical** — `fastApi-app/core/image_validation/` (`ImageValidator`): format/MIME, size, decode, resolution, blur, exposure, alpha emptiness, uniform scene. Env thresholds via `UPLOAD_*` in `settings.py`. Fail → HTTP 422, no disk write.
 2. **Content** — `ContentImageValidator` + `ContentValidationFacade` (CLIP zero-shot default) via inference pool job `VALIDATE_CONTENT`. Fail → HTTP 422, no disk write.
 
+Set `VALIDATE=false` before starting the server to skip both stages (default: `VALIDATE=true`).
+
 Not wired into segment/inpaint/removal pipelines.
 
 ## Trellis 2 3D Generation

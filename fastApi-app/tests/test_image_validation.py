@@ -141,6 +141,30 @@ def test_image_validator_short_circuits_on_first_failure() -> None:
     __import__("importlib").util.find_spec("fastapi") is None,
     reason="fastapi not installed",
 )
+def test_upload_skips_validation_when_validate_false(tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    with patch("api.routes.get_image_storage_dir", return_value=tmp_path):
+        with patch("api.routes.get_upload_validation_enabled", return_value=False):
+            with patch("api.routes.register_uid") as register_mock:
+                with patch("api.routes.touch_session", return_value="2026-01-01T00:00:00+00:00"):
+                    test_client = TestClient(app)
+                    response = test_client.post(
+                        "/images/upload",
+                        files={"file": ("blur.png", _make_blurry_png(), "image/png")},
+                    )
+
+    assert response.status_code == 200
+    register_mock.assert_called_once()
+    assert len(list(tmp_path.glob("*"))) == 1
+
+
+@pytest.mark.skipif(
+    __import__("importlib").util.find_spec("fastapi") is None,
+    reason="fastapi not installed",
+)
 def test_upload_rejects_technical_failure_before_persist(tmp_path: Path) -> None:
     from fastapi.testclient import TestClient
 

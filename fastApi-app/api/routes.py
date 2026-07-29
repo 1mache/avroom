@@ -82,6 +82,7 @@ from settings import (
     load_names,
     register_uid,
     remove_session_name,
+    get_upload_validation_enabled,
     SessionNotFoundError,
     set_session_name,
     touch_session,
@@ -147,36 +148,39 @@ async def upload_image(
         logger.exception("Upload read failed: image_id=%s", image_id)
         raise HTTPException(status_code=500, detail=f"Upload failed: {exc}") from exc
 
-    try:
-        ImageValidator().validate(
-            file_bytes,
-            filename=original_filename,
-            content_type=file.content_type,
-        )
-    except ImageValidationError as exc:
-        logger.warning(
-            "Upload rejected by technical validation: filename=%s detail=%s",
-            original_filename,
-            exc,
-        )
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except ValueError as exc:
-        logger.warning(
-            "Upload rejected by technical validation: filename=%s detail=%s",
-            original_filename,
-            exc,
-        )
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if get_upload_validation_enabled():
+        try:
+            ImageValidator().validate(
+                file_bytes,
+                filename=original_filename,
+                content_type=file.content_type,
+            )
+        except ImageValidationError as exc:
+            logger.warning(
+                "Upload rejected by technical validation: filename=%s detail=%s",
+                original_filename,
+                exc,
+            )
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except ValueError as exc:
+            logger.warning(
+                "Upload rejected by technical validation: filename=%s detail=%s",
+                original_filename,
+                exc,
+            )
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    content_outcome = get_inference_client().run_validate_content(image_bytes=file_bytes)
-    if not content_outcome.is_valid:
-        detail = "; ".join(content_outcome.messages) or "Image failed content validation."
-        logger.warning(
-            "Upload rejected by content validation: filename=%s checks=%s",
-            original_filename,
-            {name: passed for name, passed in content_outcome.checks.items() if not passed},
-        )
-        raise HTTPException(status_code=422, detail=detail)
+        content_outcome = get_inference_client().run_validate_content(image_bytes=file_bytes)
+        if not content_outcome.is_valid:
+            detail = "; ".join(content_outcome.messages) or "Image failed content validation."
+            logger.warning(
+                "Upload rejected by content validation: filename=%s checks=%s",
+                original_filename,
+                {name: passed for name, passed in content_outcome.checks.items() if not passed},
+            )
+            raise HTTPException(status_code=422, detail=detail)
+    else:
+        logger.info("Upload validation skipped: VALIDATE=false filename=%s", original_filename)
 
     try:
         image_path.write_bytes(file_bytes)

@@ -275,6 +275,23 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
+def get_upload_validation_enabled() -> bool:
+    """Return whether upload technical + content validation runs (default: enabled)."""
+    return _env_bool("VALIDATE", True)
+
+
 def get_upload_min_bytes() -> int:
     return max(1, _env_int("UPLOAD_MIN_BYTES", 1024))
 

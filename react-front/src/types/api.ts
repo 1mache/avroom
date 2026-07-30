@@ -1,12 +1,23 @@
 export interface SessionInfo {
   uid: string;
   name: string | null;
+  last_changed: string | null;
 }
 
 export interface ImageUploadResponse {
   image_id: string;
   original_filename?: string | null;
   stored_path?: string | null;
+  last_changed: string;
+}
+
+export interface SessionSyncCheckRequest {
+  client_last_changed: string | null;
+}
+
+export interface SessionSyncCheckResponse {
+  last_changed: string;
+  needs_refresh: boolean;
 }
 
 // Mirrors backend processing options. Fields remain optional because frontend

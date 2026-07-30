@@ -618,6 +618,51 @@ input {
   object-fit: contain;
 }
 
+/* Non-modal inline hints for expected 409 concurrency conflicts (segment
+   click / inpaint overlapping an in-flight removal). Distinct from
+   .error-modal, which is reserved for real failures. */
+.conflict-notice-stack {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.conflict-notice {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.94);
+  color: var(--ink);
+  font-size: var(--font-xs);
+  box-shadow: 0 4px 16px rgba(16, 35, 67, 0.12);
+  white-space: nowrap;
+}
+
+.conflict-notice-dismiss {
+  border: none;
+  background: none;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+}
+
+.conflict-notice-dismiss:hover {
+  color: var(--accent-strong);
+}
+
 .model-3d-frame {
   width: 100%;
   height: 100%;
@@ -713,6 +758,16 @@ input {
 
 .session-chip-dot.has-results {
   background: var(--support);
+}
+
+.session-chip-label {
+  display: inline-block;
+}
+
+.session-chip-edited {
+  font-size: 10px;
+  color: var(--ink-soft);
+  opacity: 0.75;
 }
 
 .session-picker-empty {
@@ -954,6 +1009,71 @@ input {
 .object-visibility-btn:disabled {
   cursor: default;
   opacity: 0.5;
+}
+
+.object-thumbnail-name {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  padding: 2px 4px;
+  font-size: 10px;
+  color: var(--ink-soft);
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.object-thumbnail-name.is-editable {
+  cursor: text;
+}
+
+.object-thumbnail-name.is-editable:hover {
+  color: var(--accent-strong);
+}
+
+.object-thumbnail-name-input {
+  display: block;
+  width: 100%;
+  margin-top: 2px;
+  padding: 2px 4px;
+  font-size: 10px;
+  font-family: var(--mono);
+  text-align: center;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-xs, 4px);
+  background: white;
+  color: var(--ink);
+  outline: none;
+}
+
+.object-thumbnail-row.is-pending {
+  opacity: 0.85;
+}
+
+.object-thumbnail-pending {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.object-thumbnail-spinner {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: object-thumbnail-spin 0.8s linear infinite;
+}
+
+@keyframes object-thumbnail-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .object-panel-add-btn {

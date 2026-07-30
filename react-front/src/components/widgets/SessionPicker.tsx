@@ -41,6 +41,15 @@ interface SessionPickerProps {
 export const SessionPicker: React.FC<SessionPickerProps> = ({ onSessionSelect, refreshKey }) => {
   const [sessions, setSessions] = useState<SessionMeta[] | null>(null);
 
+  // formatEditedAgo reads Date.now() at render time — nothing else re-renders
+  // this component on its own, so without a tick the label would freeze at
+  // whatever it said when the session list was last fetched.
+  const [, forceTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => forceTick((t) => t + 1), 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 

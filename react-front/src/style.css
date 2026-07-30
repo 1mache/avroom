@@ -201,6 +201,7 @@ input {
 .main-frame-image-area {
   flex: 1;
   min-width: 0;
+  position: relative;
 }
 
 .result-main-frame {

@@ -1052,27 +1052,30 @@ export const MainPage: React.FC = () => {
                     {selectionHighlightStyle ? (
                       <div className="selection-highlight" style={selectionHighlightStyle} />
                     ) : null}
-
-                    {conflictNotices.notices.length > 0 ? (
-                      <div className="conflict-notice-stack">
-                        {conflictNotices.notices.map((notice) => (
-                          <div key={notice.id} className="conflict-notice">
-                            <span>{notice.message}</span>
-                            <button
-                              type="button"
-                              className="conflict-notice-dismiss"
-                              onClick={() => conflictNotices.dismiss(notice.id)}
-                              aria-label="Dismiss"
-                            >
-                              ×
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
                   </div>
                 </div>
               )}
+
+              {/* Rendered regardless of which branch above is active — a
+                  conflict can fire while adding a new object (UploadFrame
+                  branch), not just once results exist. */}
+              {conflictNotices.notices.length > 0 ? (
+                <div className="conflict-notice-stack">
+                  {conflictNotices.notices.map((notice) => (
+                    <div key={notice.id} className="conflict-notice">
+                      <span>{notice.message}</span>
+                      <button
+                        type="button"
+                        className="conflict-notice-dismiss"
+                        onClick={() => conflictNotices.dismiss(notice.id)}
+                        aria-label="Dismiss"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             {imageId && (jobs.objects.length > 0 || jobs.pendingJobs.length > 0) ? (

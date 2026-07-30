@@ -15,10 +15,20 @@
   --danger: #c2413c;
   --shadow: 0 24px 60px rgba(7, 45, 58, 0.18);
 
+  --radius-xs: 4px;
   --radius-sm: 12px;
   --radius: 20px;
   --radius-lg: 28px;
   --radius-pill: 9999px;
+
+  /* Transparency checkerboard behind cutout previews. Consumers pair this with
+     their own background-position/background-size to pick the tile scale, and
+     set background-color for the base layer. */
+  --checker-image:
+    linear-gradient(45deg, rgba(16, 35, 67, 0.06) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(16, 35, 67, 0.06) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(16, 35, 67, 0.06) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(16, 35, 67, 0.06) 75%);
 
   --gap-xs: 8px;
   --gap-sm: 12px;
@@ -213,13 +223,6 @@ input {
   isolation: isolate;
 }
 
-.overlay-absolute {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-
 .cutout-overlay {
   position: absolute;
   object-fit: contain;
@@ -229,10 +232,6 @@ input {
      otherwise swallow every pointer event, so hit-testing/dragging happens
      via .result-interaction-overlay instead — see MainPage.tsx. */
   pointer-events: none;
-}
-
-.model-overlay {
-  z-index: 1;
 }
 
 .result-interaction-overlay {
@@ -376,16 +375,6 @@ input {
 
 .dashboard-toggle span {
   font-weight: 700;
-}
-
-.toggle-preview {
-  margin-left: auto;
-  width: 48px;
-  height: 48px;
-  object-fit: contain;
-  border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
-  background: white;
 }
 
 .action-row {
@@ -577,16 +566,10 @@ input {
   transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
-.mask-option-card:hover:not(:disabled),
-.mask-option-card.is-selected {
+.mask-option-card:hover {
   transform: translateY(-2px);
   border-color: rgba(11, 127, 130, 0.5);
   box-shadow: 0 18px 36px rgba(11, 127, 130, 0.16);
-}
-
-.mask-option-card:disabled {
-  cursor: default;
-  opacity: 0.72;
 }
 
 .mask-option-label {
@@ -602,12 +585,8 @@ input {
   justify-content: center;
   border-radius: var(--radius-sm);
   border: 1px solid rgba(16, 35, 67, 0.08);
-  background:
-    linear-gradient(45deg, rgba(16, 35, 67, 0.06) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(16, 35, 67, 0.06) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(16, 35, 67, 0.06) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(16, 35, 67, 0.06) 75%),
-    white;
+  background-color: white;
+  background-image: var(--checker-image);
   background-position: 0 0, 0 10px, 10px -10px, -10px 0;
   background-size: 20px 20px;
   overflow: hidden;
@@ -644,7 +623,7 @@ input {
   border-radius: var(--radius-pill);
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.94);
-  color: var(--ink);
+  color: var(--ink-strong);
   font-size: var(--font-xs);
   box-shadow: 0 4px 16px rgba(16, 35, 67, 0.12);
   white-space: nowrap;
@@ -786,7 +765,7 @@ input {
   background: transparent;
   border: none;
   border-bottom: 1px solid var(--border);
-  color: var(--ink);
+  color: var(--ink-strong);
   font-family: var(--mono);
   font-size: var(--font-sm);
   text-align: center;
@@ -829,10 +808,21 @@ input {
   flex-direction: row;
   align-items: stretch;
   flex-shrink: 0;
+  /* Match .upload-frame's fixed height exactly — .result-main-frame carries
+     that class, so it never grows past this. Without an explicit height here
+     too, this container's content (add button + N thumbnails) sets its
+     natural height instead, and align-items:stretch on .main-frame-container
+     stretches the image area to match THAT, leaving blank space under the
+     fixed-height frame rather than scrolling the object list. */
+  height: clamp(360px, 58vh, 720px);
+  /* Flex items default to min-height:auto, which lets content grow past an
+     explicit height instead of clipping — that breaks the scroll chain down
+     to .object-panel-list. */
+  min-height: 0;
 }
 
 .object-panel-side {
-  /* Narrow column always visible: collapse toggle + always-accessible + button */
+  /* Narrow column always visible: collapse toggle only */
   width: 28px;
   flex-shrink: 0;
   display: flex;
@@ -860,11 +850,10 @@ input {
   color: var(--accent-strong);
 }
 
-.object-panel-add-side {
-  /* Always-visible + button in the side column */
+.object-panel-add-big {
   flex-shrink: 0;
-  width: 28px;
-  height: 28px;
+  width: 100%;
+  padding: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -872,24 +861,24 @@ input {
   border: 1.5px dashed rgba(11, 127, 130, 0.4);
   background: transparent;
   color: var(--accent-strong);
-  font-size: 16px;
+  font-size: var(--font-sm);
   font-weight: 700;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
 
-.object-panel-add-side:hover:not(:disabled) {
+.object-panel-add-big:hover:not(:disabled) {
   background: var(--accent-hover);
   border-color: var(--accent);
 }
 
-.object-panel-add-side.is-active {
+.object-panel-add-big.is-active {
   background: var(--accent-soft);
   border-color: var(--accent);
   border-style: solid;
 }
 
-.object-panel-add-side:disabled {
+.object-panel-add-big:disabled {
   cursor: default;
   opacity: 0.5;
 }
@@ -905,6 +894,10 @@ input {
   padding: var(--gap-sm);
   background: var(--surface);
   border: 1px solid var(--border);
+  /* Same reason as .object-panel-container: without this, the add-object
+     button + thumbnail list can grow taller than the stretched height
+     instead of letting .object-panel-list's own overflow-y:auto scroll. */
+  min-height: 0;
   border-radius: var(--radius-sm);
   margin-left: var(--gap-xs);
 }
@@ -928,7 +921,9 @@ input {
 
 .object-panel-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   gap: var(--gap-xs);
@@ -948,12 +943,8 @@ input {
   border-radius: var(--radius-sm);
   cursor: pointer;
   overflow: hidden;
-  background:
-    linear-gradient(45deg, rgba(16, 35, 67, 0.06) 25%, transparent 25%),
-    linear-gradient(-45deg, rgba(16, 35, 67, 0.06) 25%, transparent 25%),
-    linear-gradient(45deg, transparent 75%, rgba(16, 35, 67, 0.06) 75%),
-    linear-gradient(-45deg, transparent 75%, rgba(16, 35, 67, 0.06) 75%),
-    white;
+  background-color: white;
+  background-image: var(--checker-image);
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
   background-size: 16px 16px;
   padding: 4px;
@@ -1042,9 +1033,9 @@ input {
   font-family: var(--mono);
   text-align: center;
   border: 1px solid var(--accent);
-  border-radius: var(--radius-xs, 4px);
+  border-radius: var(--radius-xs);
   background: white;
-  color: var(--ink);
+  color: var(--ink-strong);
   outline: none;
 }
 
@@ -1077,39 +1068,6 @@ input {
   }
 }
 
-.object-panel-add-btn {
-  flex-shrink: 0;
-  width: 100%;
-  padding: 8px;
-  border-radius: var(--radius-sm);
-  border: 1.5px dashed rgba(11, 127, 130, 0.35);
-  background: transparent;
-  color: var(--accent-strong);
-  font-size: 18px;
-  font-weight: 700;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.15s, border-color 0.15s;
-}
-
-.object-panel-add-btn:hover:not(:disabled) {
-  background: var(--accent-hover);
-  border-color: var(--accent);
-}
-
-.object-panel-add-btn.is-active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  border-style: solid;
-}
-
-.object-panel-add-btn:disabled {
-  cursor: default;
-  opacity: 0.5;
-}
-
 @media (max-width: 768px) {
   #app {
     padding: 14px;
@@ -1133,7 +1091,8 @@ input {
     padding: var(--gap-md);
   }
 
-  .upload-frame {
+  .upload-frame,
+  .object-panel-container {
     height: 320px;
   }
 

@@ -246,12 +246,18 @@ export const MainPage: React.FC = () => {
     });
   }, []);
 
-  // Local UI-only state (click intent, drag, geometry). Object/job/background
-  // state lives in useSessionJobs and is reset separately below.
-  const resetWorkspaceState = useCallback(() => {
+  // The pending click is tracked in three coordinate spaces at once (display /
+  // natural / normalized), so they are always cleared together.
+  const clearClickState = useCallback(() => {
     setClickPosition(null);
     setNaturalClickPos(null);
     setNormalizedClickPos(null);
+  }, []);
+
+  // Local UI-only state (click intent, drag, geometry). Object/job/background
+  // state lives in useSessionJobs and is reset separately below.
+  const resetWorkspaceState = useCallback(() => {
+    clearClickState();
     setBackgroundNaturalSize(null);
     setResultStageSize(null);
     setShow3D(false);
@@ -264,7 +270,7 @@ export const MainPage: React.FC = () => {
       deleteConfirmTimerRef.current = null;
     }
     setDeleteConfirming(false);
-  }, []);
+  }, [clearClickState]);
 
   const resetForNewSession = useCallback(() => {
     resetWorkspaceState();
@@ -409,10 +415,8 @@ export const MainPage: React.FC = () => {
     jobs.selectMask(maskId, normalizedClickPos);
     setIsAddingObject(false);
     setShow3D(false);
-    setClickPosition(null);
-    setNaturalClickPos(null);
-    setNormalizedClickPos(null);
-  }, [jobs.selectMask, normalizedClickPos]);
+    clearClickState();
+  }, [jobs.selectMask, normalizedClickPos, clearClickState]);
 
   const handleToggle3D = useCallback(async () => {
     if (show3D) {
@@ -650,10 +654,8 @@ export const MainPage: React.FC = () => {
     // 3D is scoped to whichever object is selected — switching away hides it.
     setShow3D(false);
     setIsAddingObject(false);
-    setClickPosition(null);
-    setNaturalClickPos(null);
-    setNormalizedClickPos(null);
-  }, [jobs.setSelectedObjectId]);
+    clearClickState();
+  }, [jobs.setSelectedObjectId, clearClickState]);
 
   const handleToggleHidden = useCallback((objectId: number) => {
     // Hiding the currently selected object clears its selection (see
@@ -806,11 +808,9 @@ export const MainPage: React.FC = () => {
 
   const handleAddObject = useCallback(() => {
     setIsAddingObject(true);
-    setClickPosition(null);
-    setNaturalClickPos(null);
-    setNormalizedClickPos(null);
+    clearClickState();
     setShow3D(false);
-  }, []);
+  }, [clearClickState]);
 
   const handleToggleObjectPanel = useCallback(() => {
     setObjectPanelCollapsed((c) => !c);
@@ -851,57 +851,55 @@ export const MainPage: React.FC = () => {
     (obj) => !(show3D && obj.objectId === jobs.selectedObjectId),
   );
 
-  // Position the 3D frame over roughly the same rect the selected object's 2D
-  // cutout occupies (its alpha bounds + current drag offset), so swapping
-  // between 2D and 3D doesn't jump the object to a different spot/scale.
-  const model3DFrameStyle: React.CSSProperties | undefined =
+  // On-stage rect the selected object's 2D cutout occupies (its alpha bounds +
+  // current drag offset). Both the 3D frame and the selection ring are placed
+  // against this same rect, so neither jumps relative to the 2D cutout.
+  const selectedObjectStageRect =
     backgroundNaturalSize && renderedBackgroundRect && selectedObject
-      ? (() => {
-          const rect = getBoundsStageRect(
-            selectedObject.cutoutAlphaBounds,
-            selectedObject.offset,
-            renderedBackgroundRect,
-            backgroundNaturalSize,
-          );
+      ? getBoundsStageRect(
+          selectedObject.cutoutAlphaBounds,
+          selectedObject.offset,
+          renderedBackgroundRect,
+          backgroundNaturalSize,
+        )
+      : null;
 
-          return {
-            position: "absolute",
-            left: `${rect.left}px`,
-            top: `${rect.top}px`,
-            width: `${rect.width}px`,
-            height: `${rect.height}px`,
-            // Above .result-interaction-overlay (z-index 100) so OrbitControls
-            // receive pointer events instead of the 2D drag/hit-test layer.
-            zIndex: 200,
-            pointerEvents: "auto",
-            touchAction: "none",
-          } satisfies React.CSSProperties;
-        })()
-      : undefined;
+  const positionOverSelected = (rect: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  }): React.CSSProperties => ({
+    position: "absolute",
+    left: `${rect.left}px`,
+    top: `${rect.top}px`,
+    width: `${rect.width}px`,
+    height: `${rect.height}px`,
+  });
+
+  // The 3D model replaces the selected object's 2D cutout in place, so swapping
+  // between 2D and 3D doesn't jump the object to a different spot/scale.
+  const model3DFrameStyle: React.CSSProperties | undefined = selectedObjectStageRect
+    ? {
+        ...positionOverSelected(selectedObjectStageRect),
+        // Above .result-interaction-overlay (z-index 100) so OrbitControls
+        // receive pointer events instead of the 2D drag/hit-test layer.
+        zIndex: 200,
+        pointerEvents: "auto",
+        touchAction: "none",
+      }
+    : undefined;
 
   // Highlight ring traced around whichever object is currently selected (2D or
   // 3D), so the panel's "is-active" thumbnail has an on-canvas counterpart.
   // Non-interactive: sits above everything but never intercepts pointer events.
   const selectionHighlightStyle: React.CSSProperties | undefined =
-    backgroundNaturalSize && renderedBackgroundRect && selectedObject && !isAddingObject
-      ? (() => {
-          const rect = getBoundsStageRect(
-            selectedObject.cutoutAlphaBounds,
-            selectedObject.offset,
-            renderedBackgroundRect,
-            backgroundNaturalSize,
-          );
-
-          return {
-            position: "absolute",
-            left: `${rect.left}px`,
-            top: `${rect.top}px`,
-            width: `${rect.width}px`,
-            height: `${rect.height}px`,
-            zIndex: 210,
-            pointerEvents: "none",
-          } satisfies React.CSSProperties;
-        })()
+    selectedObjectStageRect && !isAddingObject
+      ? {
+          ...positionOverSelected(selectedObjectStageRect),
+          zIndex: 210,
+          pointerEvents: "none",
+        }
       : undefined;
 
   const uploadBusy = Boolean(imageId && !uploadedFile);
@@ -913,13 +911,11 @@ export const MainPage: React.FC = () => {
       ? "Choose mask"
       : isAddingObject
         ? "Adding object"
-        : jobs.objects.length > 0
-          ? `${jobs.objects.length} object${jobs.objects.length === 1 ? "" : "s"} removed`
-          : jobs.backgroundSrc
-            ? "Results ready"
-            : imageId
-              ? "Image uploaded"
-              : "Awaiting upload";
+        : jobs.backgroundSrc
+          ? "Results ready"
+          : imageId
+            ? "Image uploaded"
+            : "Awaiting upload";
 
   return (
     <div className="page">

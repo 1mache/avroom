@@ -152,23 +152,20 @@ export const ObjectPanel: React.FC<ObjectPanelProps> = ({
         >
           {collapsed ? "▶" : "◀"}
         </button>
-
-        {/* + button is always visible so users can add objects even when panel is collapsed */}
-        <button
-          type="button"
-          className={`object-panel-add-side${isAddingObject ? " is-active" : ""}`}
-          onClick={handleAddObject}
-          disabled={disabled}
-          aria-label="Add new object"
-          title="Add new object"
-        >
-          +
-        </button>
       </div>
 
       {/* Expandable body with scrollable thumbnail list */}
       <div className={`object-panel-body${collapsed ? " is-collapsed" : ""}`}>
         <span className="object-panel-label">Objects</span>
+
+        <button
+          type="button"
+          className={`object-panel-add-big${isAddingObject ? " is-active" : ""}`}
+          onClick={handleAddObject}
+          disabled={disabled}
+        >
+          + Add object
+        </button>
 
         <div className="object-panel-list">
           {objects.map((obj) => (

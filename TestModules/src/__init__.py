@@ -17,6 +17,11 @@ without ever importing from internal sub-paths.
 from __future__ import annotations
 
 from .ai_engines import (
+    ClipZeroShotContentValidationStrategy,
+    CompositeContentValidationStrategy,
+    ContentValidationFacade,
+    ContentValidationResult,
+    ContentValidationStrategy,
     DepthAnythingMappingStrategy,
     DepthMappingFacade,
     DepthMappingStrategy,
@@ -40,7 +45,7 @@ from .ai_engines import (
     StableZero123NovelViewStrategy,
     TrellisReconstructionStrategy,
 )
-from .core import BackgroundInpainter, ObjectRemover, ObjectSegmentor
+from .core import BackgroundInpainter, ContentImageValidator, ObjectRemover, ObjectSegmentor
 from .routing import (
     BoundaryVarianceRoutingStrategy,
     CenterOfMassRoutingStrategy,
@@ -50,6 +55,12 @@ from .routing import (
 __all__ = [
     "BoundaryVarianceRoutingStrategy",
     "CenterOfMassRoutingStrategy",
+    "ClipZeroShotContentValidationStrategy",
+    "CompositeContentValidationStrategy",
+    "ContentImageValidator",
+    "ContentValidationFacade",
+    "ContentValidationResult",
+    "ContentValidationStrategy",
     "DepthAnythingMappingStrategy",
     "DepthMappingFacade",
     "DepthMappingStrategy",

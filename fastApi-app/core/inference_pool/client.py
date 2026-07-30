@@ -192,6 +192,28 @@ class InferenceClient:
         assert result.novel_view_bgra is not None
         return result.novel_view_bgra
 
+    def run_validate_content(self, *, image_bytes: bytes) -> ContentValidationOutcome:
+        from core.content_validation import ContentValidationOutcome
+
+        job = JobRequest(
+            job_id=str(uuid.uuid4()),
+            kind=JobKind.VALIDATE_CONTENT,
+            storage_dir=str(Path.cwd()),
+            image_bytes=image_bytes,
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.validation_ok is not None
+        assert result.validation_checks is not None
+        assert result.validation_scores is not None
+        assert result.validation_messages is not None
+        return ContentValidationOutcome(
+            is_valid=result.validation_ok,
+            checks=result.validation_checks,
+            scores=result.validation_scores,
+            messages=result.validation_messages,
+        )
+
 
 def init_inference_client(pool: InferencePool | None = None) -> None:
     """Initialize the process-wide inference client."""

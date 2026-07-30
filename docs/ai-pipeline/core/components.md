@@ -7,6 +7,7 @@ Source: [`TestModules/src/core/`](../../../TestModules/src/core/).
 - **`ObjectRemover`** — Master facade for `remove_object`. Owns all 7 stage order and wires collaborators via constructor injection.
 - **`ObjectSegmentor`** — Segmentation-only facade for `get_mask_for_object_at_position`. Runs stages 1–3 and 5–7 (omits inpainting). Returns all SAM candidates as `(refined_mask, cutout_bgra)` pairs.
 - **`BackgroundInpainter`** — Inpainting-only facade for `cut_mask_from_image`. Runs stage 4 only. Accepts a BGR image and a mask; returns the inpainted BGR scene.
+- **`ContentImageValidator`** — Pre-pipeline upload content gate. Decodes image bytes and delegates to `ContentValidationFacade`. Not part of segment/inpaint/removal flows.
 
 ## Shared helpers
 

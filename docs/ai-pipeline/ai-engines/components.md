@@ -11,6 +11,7 @@ Pattern everywhere under [`TestModules/src/ai_engines/`](../../../TestModules/sr
 | Inpainting | `ImageInpaintingFacade` | LaMa + optional SD (`HybridInpaintingStrategy`) |
 | Novel view | `NovelViewFacade` | Stable Zero123 (`StableZero123NovelViewStrategy`) |
 | Reconstruction 3D | `Reconstruction3DFacade` | OpenLRM local (`OpenLrmReconstructionStrategy`, default); Trellis HF Space (`TrellisReconstructionStrategy`) when injected |
+| Content validation | `ContentValidationFacade` | CLIP zero-shot (`ClipZeroShotContentValidationStrategy` via composite) |
 
 Each facade holds one active `*Strategy` instance configured at construction.
 
@@ -21,6 +22,7 @@ Each facade holds one active `*Strategy` instance configured at construction.
 - `ImageInpaintingStrategy`
 - `NovelViewStrategy`
 - `Reconstruction3DStrategy`
+- `ContentValidationStrategy`
 
 Concrete implementations live under each domain’s `strategies/` package.
 
@@ -35,3 +37,4 @@ Engines rely on [`utils/`](../utils/README.md) (`DebugImageSaver`, `MaskRefiner`
 - [inpainting/README.md](inpainting/README.md)
 - [novel-view/README.md](novel-view/README.md)
 - [reconstruction-3d/README.md](reconstruction-3d/README.md)
+- [content-validation/README.md](content-validation/README.md)

@@ -8,10 +8,22 @@ Three image flows go through `fastApi-app/api/routes.py`.
 sequenceDiagram
     participant Client
     participant Router as "api/routes.py"
+    participant Tech as "core/image_validation"
+    participant Pool as "inference_client"
+    participant AI as "ContentImageValidator"
     participant Settings as "settings.py"
     participant Disk as "tmp/images"
 
     Client->>Router: POST /images/upload
+    Router->>Tech: ImageValidator.validate(bytes)
+    alt technical fail
+        Router-->>Client: 422
+    end
+    Router->>Pool: run_validate_content(bytes)
+    Pool->>AI: validate_upload
+    alt content fail
+        Router-->>Client: 422
+    end
     Router->>Settings: get_image_storage_dir()
     Router->>Disk: write {image_id}.{ext}
     Router->>Settings: register_uid + touch_session

@@ -1,5 +1,7 @@
 import React, { useCallback, useRef, useState } from "react";
 
+import { effectiveCutoutSrc, type ObjectRotation } from "../../types/session";
+
 const EyeOpenIcon: React.FC = () => (
   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg">
     <path
@@ -32,6 +34,7 @@ interface ObjectEntry {
   uuid: string | null;
   name: string | null;
   cutoutSrc: string;
+  rotation: ObjectRotation | null;
   hidden: boolean;
 }
 
@@ -47,6 +50,10 @@ interface ObjectPanelProps {
   // Narrowed to genuinely blocking states — a concurrent inpaint elsewhere no
   // longer freezes this panel; only 3D generation for the selected object does.
   disabled: boolean;
+  // "Show original" is scoped to the selected object only (see MainPage's
+  // dashboard toggle); every other object's thumbnail always shows its own
+  // rotated result, if it has one.
+  showOriginal: boolean;
   onSelectObject: (objectId: number) => void;
   onToggleHidden: (objectId: number) => void;
   onAddObject: () => void;
@@ -61,6 +68,7 @@ export const ObjectPanel: React.FC<ObjectPanelProps> = ({
   selectedObjectId,
   isAddingObject,
   disabled,
+  showOriginal,
   onSelectObject,
   onToggleHidden,
   onAddObject,
@@ -179,10 +187,18 @@ export const ObjectPanel: React.FC<ObjectPanelProps> = ({
                 title={obj.hidden ? `${obj.name ?? `Object ${obj.objectId}`} (hidden)` : obj.name ?? `Object ${obj.objectId}`}
               >
                 <img
-                  src={obj.cutoutSrc}
+                  src={effectiveCutoutSrc(
+                    obj,
+                    showOriginal && obj.objectId === selectedObjectId,
+                  )}
                   alt={obj.name ?? `Object ${obj.objectId}`}
                   className="object-thumbnail-img"
                 />
+                {obj.rotation?.status === "pending" ? (
+                  <span className="object-thumbnail-rotating-badge" aria-label="Rotating">
+                    <span className="object-thumbnail-spinner" />
+                  </span>
+                ) : null}
               </button>
 
               {editingObjectId === obj.objectId ? (

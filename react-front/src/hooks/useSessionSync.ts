@@ -93,6 +93,7 @@ export function useSessionSync(options: UseSessionSyncOptions) {
             cutoutAlphaBounds,
             normalizedClickPos: null,
             glbData: null,
+            rotation: null,
             hidden: false,
             offset: { x: 0, y: 0 },
           };

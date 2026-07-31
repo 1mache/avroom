@@ -119,3 +119,34 @@ export interface ObjectListResponse {
   objects: ObjectInfo[];
 }
 
+export type AzimuthDirection = "CLOCKWISE" | "C_CLOCKWISE";
+export type ElevationDirection = "UP" | "DOWN";
+export type ZoomDirection = "ZOOM_IN" | "ZOOM_OUT";
+
+export interface NovelViewRequest {
+  uid: string;
+  object_id: number;
+  elevation_deg: number;
+  azimuth_deg: number;
+  azimuth_direction?: AzimuthDirection | null;
+  relative_elevation_deg?: number;
+  elevation_direction?: ElevationDirection | null;
+  radius?: number;
+  zoom_direction?: ZoomDirection | null;
+}
+
+export interface NovelViewResponse {
+  uid: string;
+  object_id: number;
+  image_b64: string;
+  format: string;
+  cutout_bounds?: CutoutBounds | null;
+  elevation_deg: number;
+  azimuth_deg: number;
+  azimuth_direction?: AzimuthDirection | null;
+  relative_elevation_deg: number;
+  elevation_direction?: ElevationDirection | null;
+  radius: number;
+  zoom_direction?: ZoomDirection | null;
+}
+

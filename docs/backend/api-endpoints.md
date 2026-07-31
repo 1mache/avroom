@@ -1,6 +1,6 @@
 # API Endpoints
 
-Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py). 3D routes live in [`fastApi-app/api/model_3d.py`](../../fastApi-app/api/model_3d.py).
+Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py). 3D routes live in [`fastApi-app/api/model_3d.py`](../../fastApi-app/api/model_3d.py). Novel-view (rotation) routes live in [`fastApi-app/api/novel_view.py`](../../fastApi-app/api/novel_view.py).
 
 | Method | Path | Request | Response |
 |---|---|---|---|
@@ -20,6 +20,7 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `GET` | `/images/objects/{object_uuid}` | path `object_uuid` | `ObjectMetadataResponse` |
 | `PATCH` | `/images/objects/{object_uuid}` | `SetObjectNameRequest` | `ObjectMetadataResponse` |
 | `POST` | `/images/objects/{object_uuid}/rescale-by-depth` | `RescaleByDepthRequest` | `RescaleByDepthResponse` |
+| `POST` | `/images/novel-view` | `NovelViewRequest` | `NovelViewResponse` |
 | `POST` | `/3d/test-3d` | `{"uid":"...", "object_id": 0}` | GLB bytes |
 | `GET` | `/3d/{uid}/{object_id}` | path `uid`, `object_id` | GLB file |
 | `GET` | `/3d/{uid}` | path `uid` | GLB file (legacy id-0 fallback) |
@@ -119,6 +120,22 @@ Returns `404` when object or cutout is missing; `400` when depth values are inva
 
 Not wired in the React frontend today.
 
+## `POST /images/novel-view`
+
+Synthesizes a 2D novel view of an existing object cutout at a requested camera pose (rotation UI). Body: `NovelViewRequest`; see [novel-view contracts](../ai-pipeline/ai-engines/novel-view/contracts.md) for the full field table and sign conventions. Full model/pipeline documentation lives under [`docs/ai-pipeline/ai-engines/novel-view/`](../ai-pipeline/ai-engines/novel-view/); this section only covers the HTTP-layer behavior added on top.
+
+Behavior:
+
+1. Resolve signed pose via `NovelViewRotationAdapter.resolve_pose(...)` (direction-enum handling; **422** on an invalid pose).
+2. **Snap** the resolved azimuth and relative elevation to the nearest 10° (`ROTATION_STEP_DEG` in `novel_view.py`) and wrap azimuth into `(-180, 180]`. This is an HTTP-only concern — the adapter and direct Python API are untouched and keep accepting exact angles. Radius is never snapped (it's a distance, not an angle).
+3. **404** if the object's cutout (`{uid}_{object_id}_cutout.png`) doesn't exist yet.
+4. Check the disk cache at `object_novel_view_path(uid, object_id, snapped_azimuth, snapped_elevation)`. A cache hit requires the cached file's mtime to be `>=` the cutout's mtime — `rescale-by-depth` rewrites the cutout in place, so an older cached rotation is treated as stale and re-synthesized rather than served.
+5. On a cache hit: read cached PNG bytes, skip inference, **skip `touch_session`** (nothing changed).
+6. On a cache miss: run inference (`JobKind.NOVEL_VIEW`, seed fixed at 0 — deterministic given the same cutout + pose), write the PNG to the cache path, and `touch_session(uid)`.
+7. Return `NovelViewResponse` with the **snapped** azimuth/elevation echoed back (not the raw request values), so the client learns the pose that was actually rendered.
+
+Does **not** take a canvas-writer lock or region lease, and never mutates the cutout PNG or session objects — a rotation request can run concurrently with anything else and always starts from the same pristine cutout, which is what makes "rotate again" restart cleanly from the default pose.
+
 ## `DELETE /images/{uid}`
 
 Deletes a session and all its associated files from disk:
@@ -173,7 +190,7 @@ Client-visible durable mutations bump `last_changed` through `touch_session` in 
 | `PATCH /images/objects/{object_uuid}` | `api/routes.py` |
 | `POST /images/objects/{object_uuid}/rescale-by-depth` | `api/routes.py` |
 | `POST /3d/test-3d` | `api/model_3d.py` |
-| `POST /images/novel-view` | `api/novel_view.py` |
+| `POST /images/novel-view` (cache miss only — a cache hit changes nothing and skips the touch) | `api/novel_view.py` |
 
 These do **not** bump session dirty state: `POST /images/segment` candidate caches, depth `.npy` cache writes, in-memory region leases.
 

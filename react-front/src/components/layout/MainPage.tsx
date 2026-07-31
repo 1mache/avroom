@@ -15,9 +15,15 @@ import avroomLogo from "../../assets/avroom.png";
 import { useConflictNotices, type ConflictContext } from "../../hooks/useConflictNotices";
 import { useSessionJobs, type JobErrorContext } from "../../hooks/useSessionJobs";
 import { useSessionSync } from "../../hooks/useSessionSync";
-import type { ClickPosition, CutoutAlphaBounds } from "../../types/session";
+import {
+  effectiveCutoutBounds,
+  effectiveCutoutSrc,
+  type ClickPosition,
+  type CutoutAlphaBounds,
+  type CutoutObject,
+} from "../../types/session";
 import { MaskPickerModal } from "../widgets/MaskPickerModal";
-import { Model3DFrame } from "../widgets/Model3DFrame";
+import { Model3DFrame, type Model3DFrameHandle } from "../widgets/Model3DFrame";
 import { ObjectPanel } from "../widgets/ObjectPanel";
 import { SessionPicker } from "../widgets/SessionPicker";
 import { UploadFrame } from "../widgets/UploadFrame";
@@ -40,6 +46,10 @@ interface HitCanvasEntry {
   canvas: HTMLCanvasElement;
   width: number;
   height: number;
+  // The src this canvas was built from. Rotation swaps an object's effective
+  // src in place without changing its objectId, so the cache must invalidate
+  // on src change, not just track which ids exist.
+  src: string;
 }
 
 // `object-fit: contain` means visible image may not fill stage. Drag math must
@@ -168,6 +178,7 @@ export const MainPage: React.FC = () => {
   const backgroundNaturalSizeRef = useRef<Size | null>(null);
   const renderedBackgroundRectRef = useRef<ReturnType<typeof getContainedImageRect>>(null);
   const hitCanvasesRef = useRef<Map<number, HitCanvasEntry>>(new Map());
+  const model3DFrameRef = useRef<Model3DFrameHandle>(null);
 
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
   const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null);
@@ -177,10 +188,15 @@ export const MainPage: React.FC = () => {
   const [normalizedClickPos, setNormalizedClickPos] = useState<ClickPosition | null>(null);
   const [backgroundNaturalSize, setBackgroundNaturalSize] = useState<Size | null>(null);
   const [resultStageSize, setResultStageSize] = useState<Size | null>(null);
-  const [show3D, setShow3D] = useState(false);
+  // rotateMode: the 3D angle picker is open, replacing the selected object's
+  // 2D cutout. isPreparing3D: blocking spinner while the GLB is fetched/
+  // generated for the first time. showOriginal: selected object only, toggles
+  // its rotated result back to the pristine cutout.
+  const [rotateMode, setRotateMode] = useState(false);
+  const [isPreparing3D, setIsPreparing3D] = useState(false);
+  const [showOriginal, setShowOriginal] = useState(false);
   const [isDraggingCutout, setIsDraggingCutout] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [isGenerating3D, setIsGenerating3D] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionName, setSessionName] = useState<string>("");
   const [sessionsRefreshKey, setSessionsRefreshKey] = useState(0);
@@ -260,7 +276,8 @@ export const MainPage: React.FC = () => {
     clearClickState();
     setBackgroundNaturalSize(null);
     setResultStageSize(null);
-    setShow3D(false);
+    setRotateMode(false);
+    setShowOriginal(false);
     setIsDraggingCutout(false);
     dragStateRef.current = null;
     setIsAddingObject(false);
@@ -283,6 +300,13 @@ export const MainPage: React.FC = () => {
   // stage regardless of selection.
   const selectedObject = jobs.objects.find((o) => o.objectId === jobs.selectedObjectId) ?? null;
   const glbData = selectedObject?.glbData ?? null;
+
+  // "Show original" only ever applies to the selected object -- every other
+  // object always shows its own rotated result (if any).
+  const isShowingOriginal = useCallback(
+    (obj: CutoutObject) => showOriginal && obj.objectId === jobs.selectedObjectId,
+    [showOriginal, jobs.selectedObjectId],
+  );
 
   useEffect(() => {
     return () => {
@@ -414,30 +438,54 @@ export const MainPage: React.FC = () => {
   const handleMaskSelected = useCallback((maskId: string) => {
     jobs.selectMask(maskId, normalizedClickPos);
     setIsAddingObject(false);
-    setShow3D(false);
+    setRotateMode(false);
     clearClickState();
   }, [jobs.selectMask, normalizedClickPos, clearClickState]);
 
-  const handleToggle3D = useCallback(async () => {
-    if (show3D) {
-      setShow3D(false);
+  // Commits the current orbit as a rotation request: captures the angle
+  // delta + a snapshot of the viewer, fires the (detached) novel-view job,
+  // and closes the angle picker. The object shows the snapshot immediately
+  // and swaps to the real result when the response lands (see commitRotation).
+  const commitCurrentRotation = useCallback(() => {
+    if (jobs.selectedObjectId === null) {
+      setRotateMode(false);
+      return;
+    }
+    const capture = model3DFrameRef.current?.capture();
+    if (capture) {
+      jobs.commitRotation(
+        jobs.selectedObjectId,
+        { azimuthDeg: capture.azimuthDeg, relativeElevationDeg: capture.relativeElevationDeg },
+        capture.snapshotDataUrl,
+      );
+    }
+    setRotateMode(false);
+    setShowOriginal(false);
+  }, [jobs.selectedObjectId, jobs.commitRotation]);
+
+  // Opens the angle picker for the selected object. Pressing the button
+  // again while it's already open commits the rotation instead (see
+  // commitCurrentRotation) -- this branch only ever runs the GLB ladder.
+  const handleRotateClick = useCallback(async () => {
+    if (rotateMode) {
+      commitCurrentRotation();
       return;
     }
 
     if (!imageId || jobs.selectedObjectId === null) {
-      setError("No object selected for 3D generation.");
+      setError("No object selected to rotate.");
       return;
     }
 
     if (glbData) {
-      setShow3D(true);
+      setRotateMode(true);
       return;
     }
 
     // Snapshot the target id before any await so we write to the right object
     // even if the user switches selection while generation is in flight.
     const targetObjectId = jobs.selectedObjectId;
-    setIsGenerating3D(true);
+    setIsPreparing3D(true);
     setError(null);
 
     try {
@@ -446,9 +494,9 @@ export const MainPage: React.FC = () => {
         jobs.setObjects((prev) =>
           prev.map((o) => (o.objectId === targetObjectId ? { ...o, glbData: cached } : o))
         );
-        // Only surface the 3D view if the user hasn't switched selection away.
+        // Only surface the picker if the user hasn't switched selection away.
         jobs.setSelectedObjectId((current) => {
-          if (current === targetObjectId) setShow3D(true);
+          if (current === targetObjectId) setRotateMode(true);
           return current;
         });
         return;
@@ -459,16 +507,43 @@ export const MainPage: React.FC = () => {
         prev.map((o) => (o.objectId === targetObjectId ? { ...o, glbData: buffer } : o))
       );
       jobs.setSelectedObjectId((current) => {
-        if (current === targetObjectId) setShow3D(true);
+        if (current === targetObjectId) setRotateMode(true);
         return current;
       });
     } catch (genError) {
       setError(errorMessage(genError, "Unexpected 3D generation error."));
-      setShow3D(false);
+      setRotateMode(false);
     } finally {
-      setIsGenerating3D(false);
+      setIsPreparing3D(false);
     }
-  }, [jobs.selectedObjectId, jobs.setObjects, jobs.setSelectedObjectId, glbData, imageId, show3D]);
+  }, [rotateMode, commitCurrentRotation, jobs.selectedObjectId, jobs.setObjects, jobs.setSelectedObjectId, glbData, imageId]);
+
+  // Enter commits the rotation (same as pressing the button again); Escape
+  // cancels with no request sent. Bail out of both while a text field (e.g.
+  // ObjectPanel's rename input) owns focus and its own Enter/Escape meaning.
+  useEffect(() => {
+    if (!rotateMode) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitCurrentRotation();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        setRotateMode(false);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [rotateMode, commitCurrentRotation]);
 
   const handleNameKeyDown = useCallback(async (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key !== "Enter" || !imageId || !sessionName.trim()) {
@@ -587,7 +662,9 @@ export const MainPage: React.FC = () => {
     });
 
     jobs.objects.forEach((obj) => {
-      if (hitCanvasesRef.current.has(obj.objectId)) {
+      const src = effectiveCutoutSrc(obj, isShowingOriginal(obj));
+      const existing = hitCanvasesRef.current.get(obj.objectId);
+      if (existing && existing.src === src) {
         return;
       }
 
@@ -605,11 +682,12 @@ export const MainPage: React.FC = () => {
           canvas,
           width: img.naturalWidth,
           height: img.naturalHeight,
+          src,
         });
       };
-      img.src = obj.cutoutSrc;
+      img.src = src;
     });
-  }, [jobs.objects]);
+  }, [jobs.objects, isShowingOriginal]);
 
   const sampleObjectAlpha = useCallback((objectId: number, localX: number, localY: number): number => {
     const entry = hitCanvasesRef.current.get(objectId);
@@ -651,20 +729,23 @@ export const MainPage: React.FC = () => {
 
   const handleSelectObject = useCallback((objectId: number) => {
     jobs.setSelectedObjectId(objectId);
-    // 3D is scoped to whichever object is selected — switching away hides it.
-    setShow3D(false);
+    // 3D/rotation is scoped to whichever object is selected — switching away
+    // closes the picker and resets the original-view toggle.
+    setRotateMode(false);
+    setShowOriginal(false);
     setIsAddingObject(false);
     clearClickState();
   }, [jobs.setSelectedObjectId, clearClickState]);
 
   const handleToggleHidden = useCallback((objectId: number) => {
     // Hiding the currently selected object clears its selection (see
-    // useSessionJobs.toggleHidden) — mirror that here to also drop 3D, since
-    // a hidden object can never be the selected one.
+    // useSessionJobs.toggleHidden) — mirror that here to also drop the
+    // rotate picker, since a hidden object can never be the selected one.
     const wasSelected = jobs.selectedObjectId === objectId;
     jobs.toggleHidden(objectId);
     if (wasSelected) {
-      setShow3D(false);
+      setRotateMode(false);
+      setShowOriginal(false);
     }
   }, [jobs.selectedObjectId, jobs.toggleHidden]);
 
@@ -691,14 +772,15 @@ export const MainPage: React.FC = () => {
     // While the selected object's 3D model is shown, its 2D cutout is hidden
     // and that screen region belongs to the (higher z-index) 3D frame instead.
     const hitOrder = buildHitTestOrder(jobs.objects, jobs.selectedObjectId).filter(
-      (obj) => !(show3D && obj.objectId === jobs.selectedObjectId),
+      (obj) => !(rotateMode && obj.objectId === jobs.selectedObjectId),
     );
     for (const obj of hitOrder) {
       const localObjX = naturalX - obj.offset.x;
       const localObjY = naturalY - obj.offset.y;
 
-      if (obj.cutoutAlphaBounds) {
-        const bounds = obj.cutoutAlphaBounds;
+      const objBounds = effectiveCutoutBounds(obj, isShowingOriginal(obj));
+      if (objBounds) {
+        const bounds = objBounds;
         if (
           localObjX < bounds.left ||
           localObjX > bounds.right ||
@@ -728,7 +810,7 @@ export const MainPage: React.FC = () => {
       return;
     }
     // No object under the pointer: keep the current selection unchanged.
-  }, [backgroundNaturalSize, renderedBackgroundRect, jobs.objects, jobs.selectedObjectId, show3D, sampleObjectAlpha, handleSelectObject]);
+  }, [backgroundNaturalSize, renderedBackgroundRect, jobs.objects, jobs.selectedObjectId, rotateMode, isShowingOriginal, sampleObjectAlpha, handleSelectObject]);
 
   useEffect(() => {
     if (!isDraggingCutout) {
@@ -754,7 +836,9 @@ export const MainPage: React.FC = () => {
       }
 
       const targetObject = jobs.objects.find((o) => o.objectId === dragState.objectId);
-      const bounds = targetObject?.cutoutAlphaBounds ?? null;
+      const bounds = targetObject
+        ? effectiveCutoutBounds(targetObject, showOriginal && targetObject.objectId === dragState.objectId)
+        : null;
 
       // Mouse delta arrives in screen pixels. Convert back into natural-image
       // pixels so drag behavior stays stable under responsive resize.
@@ -809,7 +893,7 @@ export const MainPage: React.FC = () => {
   const handleAddObject = useCallback(() => {
     setIsAddingObject(true);
     clearClickState();
-    setShow3D(false);
+    setRotateMode(false);
   }, [clearClickState]);
 
   const handleToggleObjectPanel = useCallback(() => {
@@ -848,7 +932,7 @@ export const MainPage: React.FC = () => {
   // While the selected object's 3D model is shown, its 2D cutout is hidden so
   // the 3D frame visually replaces it instead of stacking on top of it.
   const stageCutoutObjects = visibleObjects.filter(
-    (obj) => !(show3D && obj.objectId === jobs.selectedObjectId),
+    (obj) => !(rotateMode && obj.objectId === jobs.selectedObjectId),
   );
 
   // On-stage rect the selected object's 2D cutout occupies (its alpha bounds +
@@ -857,7 +941,7 @@ export const MainPage: React.FC = () => {
   const selectedObjectStageRect =
     backgroundNaturalSize && renderedBackgroundRect && selectedObject
       ? getBoundsStageRect(
-          selectedObject.cutoutAlphaBounds,
+          effectiveCutoutBounds(selectedObject, showOriginal),
           selectedObject.offset,
           renderedBackgroundRect,
           backgroundNaturalSize,
@@ -1003,7 +1087,7 @@ export const MainPage: React.FC = () => {
                   clickPosition={clickPosition}
                   onFileSelected={handleFileSelected}
                   onImageClick={handleImageClick}
-                  disabled={isUploading || jobs.isSegmenting || jobs.isChoosingMask || isGenerating3D}
+                  disabled={isUploading || jobs.isSegmenting || jobs.isChoosingMask || isPreparing3D}
                   clickEnabled={clickEnabled}
                 />
               ) : (
@@ -1019,7 +1103,7 @@ export const MainPage: React.FC = () => {
                     {stageCutoutObjects.map((obj, index) => (
                       <img
                         key={obj.objectId}
-                        src={obj.cutoutSrc}
+                        src={effectiveCutoutSrc(obj, isShowingOriginal(obj))}
                         alt={obj.name ?? `Object ${obj.objectId}`}
                         className="cutout-overlay"
                         style={getCutoutOverlayStyle(
@@ -1036,13 +1120,8 @@ export const MainPage: React.FC = () => {
                       onPointerDown={handleStagePointerDown}
                     />
 
-                    {show3D && glbData ? (
-                      <Model3DFrame
-                        glbData={glbData}
-                        clickNormalizedPos={selectedObject?.normalizedClickPos ?? null}
-                        style={model3DFrameStyle}
-                        backgroundImage={null}
-                      />
+                    {rotateMode && glbData ? (
+                      <Model3DFrame ref={model3DFrameRef} glbData={glbData} style={model3DFrameStyle} />
                     ) : null}
 
                     {selectionHighlightStyle ? (
@@ -1080,7 +1159,8 @@ export const MainPage: React.FC = () => {
                 pending={jobs.pendingJobs}
                 selectedObjectId={jobs.selectedObjectId}
                 isAddingObject={isAddingObject}
-                disabled={isGenerating3D}
+                disabled={isPreparing3D}
+                showOriginal={showOriginal}
                 onSelectObject={handleSelectObject}
                 onToggleHidden={handleToggleHidden}
                 onAddObject={handleAddObject}
@@ -1093,21 +1173,35 @@ export const MainPage: React.FC = () => {
 
           {jobs.backgroundSrc && !isAddingObject && jobs.objects.length > 0 ? (
             <div className="control-dashboard">
-              <label className="dashboard-toggle">
-                <input
-                  type="checkbox"
-                  checked={show3D}
-                  onChange={handleToggle3D}
-                  disabled={isGenerating3D || jobs.selectedObjectId === null}
-                />
-                <span>
-                  {isGenerating3D
-                    ? "Generating..."
-                    : jobs.selectedObjectId === null
-                      ? "Select an object to view its 3D model"
-                      : "Show 3D model"}
-                </span>
-              </label>
+              <button
+                type="button"
+                className="primary-button secondary"
+                onClick={handleRotateClick}
+                disabled={isPreparing3D || jobs.selectedObjectId === null}
+              >
+                {isPreparing3D
+                  ? "Preparing 3D..."
+                  : jobs.selectedObjectId === null
+                    ? "Select an object to rotate"
+                    : rotateMode
+                      ? "Apply rotation"
+                      : "Rotate"}
+              </button>
+
+              {rotateMode ? (
+                <span className="dashboard-hint">Drag to orbit · Enter to apply · Esc to cancel</span>
+              ) : null}
+
+              {!rotateMode && selectedObject?.rotation?.status === "ready" ? (
+                <label className="dashboard-toggle">
+                  <input
+                    type="checkbox"
+                    checked={showOriginal}
+                    onChange={(event) => setShowOriginal(event.target.checked)}
+                  />
+                  <span>Show original</span>
+                </label>
+              ) : null}
             </div>
           ) : null}
 
@@ -1116,7 +1210,7 @@ export const MainPage: React.FC = () => {
               type="button"
               className={`primary-button${uploadBusy ? " ghost" : ""}`}
               onClick={uploadBusy ? triggerFileInput : handleUpload}
-              disabled={isUploading || jobs.isSegmenting || isGenerating3D || (!uploadBusy && !uploadedFile)}
+              disabled={isUploading || jobs.isSegmenting || isPreparing3D || (!uploadBusy && !uploadedFile)}
             >
               {isUploading ? "Uploading..." : uploadBusy ? "Upload other" : "Upload"}
             </button>
@@ -1136,7 +1230,7 @@ export const MainPage: React.FC = () => {
                 type="button"
                 className={`primary-button danger${deleteConfirming ? " confirming" : ""}`}
                 onClick={handleDeleteSession}
-                disabled={isDeleting || isUploading || isGenerating3D}
+                disabled={isDeleting || isUploading || isPreparing3D}
               >
                 {isDeleting ? "Deleting..." : deleteConfirming ? "Confirm delete?" : "Delete session"}
               </button>

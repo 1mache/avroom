@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**AVRoom (Adaptive Virtual Room)** — AI-driven interior design workspace. Users upload a room photo, click furniture objects, and the system segments them out and inpaints the background. The end vision (per spec) includes drag-and-drop repositioning, NLP-driven edits, and real-time collaboration. **Currently only object removal is implemented.**
+**AVRoom (Adaptive Virtual Room)** — AI-driven interior design workspace. Users upload a room photo, click furniture objects, and the system segments them out and inpaints the background. The end vision (per spec) includes drag-and-drop repositioning, NLP-driven edits, and real-time collaboration. **Currently object removal and 2D object rotation (novel-view synthesis) are implemented.**
 
 The spec document (`SpecDocument1.1.pdf` in parent dir) describes the full planned product. Do not implement unplanned features speculatively.
 
@@ -154,9 +154,11 @@ All segmented objects for a session stay composited on the inpainted background 
 
 - **Selection** (`selectedObjectId`) is independent of visibility. It starts `null` (no selection) on fresh upload *and* on session restore. Set by clicking an object's thumbnail in `ObjectPanel`, or by clicking/dragging it directly in the preview stage. Hiding the selected object clears selection. A newly created object auto-selects.
 - **Hit-testing is alpha-precise, not DOM stacking.** Cutout PNGs are full-image-sized with transparency outside the object, so a topmost DOM overlay would swallow every click. `MainPage.tsx` builds an offscreen `<canvas>` per object (`hitCanvasesRef`) and samples pixel alpha on pointer-down to find which object (if any) was clicked, testing the selected object first, then remaining visible objects topmost-first. The cutout `<img>` elements themselves are `pointer-events: none`; a single transparent `.result-interaction-overlay` div owns pointer-down handling.
-- **3D generation/display is scoped to the selected object only.** Changing selection always forces `show3D` back to `false`.
+- **The 3D viewer (`Model3DFrame`) is an angle picker for rotation, not a standalone preview.** Pressing the dashboard's **Rotate** button is scoped to the selected object only; changing selection always forces `rotateMode` back to `false`. The GLB itself is still generated/cached exactly as before (`glbData` per object, via `POST /3d/test-3d` / `GET /3d/{uid}/{objectId}`) — only its purpose changed.
 - Eye-toggle button lives in `ObjectPanel` per thumbnail (`onToggleHidden`); hidden objects are excluded from render, hit-testing, and selection.
-- **When `show3D` is on, the 3D model replaces the selected object's 2D cutout in place**, not a full-stage overlay. `MainPage.tsx` computes `model3DFrameStyle` from that object's `cutoutAlphaBounds` + `offset` (same rect the 2D cutout would occupy) and gives `Model3DFrame` a z-index above `.result-interaction-overlay` so its `OrbitControls` actually receive pointer events — a full-stage overlay previously sat on top of the WebGL canvas and silently ate every drag. The selected object's 2D `<img>` is skipped from render (`stageCutoutObjects`) and from hit-testing while `show3D` is true, since that screen region now belongs to the 3D frame; other objects are unaffected.
+- **While `rotateMode` is on, the 3D model replaces the selected object's 2D cutout in place**, not a full-stage overlay — same z-index/rect trick as before (`model3DFrameStyle` from `cutoutAlphaBounds` + `offset`, `Model3DFrame` above `.result-interaction-overlay` so `OrbitControls` receive pointer events). The selected object's 2D `<img>` is skipped from render (`stageCutoutObjects`) and hit-testing while `rotateMode` is true.
+- **Rotation flow:** orbiting measures azimuth/elevation deltas from the viewer's starting pose, around the object center (`OrbitControls.target` pinned to `(0,0,0)`, panning disabled). Pressing **Rotate** again (or Enter) calls `Model3DFrame`'s `capture()` for the angle delta + a canvas snapshot, closes the picker, and fires `useSessionJobs.commitRotation` **detached** against `POST /images/novel-view` — the object's `rotation` field (`{ pose, previewSrc, src, bounds, status }`) is the pending marker; the snapshot shows immediately and is swapped for the real synthesized PNG when the response lands. Escape cancels with no request. A per-object **Show original** checkbox toggles the selected object's rotated result back to its pristine cutout. Rotating again always starts over from the pristine cutout — the backend never overwrites `{uid}_{object_id}_cutout.png` in the rotate path, only caches separate `..._novel_az{az}_el{el}.png` files.
+- **`rotation` is local-only state, like `glbData`** — it must never be written into `cutoutSrc`/`cutoutAlphaBounds` directly, since `useSessionSync`'s reconcile unconditionally overwrites those two fields from server truth on every sync tick. `types/session.ts`'s `effectiveCutoutSrc`/`effectiveCutoutBounds` are the single place that decide, per object, whether to show the original cutout or the rotated result — used consistently by the stage render, hit-testing, drag-clamp bounds, and `ObjectPanel` thumbnails. `hitCanvasesRef` invalidates its cached alpha canvas when an object's effective src changes (not just when its id first appears), since rotation changes the silhouette in place.
 
 ### Concurrent job state (`src/hooks/`)
 
@@ -175,6 +177,6 @@ Per the spec, the following are planned but absent from the codebase:
 - PostgreSQL + S3 storage
 - Collaboration (Spectator/Partner/CoAdmin roles, Operational Transformation)
 - Drag-and-drop / Smart Paste
-- Object rotation, depth adjustment
+- Depth adjustment
 - NLP/prompt-based generative editing
 - Obstruction detection

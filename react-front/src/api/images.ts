@@ -4,6 +4,8 @@ import type {
   ImageUploadResponse,
   InpaintMaskRequest,
   InpaintMaskResponse,
+  NovelViewRequest,
+  NovelViewResponse,
   ObjectListResponse,
   ObjectMetadataResponse,
   SegmentRequest,
@@ -180,11 +182,6 @@ export async function getSessionObjects(uid: string): Promise<ObjectListResponse
   return handleJsonResponse<ObjectListResponse>(response);
 }
 
-export async function getObjectByUuid(objectUuid: string): Promise<ObjectMetadataResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}`);
-  return handleJsonResponse<ObjectMetadataResponse>(response);
-}
-
 export async function setObjectName(
   objectUuid: string,
   name: string | null,
@@ -216,5 +213,17 @@ export async function syncCheckSession(
   });
 
   return handleJsonResponse<SessionSyncCheckResponse>(response);
+}
+
+export async function synthesizeNovelView(payload: NovelViewRequest): Promise<NovelViewResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/novel-view`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  return handleJsonResponse<NovelViewResponse>(response);
 }
 

@@ -1,17 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { inpaintMask, segmentImage, setObjectName } from "../api/images";
+import { inpaintMask, segmentImage, setObjectName, synthesizeNovelView } from "../api/images";
 import type { CutoutBounds, ObjectInfo, SegmentRequest } from "../types/api";
 import type {
   ClickPosition,
   CutoutAlphaBounds,
   CutoutObject,
   PendingInpaintJob,
+  RotationPose,
   SegmentPickerState,
 } from "../types/session";
 
 let pendingJobCounter = 0;
 const nextPendingJobId = (): string => `pending-${++pendingJobCounter}`;
+
+// The novel-view API requires an absolute source-view elevation, which the
+// frontend has no way to measure from a room photo. Assume the photo was shot
+// roughly level; tune this one constant if real results look off.
+const SOURCE_ELEVATION_DEG = 0;
+
+// Zoom/radius delta is not exposed in the rotate UI -- always request the
+// model's default camera distance.
+const NO_RADIUS_DELTA = 0;
 
 export const toCutoutAlphaBounds = (
   bounds: CutoutBounds | null | undefined,
@@ -33,7 +43,7 @@ export const toCutoutAlphaBounds = (
 // Contexts a 409 can meaningfully arrive from. "generic" means: whatever this
 // error is, it isn't a concurrency conflict — hand it straight to the page's
 // existing error-modal path.
-export type JobErrorContext = "segment" | "inpaint" | "generic";
+export type JobErrorContext = "segment" | "inpaint" | "rotate" | "generic";
 
 interface UseSessionJobsOptions {
   onError: (error: unknown, context: JobErrorContext) => void;
@@ -85,6 +95,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       cutoutAlphaBounds: toCutoutAlphaBounds(info.cutout_bounds),
       normalizedClickPos: null,
       glbData: null,
+      rotation: null,
       hidden: false,
       offset: { x: 0, y: 0 },
     }));
@@ -167,6 +178,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
             cutoutAlphaBounds: toCutoutAlphaBounds(result.cutout_bounds),
             normalizedClickPos,
             glbData: null,
+            rotation: null,
             hidden: false,
             offset: { x: 0, y: 0 },
           };
@@ -210,6 +222,77 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     setObjects((prev) => prev.map((o) => (o.objectId === objectId ? { ...o, offset } : o)));
   }, []);
 
+  // Fires the novel-view request detached, same pattern as selectMask: the
+  // object's `rotation` field itself is the pending-state marker (no separate
+  // pendingJobs entry needed, since the object already exists). Re-rotating
+  // an object simply overwrites its rotation -- always starting over from the
+  // pristine cutout, since the backend never mutates that file.
+  const commitRotation = useCallback(
+    (objectId: number, pose: RotationPose, previewSrc: string) => {
+      const currentImageId = imageIdRef.current;
+      if (!currentImageId) {
+        return;
+      }
+
+      setObjects((prev) =>
+        prev.map((o) =>
+          o.objectId === objectId
+            ? { ...o, rotation: { pose, previewSrc, src: null, bounds: null, status: "pending" } }
+            : o,
+        ),
+      );
+
+      synthesizeNovelView({
+        uid: currentImageId,
+        object_id: objectId,
+        elevation_deg: SOURCE_ELEVATION_DEG,
+        azimuth_deg: pose.azimuthDeg,
+        relative_elevation_deg: pose.relativeElevationDeg,
+        radius: NO_RADIUS_DELTA,
+      })
+        .then((result) => {
+          if (imageIdRef.current !== currentImageId) {
+            return;
+          }
+
+          setObjects((prev) =>
+            prev.map((o) =>
+              o.objectId === objectId
+                ? {
+                    ...o,
+                    rotation: {
+                      pose: {
+                        azimuthDeg: result.azimuth_deg,
+                        relativeElevationDeg: result.relative_elevation_deg,
+                      },
+                      previewSrc,
+                      src: `data:image/${result.format};base64,${result.image_b64}`,
+                      bounds: toCutoutAlphaBounds(result.cutout_bounds),
+                      status: "ready",
+                    },
+                  }
+                : o,
+            ),
+          );
+          onMutated?.();
+        })
+        .catch((err) => {
+          if (imageIdRef.current !== currentImageId) {
+            return;
+          }
+          setObjects((prev) =>
+            prev.map((o) =>
+              o.objectId === objectId && o.rotation
+                ? { ...o, rotation: { ...o.rotation, status: "error" } }
+                : o,
+            ),
+          );
+          onError(err, "rotate");
+        });
+    },
+    [onError, onMutated],
+  );
+
   const renameObject = useCallback(
     async (objectId: number, uuid: string, name: string | null) => {
       try {
@@ -231,7 +314,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     selectedObjectId,
     setSelectedObjectId,
     pendingJobs,
-    hasPendingWork: pendingJobs.length > 0,
+    hasPendingWork:
+      pendingJobs.length > 0 || objects.some((o) => o.rotation?.status === "pending"),
     segmentState,
     isSegmenting: segmentState.status === "loading",
     isChoosingMask: segmentState.status === "choosing",
@@ -241,6 +325,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     runSegment,
     closeMaskPicker,
     selectMask,
+    commitRotation,
     toggleHidden,
     updateOffset,
     renameObject,

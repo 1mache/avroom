@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -31,50 +31,65 @@ const RIM_LIGHT_POSITION = { x: 0, y: -3, z: -6 };
 const MODEL_TARGET_SIZE = 3;
 const MATERIAL_ROUGHNESS = 0.3;
 
-interface NormalizedPos {
-  x: number;
-  y: number;
-}
-
 interface Props {
   glbData: ArrayBuffer | null;
-  // Reserved hook for putting a guide image behind the WebGL canvas.
-  backgroundImage?: string | null;
-  clickNormalizedPos?: NormalizedPos | null;
   className?: string;
   style?: React.CSSProperties;
 }
 
-// Re-center camera framing toward original click target so 3D preview feels tied
-// to same object the user selected in the source image.
-function applyClickViewOffset(
-  camera: THREE.PerspectiveCamera,
-  pos: NormalizedPos | null | undefined,
-  width: number,
-  height: number,
-): void {
-  if (pos) {
-    camera.setViewOffset(
-      width,
-      height,
-      width * (0.5 - pos.x),
-      height * (0.5 - pos.y),
-      width,
-      height,
-    );
-  } else {
-    camera.clearViewOffset();
-  }
+// Angle/snapshot captured relative to the pose the viewer started at, around
+// the object center -- orbit distance/pan never factor in. Sign convention
+// (which drag direction is "positive") is not guaranteed to match the
+// backend's CLOCKWISE/UP conventions on the first try; flip here if a
+// real rotation comes back mirrored.
+export interface RotationCapture {
+  azimuthDeg: number;
+  relativeElevationDeg: number;
+  snapshotDataUrl: string;
 }
 
-export const Model3DFrame: React.FC<Props> = ({
-  glbData,
-  backgroundImage,
-  clickNormalizedPos,
-  className,
-  style,
-}) => {
+export interface Model3DFrameHandle {
+  capture(): RotationCapture | null;
+}
+
+const radToDeg = (radians: number): number => (radians * 180) / Math.PI;
+
+export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model3DFrame(
+  { glbData, className, style },
+  ref,
+) {
   const mountRef = useRef<HTMLDivElement>(null);
+  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const controlsRef = useRef<OrbitControls | null>(null);
+  const initialAzimuthalRef = useRef(0);
+  const initialPolarRef = useRef(0);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      capture: () => {
+        const renderer = rendererRef.current;
+        const controls = controlsRef.current;
+        if (!renderer || !controls) {
+          return null;
+        }
+
+        const azimuthDeg = radToDeg(controls.getAzimuthalAngle() - initialAzimuthalRef.current);
+        // Three.js polar angle shrinks as the camera rises above the equator,
+        // so an upward orbit must read as a positive elevation delta.
+        const relativeElevationDeg = radToDeg(
+          initialPolarRef.current - controls.getPolarAngle(),
+        );
+
+        return {
+          azimuthDeg,
+          relativeElevationDeg,
+          snapshotDataUrl: renderer.domElement.toDataURL("image/png"),
+        };
+      },
+    }),
+    [],
+  );
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -101,14 +116,29 @@ export const Model3DFrame: React.FC<Props> = ({
     );
     camera.lookAt(0, 0, 0);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    // preserveDrawingBuffer is required for capture() to read real pixels via
+    // toDataURL -- without it the buffer is cleared before readback.
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: true,
+      preserveDrawingBuffer: true,
+    });
     renderer.setSize(width, height);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_PIXEL_RATIO));
     mount.appendChild(renderer.domElement);
+    rendererRef.current = renderer;
 
-    // Damping keeps orbit motion feeling weighted instead of twitchy.
+    // Damping keeps orbit motion feeling weighted instead of twitchy. Target
+    // is pinned to the object center (the GLB is recentered to the origin
+    // below) and panning is disabled so that center can never drift --
+    // rotation angles are only meaningful around a fixed pivot.
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
+    controls.enablePan = false;
+    controls.target.set(0, 0, 0);
+    controlsRef.current = controls;
+    initialAzimuthalRef.current = controls.getAzimuthalAngle();
+    initialPolarRef.current = controls.getPolarAngle();
 
     scene.add(new THREE.AmbientLight(AMBIENT_LIGHT_COLOR, AMBIENT_LIGHT_INTENSITY));
 
@@ -126,8 +156,6 @@ export const Model3DFrame: React.FC<Props> = ({
 
     const group = new THREE.Group();
     scene.add(group);
-
-    applyClickViewOffset(camera, clickNormalizedPos, width, height);
 
     const loader = new GLTFLoader();
     loader.parse(glbData.slice(0), "", (gltf) => {
@@ -163,8 +191,6 @@ export const Model3DFrame: React.FC<Props> = ({
       const nextWidth = mount.clientWidth;
       const nextHeight = mount.clientHeight;
       camera.aspect = nextWidth / nextHeight;
-      // View offset depends on viewport dimensions, not only camera target.
-      applyClickViewOffset(camera, clickNormalizedPos, nextWidth, nextHeight);
       renderer.setSize(nextWidth, nextHeight);
       camera.updateProjectionMatrix();
     });
@@ -175,28 +201,17 @@ export const Model3DFrame: React.FC<Props> = ({
       observer.disconnect();
       controls.dispose();
       renderer.dispose();
+      rendererRef.current = null;
+      controlsRef.current = null;
       if (mount.contains(renderer.domElement)) {
         mount.removeChild(renderer.domElement);
       }
     };
-  }, [glbData, clickNormalizedPos]);
+  }, [glbData]);
 
   return (
     <div className={`model-3d-frame${className ? ` ${className}` : ""}`} style={style}>
-      <div
-        ref={mountRef}
-        className="model-3d-viewport"
-        style={
-          backgroundImage
-            ? {
-                backgroundImage: `url(${backgroundImage})`,
-                backgroundSize: "contain",
-                backgroundPosition: "center",
-                backgroundRepeat: "no-repeat",
-              }
-            : undefined
-        }
-      />
+      <div ref={mountRef} className="model-3d-viewport" />
     </div>
   );
-};
+});

@@ -1,0 +1,186 @@
+"""Tests for the /images/novel-view endpoint's HTTP-layer pose snapping and cache."""
+
+from __future__ import annotations
+
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Any
+
+import cv2
+import numpy as np
+import pytest
+
+_APP_ROOT = Path(__file__).resolve().parents[1]
+if str(_APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(_APP_ROOT))
+
+import settings  # noqa: E402
+from api.novel_view import _normalize_azimuth_deg, _snap_to_step  # noqa: E402
+
+
+class TestSnapHelpers:
+    def test_snaps_to_nearest_10(self) -> None:
+        assert _snap_to_step(37.0, 10.0) == 40.0
+        assert _snap_to_step(33.0, 10.0) == 30.0
+        assert _snap_to_step(-7.0, 10.0) == -10.0
+
+    def test_snap_returns_positive_zero(self) -> None:
+        result = _snap_to_step(-2.0, 10.0)
+        assert result == 0.0
+        assert str(result) == "0.0"
+
+    def test_normalize_wraps_into_range(self) -> None:
+        assert _normalize_azimuth_deg(355.0) == -5.0
+        assert _normalize_azimuth_deg(-355.0) == 5.0
+        assert _normalize_azimuth_deg(180.0) == 180.0
+        assert _normalize_azimuth_deg(-180.0) == 180.0
+
+    def test_normalize_passthrough_within_range(self) -> None:
+        assert _normalize_azimuth_deg(40.0) == 40.0
+        assert _normalize_azimuth_deg(-170.0) == -170.0
+
+
+class _FakeInferenceClient:
+    """Stands in for the real inference pool client -- no GPU/model loading."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def run_novel_view(
+        self,
+        *,
+        cutout_path: Path,
+        elevation_deg: float,
+        azimuth_deg: float,
+        relative_elevation_deg: float,
+        radius: float,
+    ) -> np.ndarray:
+        self.calls.append(
+            {
+                "cutout_path": cutout_path,
+                "elevation_deg": elevation_deg,
+                "azimuth_deg": azimuth_deg,
+                "relative_elevation_deg": relative_elevation_deg,
+                "radius": radius,
+            }
+        )
+        # 4x4 fully-opaque BGRA image is enough to round-trip through
+        # cutout-bounds extraction and PNG encode/decode.
+        image = np.zeros((4, 4, 4), dtype=np.uint8)
+        image[:, :, 3] = 255
+        return image
+
+
+@pytest.fixture
+def storage_sandbox(monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Redirect image storage to an isolated directory with one real cutout."""
+    root = Path(tempfile.mkdtemp(prefix="avroom_novel_view_test_"))
+    images_dir = root / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(settings, "IMAGE_STORAGE_DIR", str(images_dir))
+    assert settings.get_image_storage_dir() == images_dir
+
+    cutout = np.zeros((4, 4, 4), dtype=np.uint8)
+    cutout[:, :, 3] = 255
+    success, encoded = cv2.imencode(".png", cutout)
+    assert success
+    (images_dir / "sess-1_0_cutout.png").write_bytes(encoded.tobytes())
+
+    return images_dir
+
+
+@pytest.fixture
+def fake_client(monkeypatch: pytest.MonkeyPatch) -> _FakeInferenceClient:
+    client = _FakeInferenceClient()
+    monkeypatch.setattr("api.novel_view.get_inference_client", lambda: client)
+    return client
+
+
+def _build_client() -> Any:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api.novel_view import router
+
+    app = FastAPI()
+    app.include_router(router)
+    return TestClient(app)
+
+
+def _post_novel_view(client: Any, **overrides: Any) -> Any:
+    payload = {
+        "uid": "sess-1",
+        "object_id": 0,
+        "elevation_deg": 0.0,
+        "azimuth_deg": 0.0,
+    }
+    payload.update(overrides)
+    return client.post("/images/novel-view", json=payload)
+
+
+def test_response_echoes_snapped_azimuth(
+    storage_sandbox: Path, fake_client: _FakeInferenceClient
+) -> None:
+    with _build_client() as client:
+        response = _post_novel_view(client, azimuth_deg=37.0)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["azimuth_deg"] == 40.0
+    assert fake_client.calls[0]["azimuth_deg"] == 40.0
+
+
+def test_near_identical_poses_share_one_cache_entry(
+    storage_sandbox: Path, fake_client: _FakeInferenceClient
+) -> None:
+    with _build_client() as client:
+        first = _post_novel_view(client, azimuth_deg=36.0)
+        second = _post_novel_view(client, azimuth_deg=44.0)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["azimuth_deg"] == second.json()["azimuth_deg"] == 40.0
+    assert len(fake_client.calls) == 1, "second request should have been served from cache"
+
+    cache_path = storage_sandbox / "sess-1_0_novel_az40_el0.png"
+    assert cache_path.exists()
+
+
+def test_stale_cache_after_cutout_rewrite_resynthesizes(
+    storage_sandbox: Path, fake_client: _FakeInferenceClient
+) -> None:
+    with _build_client() as client:
+        _post_novel_view(client, azimuth_deg=40.0)
+        assert len(fake_client.calls) == 1
+
+        # Simulate rescale-by-depth rewriting the cutout in place, strictly
+        # after the cached rotation was written.
+        time.sleep(0.05)
+        cutout_path = storage_sandbox / "sess-1_0_cutout.png"
+        cutout_path.write_bytes(cutout_path.read_bytes())
+
+        _post_novel_view(client, azimuth_deg=40.0)
+
+    assert len(fake_client.calls) == 2, "stale cache entry must not be served"
+
+
+def test_invalid_pose_returns_422(storage_sandbox: Path, fake_client: _FakeInferenceClient) -> None:
+    with _build_client() as client:
+        response = _post_novel_view(
+            client, azimuth_deg=-15.0, azimuth_direction="CLOCKWISE"
+        )
+
+    assert response.status_code == 422
+    assert not fake_client.calls
+
+
+def test_missing_cutout_returns_404(
+    storage_sandbox: Path, fake_client: _FakeInferenceClient
+) -> None:
+    with _build_client() as client:
+        response = _post_novel_view(client, object_id=99)
+
+    assert response.status_code == 404
+    assert not fake_client.calls

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import sys
 import tempfile
 import time
@@ -184,3 +185,79 @@ def test_missing_cutout_returns_404(
 
     assert response.status_code == 404
     assert not fake_client.calls
+
+
+def _post_preview_cache(client: Any, **overrides: Any) -> Any:
+    payload = {
+        "uid": "sess-1",
+        "object_id": 0,
+        "azimuth_deg": 0.0,
+        "image_b64": base64.b64encode(b"fake-preview-bytes").decode("ascii"),
+    }
+    payload.update(overrides)
+    return client.post("/images/novel-view/preview-cache", json=payload)
+
+
+class TestPreviewCache:
+    def test_writes_preview_file_at_snapped_pose(self, storage_sandbox: Path) -> None:
+        with _build_client() as client:
+            response = _post_preview_cache(client, azimuth_deg=37.0)
+
+        assert response.status_code == 204
+        preview_path = storage_sandbox / "sess-1_0_novel_az40_el0.preview.png"
+        assert preview_path.exists()
+        assert preview_path.read_bytes() == b"fake-preview-bytes"
+
+    def test_invalid_base64_returns_422(self, storage_sandbox: Path) -> None:
+        with _build_client() as client:
+            response = _post_preview_cache(client, image_b64="not-valid-base64!!!")
+
+        assert response.status_code == 422
+
+    def test_real_result_deletes_matching_preview(
+        self, storage_sandbox: Path, fake_client: _FakeInferenceClient
+    ) -> None:
+        with _build_client() as client:
+            cache_response = _post_preview_cache(client, azimuth_deg=37.0)
+            assert cache_response.status_code == 204
+            preview_path = storage_sandbox / "sess-1_0_novel_az40_el0.preview.png"
+            assert preview_path.exists()
+
+            real_response = _post_novel_view(client, azimuth_deg=37.0)
+
+        assert real_response.status_code == 200
+        assert not preview_path.exists()
+
+    def test_cache_hit_also_deletes_matching_preview(
+        self, storage_sandbox: Path, fake_client: _FakeInferenceClient
+    ) -> None:
+        with _build_client() as client:
+            _post_novel_view(client, azimuth_deg=40.0)
+            assert len(fake_client.calls) == 1
+
+            preview_path = storage_sandbox / "sess-1_0_novel_az40_el0.preview.png"
+            preview_path.write_bytes(b"leftover-preview")
+
+            second = _post_novel_view(client, azimuth_deg=40.0)
+
+        assert second.status_code == 200
+        assert len(fake_client.calls) == 1, "second request should still be a cache hit"
+        assert not preview_path.exists()
+
+    def test_preview_untouched_when_synthesis_fails(
+        self, storage_sandbox: Path, fake_client: _FakeInferenceClient
+    ) -> None:
+        def _boom(**_kwargs: Any) -> np.ndarray:
+            raise RuntimeError("model exploded")
+
+        fake_client.run_novel_view = _boom  # type: ignore[method-assign]
+
+        with _build_client() as client:
+            _post_preview_cache(client, azimuth_deg=37.0)
+            preview_path = storage_sandbox / "sess-1_0_novel_az40_el0.preview.png"
+            assert preview_path.exists()
+
+            response = _post_novel_view(client, azimuth_deg=37.0)
+
+        assert response.status_code == 500
+        assert preview_path.exists(), "preview must survive a failed synthesis"

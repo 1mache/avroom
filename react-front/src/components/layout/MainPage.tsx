@@ -83,6 +83,48 @@ const getContainedImageRect = (containerSize: Size, imageSize: Size) => {
   };
 };
 
+const loadImageElement = (src: string): Promise<HTMLImageElement> =>
+  new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Failed to load image"));
+    img.src = src;
+  });
+
+// The 3D viewer's WebGL canvas is sized to the object's tight on-stage rect in
+// CSS pixels (see model3DFrameStyle) -- a much smaller, differently-scaled
+// image than a real cutout, which is always a full-canvas PNG in
+// natural-image pixels with its content sitting at the object's alpha bounds.
+// Pasting the snapshot onto a matching full-canvas transparent frame at those
+// same bounds makes the preview behave identically to a real cutout for
+// rendering (getCutoutOverlayStyle), drag-clamping, and alpha-precise
+// hit-testing (hitCanvasesRef) -- without this the preview renders wildly
+// oversized and can't be dragged or clicked.
+const compositePreviewOntoCanvas = async (
+  snapshotDataUrl: string,
+  bounds: CutoutAlphaBounds | null,
+  canvasSize: Size,
+): Promise<string> => {
+  const img = await loadImageElement(snapshotDataUrl);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvasSize.width;
+  canvas.height = canvasSize.height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    return snapshotDataUrl;
+  }
+
+  const target = bounds ?? { left: 0, top: 0, right: canvasSize.width, bottom: canvasSize.height };
+  ctx.drawImage(
+    img,
+    target.left,
+    target.top,
+    target.right - target.left,
+    target.bottom - target.top,
+  );
+  return canvas.toDataURL("image/png");
+};
+
 const clampCutoutOffset = (
   offset: ClickPosition,
   alphaBounds: CutoutAlphaBounds | null,
@@ -446,29 +488,53 @@ export const MainPage: React.FC = () => {
   // delta + a snapshot of the viewer, fires the (detached) novel-view job,
   // and closes the angle picker. The object shows the snapshot immediately
   // and swaps to the real result when the response lands (see commitRotation).
-  const commitCurrentRotation = useCallback(() => {
+  const commitCurrentRotation = useCallback(async () => {
     if (jobs.selectedObjectId === null) {
       setRotateMode(false);
       return;
     }
+
+    // Capture synchronously (reads the live WebGL canvas) before closing the
+    // picker -- everything after this point works from the extracted data URL.
     const capture = model3DFrameRef.current?.capture();
-    if (capture) {
-      jobs.commitRotation(
-        jobs.selectedObjectId,
-        { azimuthDeg: capture.azimuthDeg, relativeElevationDeg: capture.relativeElevationDeg },
-        capture.snapshotDataUrl,
-      );
-    }
+    const targetObjectId = jobs.selectedObjectId;
+    const bounds = selectedObject?.cutoutAlphaBounds ?? null;
     setRotateMode(false);
     setShowOriginal(false);
-  }, [jobs.selectedObjectId, jobs.commitRotation]);
+
+    if (!capture) {
+      return;
+    }
+
+    const pose = {
+      azimuthDeg: capture.azimuthDeg,
+      relativeElevationDeg: capture.relativeElevationDeg,
+    };
+
+    if (backgroundNaturalSize) {
+      try {
+        const previewSrc = await compositePreviewOntoCanvas(
+          capture.snapshotDataUrl,
+          bounds,
+          backgroundNaturalSize,
+        );
+        jobs.commitRotation(targetObjectId, pose, previewSrc);
+        return;
+      } catch {
+        // Compositing failed -- fall through to the raw (mis-scaled) snapshot
+        // rather than losing the rotation request entirely.
+      }
+    }
+
+    jobs.commitRotation(targetObjectId, pose, capture.snapshotDataUrl);
+  }, [jobs.selectedObjectId, jobs.commitRotation, selectedObject, backgroundNaturalSize]);
 
   // Opens the angle picker for the selected object. Pressing the button
   // again while it's already open commits the rotation instead (see
   // commitCurrentRotation) -- this branch only ever runs the GLB ladder.
   const handleRotateClick = useCallback(async () => {
     if (rotateMode) {
-      commitCurrentRotation();
+      void commitCurrentRotation();
       return;
     }
 
@@ -534,7 +600,7 @@ export const MainPage: React.FC = () => {
 
       if (event.key === "Enter") {
         event.preventDefault();
-        commitCurrentRotation();
+        void commitCurrentRotation();
       } else if (event.key === "Escape") {
         event.preventDefault();
         setRotateMode(false);

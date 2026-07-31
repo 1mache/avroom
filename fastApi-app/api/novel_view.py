@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import logging
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 
 from avroom_object_removal.ai_engines.novel_view import NovelViewRotationAdapter
 
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.inference_pool.client import get_inference_client
-from core.object_storage import object_novel_view_path, resolve_object_cutout_path
-from schemas.image import NovelViewRequest, NovelViewResponse
+from core.object_storage import (
+    object_novel_view_path,
+    object_novel_view_preview_path,
+    resolve_object_cutout_path,
+)
+from schemas.image import NovelViewPreviewCacheRequest, NovelViewRequest, NovelViewResponse
 from settings import get_image_storage_dir, touch_session
 
 router = APIRouter(prefix="/images", tags=["images"])
@@ -182,6 +187,21 @@ def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
             cache_path,
         )
 
+    # A confirmed real result (cached or freshly synthesized) for this exact
+    # snapped pose makes any client-side preview placeholder obsolete.
+    preview_path = object_novel_view_preview_path(
+        storage_dir,
+        request.uid,
+        request.object_id,
+        snapped_azimuth_deg,
+        snapped_relative_elevation_deg,
+    )
+    if preview_path.exists():
+        try:
+            preview_path.unlink()
+        except OSError:
+            logger.warning("Failed to remove stale novel-view preview: path=%s", preview_path)
+
     cutout_bounds = extract_cutout_bounds_from_png_bytes(png_bytes)
 
     return NovelViewResponse(
@@ -198,3 +218,47 @@ def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
         radius=resolved_pose.radius,
         zoom_direction=request.zoom_direction,
     )
+
+
+@router.post("/novel-view/preview-cache", status_code=204)
+def cache_novel_view_preview(request: NovelViewPreviewCacheRequest) -> Response:
+    """Persist a client-rendered rotation preview as a best-effort placeholder.
+
+    Called fire-and-forget from the frontend right when a rotation is
+    committed, in parallel with the real (much slower) POST /images/novel-view
+    request for the same pose. Written to a distinct ``*.preview.png`` path so
+    the real endpoint's own cache-hit check can never mistake this for a
+    genuine synthesis result -- that endpoint deletes the matching preview
+    file once a real result for the same snapped pose is confirmed. If
+    synthesis never completes (error, dropped request), the preview file is
+    simply left in place as a fallback artifact.
+    """
+    snapped_azimuth_deg = _normalize_azimuth_deg(
+        _snap_to_step(request.azimuth_deg, ROTATION_STEP_DEG)
+    )
+    snapped_relative_elevation_deg = _snap_to_step(
+        request.relative_elevation_deg, ROTATION_STEP_DEG
+    )
+
+    try:
+        png_bytes = base64.b64decode(request.image_b64, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        logger.error("Invalid novel-view preview payload: %s", exc)
+        raise HTTPException(status_code=422, detail="image_b64 is not valid base64.") from exc
+
+    preview_path = object_novel_view_preview_path(
+        get_image_storage_dir(),
+        request.uid,
+        request.object_id,
+        snapped_azimuth_deg,
+        snapped_relative_elevation_deg,
+    )
+    preview_path.write_bytes(png_bytes)
+
+    logger.info(
+        "novel-view preview cached: uid=%s object_id=%d path=%s",
+        request.uid,
+        request.object_id,
+        preview_path,
+    )
+    return Response(status_code=204)

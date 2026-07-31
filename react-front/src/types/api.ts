@@ -135,6 +135,14 @@ export interface NovelViewRequest {
   zoom_direction?: ZoomDirection | null;
 }
 
+export interface NovelViewPreviewCacheRequest {
+  uid: string;
+  object_id: number;
+  azimuth_deg: number;
+  relative_elevation_deg?: number;
+  image_b64: string;
+}
+
 export interface NovelViewResponse {
   uid: string;
   object_id: number;

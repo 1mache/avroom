@@ -498,3 +498,26 @@ class NovelViewResponse(BaseModel):
         Field(default=None, description="Echo of zoom_direction when supplied."),
     ] = None
 
+
+class NovelViewPreviewCacheRequest(BaseModel):
+    """Request payload for POST /images/novel-view/preview-cache.
+
+    Lets the frontend persist a client-rendered stand-in (a WebGL viewport
+    snapshot, already composited onto a full-canvas frame) as a best-effort
+    fallback while the real synthesis request is still in flight. Written to a
+    separate ``*.preview.png`` path so it can never be mistaken for a genuine
+    cached result by ``POST /images/novel-view``'s own cache check.
+    """
+
+    uid: Annotated[str, Field(min_length=1, description="Session UID.")]
+    object_id: Annotated[int, Field(ge=0, description="Zero-based object id within the session.")]
+    azimuth_deg: Annotated[
+        float,
+        Field(description="Signed azimuth this preview approximates (pre-snap, matches the pending real request)."),
+    ]
+    relative_elevation_deg: Annotated[
+        float,
+        Field(default=0.0, description="Signed relative elevation this preview approximates."),
+    ] = 0.0
+    image_b64: Annotated[str, Field(description="Base64-encoded preview PNG.")]
+

@@ -4,6 +4,7 @@ import type {
   ImageUploadResponse,
   InpaintMaskRequest,
   InpaintMaskResponse,
+  NovelViewPreviewCacheRequest,
   NovelViewRequest,
   NovelViewResponse,
   ObjectListResponse,
@@ -225,5 +226,22 @@ export async function synthesizeNovelView(payload: NovelViewRequest): Promise<No
   });
 
   return handleJsonResponse<NovelViewResponse>(response);
+}
+
+// Best-effort: persists the client-rendered rotation preview so it survives
+// on disk as a fallback if the real synthesis request never completes. Fired
+// detached alongside synthesizeNovelView; callers should swallow failures.
+export async function cacheNovelViewPreview(payload: NovelViewPreviewCacheRequest): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/images/novel-view/preview-cache`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    return throwApiError(response);
+  }
 }
 

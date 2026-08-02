@@ -4,11 +4,15 @@ import type {
   ImageUploadResponse,
   InpaintMaskRequest,
   InpaintMaskResponse,
+  NovelViewPreviewCacheRequest,
+  NovelViewRequest,
+  NovelViewResponse,
   ObjectListResponse,
   ObjectMetadataResponse,
   SegmentRequest,
   SegmentResponse,
   SessionInfo,
+  SessionSyncCheckResponse,
   SetObjectNameRequest,
   UidCacheStatusResponse,
 } from "../types/api";
@@ -16,12 +20,53 @@ import type {
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000";
 
-// Central JSON error mapping so screens can treat backend text bodies as useful
-// user-facing errors instead of generic network failures.
+// Carries the HTTP status through so callers can distinguish e.g. 409
+// (expected concurrency conflict) from 404/500 (real failure) instead of
+// string-matching the message. `detail` is the raw FastAPI error body text
+// (usually the `detail` field unwrapped, sometimes just raw text).
+export class ApiError extends Error {
+  readonly status: number;
+  readonly detail: string;
+
+  constructor(status: number, detail: string) {
+    super(detail || `Request failed with status ${status}`);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+// Extracts a readable message from a FastAPI error body. FastAPI's default
+// error envelope is `{"detail": "..."}`; fall back to raw text for anything
+// else (proxy errors, plain-text 500s, etc).
+async function extractErrorDetail(response: Response): Promise<string> {
+  const text = await response.text();
+  if (!text) {
+    return "";
+  }
+
+  try {
+    const parsed = JSON.parse(text) as { detail?: unknown };
+    if (typeof parsed.detail === "string") {
+      return parsed.detail;
+    }
+  } catch {
+    // Not JSON — fall through to raw text.
+  }
+
+  return text;
+}
+
+async function throwApiError(response: Response): Promise<never> {
+  const detail = await extractErrorDetail(response);
+  throw new ApiError(response.status, detail);
+}
+
+// Central JSON error mapping so screens can treat backend error bodies as
+// typed ApiErrors instead of generic network failures.
 async function handleJsonResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Request failed with status ${response.status}`);
+    return throwApiError(response);
   }
 
   return (await response.json()) as T;
@@ -61,8 +106,7 @@ export async function generate3DModel(uid: string, objectId: number): Promise<Ar
   });
 
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Request failed with status ${response.status}`);
+    return throwApiError(response);
   }
 
   return response.arrayBuffer();
@@ -120,8 +164,7 @@ export async function deleteSession(uid: string): Promise<void> {
   });
 
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Delete failed with status ${response.status}`);
+    return throwApiError(response);
   }
 }
 
@@ -130,8 +173,7 @@ export async function fetchCached3DModel(uid: string, objectId: number): Promise
   const response = await fetch(`${API_BASE_URL}/3d/${uid}/${objectId}`);
   if (response.status === 404) return null;
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `Request failed with status ${response.status}`);
+    return throwApiError(response);
   }
   return response.arrayBuffer();
 }
@@ -139,11 +181,6 @@ export async function fetchCached3DModel(uid: string, objectId: number): Promise
 export async function getSessionObjects(uid: string): Promise<ObjectListResponse> {
   const response = await fetch(`${API_BASE_URL}/images/${uid}/objects`);
   return handleJsonResponse<ObjectListResponse>(response);
-}
-
-export async function getObjectByUuid(objectUuid: string): Promise<ObjectMetadataResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}`);
-  return handleJsonResponse<ObjectMetadataResponse>(response);
 }
 
 export async function setObjectName(
@@ -159,5 +196,52 @@ export async function setObjectName(
   });
 
   return handleJsonResponse<ObjectMetadataResponse>(response);
+}
+
+// Compares a client-held last_changed timestamp against server truth so a
+// session that changed elsewhere (another tab, another client) can be
+// detected without unconditionally re-fetching everything.
+export async function syncCheckSession(
+  uid: string,
+  clientLastChanged: string | null,
+): Promise<SessionSyncCheckResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/${uid}/sync-check`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ client_last_changed: clientLastChanged }),
+  });
+
+  return handleJsonResponse<SessionSyncCheckResponse>(response);
+}
+
+export async function synthesizeNovelView(payload: NovelViewRequest): Promise<NovelViewResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/novel-view`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  return handleJsonResponse<NovelViewResponse>(response);
+}
+
+// Best-effort: persists the client-rendered rotation preview so it survives
+// on disk as a fallback if the real synthesis request never completes. Fired
+// detached alongside synthesizeNovelView; callers should swallow failures.
+export async function cacheNovelViewPreview(payload: NovelViewPreviewCacheRequest): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/images/novel-view/preview-cache`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    return throwApiError(response);
+  }
 }
 

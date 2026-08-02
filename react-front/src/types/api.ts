@@ -1,12 +1,23 @@
 export interface SessionInfo {
   uid: string;
   name: string | null;
+  last_changed: string | null;
 }
 
 export interface ImageUploadResponse {
   image_id: string;
   original_filename?: string | null;
   stored_path?: string | null;
+  last_changed: string;
+}
+
+export interface SessionSyncCheckRequest {
+  client_last_changed: string | null;
+}
+
+export interface SessionSyncCheckResponse {
+  last_changed: string;
+  needs_refresh: boolean;
 }
 
 // Mirrors backend processing options. Fields remain optional because frontend
@@ -106,5 +117,44 @@ export interface ObjectInfo {
 export interface ObjectListResponse {
   uid: string;
   objects: ObjectInfo[];
+}
+
+export type AzimuthDirection = "CLOCKWISE" | "C_CLOCKWISE";
+export type ElevationDirection = "UP" | "DOWN";
+export type ZoomDirection = "ZOOM_IN" | "ZOOM_OUT";
+
+export interface NovelViewRequest {
+  uid: string;
+  object_id: number;
+  elevation_deg: number;
+  azimuth_deg: number;
+  azimuth_direction?: AzimuthDirection | null;
+  relative_elevation_deg?: number;
+  elevation_direction?: ElevationDirection | null;
+  radius?: number;
+  zoom_direction?: ZoomDirection | null;
+}
+
+export interface NovelViewPreviewCacheRequest {
+  uid: string;
+  object_id: number;
+  azimuth_deg: number;
+  relative_elevation_deg?: number;
+  image_b64: string;
+}
+
+export interface NovelViewResponse {
+  uid: string;
+  object_id: number;
+  image_b64: string;
+  format: string;
+  cutout_bounds?: CutoutBounds | null;
+  elevation_deg: number;
+  azimuth_deg: number;
+  azimuth_direction?: AzimuthDirection | null;
+  relative_elevation_deg: number;
+  elevation_direction?: ElevationDirection | null;
+  radius: number;
+  zoom_direction?: ZoomDirection | null;
 }
 

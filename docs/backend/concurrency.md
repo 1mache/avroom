@@ -44,7 +44,7 @@ This enables **segment during inpaint** on a non-overlapping region: segment may
 - Segment click falls inside an in-flight removal region.
 - Canvas writer timeout while another inpaint holds the session.
 
-The React frontend still single-flights inpaint in the UI today; the API behavior is available for concurrent callers and future client work.
+The React frontend now runs concurrent inpaints too (`react-front/src/hooks/useSessionJobs.ts`): selecting a mask closes the picker and fires inpaint detached, so a user can start a second non-overlapping removal before the first one's response lands. Segment stays single-flight client-side (it drives one interactive picker), but the underlying API always allowed concurrent segment/inpaint calls. 409s from either surface as a dismissible inline notice (`useConflictNotices`) rather than the error modal.
 
 ## Candidate file lifecycle
 

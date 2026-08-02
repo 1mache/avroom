@@ -489,6 +489,13 @@ async def delete_session(uid: str) -> Response:
                 p.unlink()
                 removed += 1
 
+        # Cached novel-view results and their preview placeholders, one file
+        # per (object, snapped pose) pair -- glob rather than reconstructing
+        # every possible filename.
+        for path in storage_dir.glob(f"{uid}_*_novel_az*_el*.png"):
+            path.unlink(missing_ok=True)
+            removed += 1
+
     except Exception as exc:
         logger.error("Session delete failed: uid=%s error=%s", uid, exc)
         raise HTTPException(status_code=500, detail=f"Session delete failed: {exc}") from exc

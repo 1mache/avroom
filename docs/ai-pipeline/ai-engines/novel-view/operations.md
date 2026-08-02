@@ -153,7 +153,15 @@ Responses echo optional direction fields and return the resolved signed pose val
 
 ## Disk cache
 
-Successful responses write `{uid}_{object_id}_novel_az{azimuth}_el{rel_el}.png` under the image storage directory. The JSON contract is unchanged; cache is for debugging and repeat requests.
+Successful responses write `{uid}_{object_id}_novel_az{azimuth}_el{rel_el}.png` under the image storage directory, keyed by the **snapped** azimuth/elevation (see below) — the JSON contract is unchanged.
+
+This cache is read as well as written: a request whose snapped pose already has a cache file **newer than** the object's cutout is served straight from disk (no inference, no `touch_session`). A cutout rewritten by `rescale-by-depth` after the rotation was cached makes the entry stale, and the endpoint re-synthesizes instead of serving it.
+
+## HTTP-layer pose snapping
+
+`POST /images/novel-view` quantizes the resolved azimuth and relative elevation onto a 10° grid (`ROTATION_STEP_DEG` in `fastApi-app/api/novel_view.py`) before touching the cache or the model, so that a UI where the user drags to an arbitrary angle (e.g. a free-orbiting 3D viewer) still produces cache hits on repeated/near-repeated requests instead of a fresh (expensive) synthesis every time. Azimuth is also wrapped into `(-180, 180]` so e.g. 355° and -5° share one cache entry. This snapping is **HTTP-only** — it lives in the route, not in `NovelViewRotationAdapter` — so the direct Python API (`NovelViewFacade.synthesize`, the adapter's own tests) is unaffected and keeps accepting exact angles. Radius is never snapped.
+
+The response echoes the **snapped** values, not the raw request, so callers know exactly what was rendered.
 
 ## Errors
 

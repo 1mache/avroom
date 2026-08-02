@@ -1,4 +1,6 @@
-import React, { useCallback } from "react";
+import React, { useCallback, useRef, useState } from "react";
+
+import { effectiveCutoutSrc, type ObjectRotation } from "../../types/session";
 
 const EyeOpenIcon: React.FC = () => (
   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -29,33 +31,54 @@ const EyeOffIcon: React.FC = () => (
 
 interface ObjectEntry {
   objectId: number;
+  uuid: string | null;
+  name: string | null;
   cutoutSrc: string;
+  rotation: ObjectRotation | null;
   hidden: boolean;
+}
+
+interface PendingEntry {
+  jobId: string;
 }
 
 interface ObjectPanelProps {
   objects: ObjectEntry[];
+  pending: PendingEntry[];
   selectedObjectId: number | null;
   isAddingObject: boolean;
+  // Narrowed to genuinely blocking states — a concurrent inpaint elsewhere no
+  // longer freezes this panel; only 3D generation for the selected object does.
   disabled: boolean;
+  // "Show original" is scoped to the selected object only (see MainPage's
+  // dashboard toggle); every other object's thumbnail always shows its own
+  // rotated result, if it has one.
+  showOriginal: boolean;
   onSelectObject: (objectId: number) => void;
   onToggleHidden: (objectId: number) => void;
   onAddObject: () => void;
+  onRenameObject: (objectId: number, uuid: string, name: string | null) => void;
   collapsed: boolean;
   onToggleCollapsed: () => void;
 }
 
 export const ObjectPanel: React.FC<ObjectPanelProps> = ({
   objects,
+  pending,
   selectedObjectId,
   isAddingObject,
   disabled,
+  showOriginal,
   onSelectObject,
   onToggleHidden,
   onAddObject,
+  onRenameObject,
   collapsed,
   onToggleCollapsed,
 }) => {
+  const [editingObjectId, setEditingObjectId] = useState<number | null>(null);
+  const [draftName, setDraftName] = useState("");
+
   const handleSelectObject = useCallback(
     (objectId: number) => {
       if (!disabled) {
@@ -83,6 +106,47 @@ export const ObjectPanel: React.FC<ObjectPanelProps> = ({
     }
   }, [disabled, onAddObject]);
 
+  // Escape blurs the input (to drop focus) without saving; the blur handler
+  // checks this ref so it knows not to commit the draft in that case.
+  const cancelledEditRef = useRef(false);
+
+  const startEditing = useCallback(
+    (event: React.MouseEvent, obj: ObjectEntry) => {
+      event.stopPropagation();
+      if (disabled || !obj.uuid) {
+        return;
+      }
+      cancelledEditRef.current = false;
+      setEditingObjectId(obj.objectId);
+      setDraftName(obj.name ?? "");
+    },
+    [disabled],
+  );
+
+  const commitEditing = useCallback(
+    (obj: ObjectEntry) => {
+      setEditingObjectId(null);
+      if (cancelledEditRef.current || !obj.uuid) {
+        return;
+      }
+      const trimmed = draftName.trim();
+      const nextName = trimmed.length > 0 ? trimmed : null;
+      if (nextName !== (obj.name ?? null)) {
+        onRenameObject(obj.objectId, obj.uuid, nextName);
+      }
+    },
+    [draftName, onRenameObject],
+  );
+
+  const handleLabelKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.currentTarget.blur();
+    } else if (event.key === "Escape") {
+      cancelledEditRef.current = true;
+      event.currentTarget.blur();
+    }
+  }, []);
+
   return (
     <div className="object-panel-container">
       {/* Side column — always visible regardless of collapsed state */}
@@ -96,23 +160,20 @@ export const ObjectPanel: React.FC<ObjectPanelProps> = ({
         >
           {collapsed ? "▶" : "◀"}
         </button>
-
-        {/* + button is always visible so users can add objects even when panel is collapsed */}
-        <button
-          type="button"
-          className={`object-panel-add-side${isAddingObject ? " is-active" : ""}`}
-          onClick={handleAddObject}
-          disabled={disabled}
-          aria-label="Add new object"
-          title="Add new object"
-        >
-          +
-        </button>
       </div>
 
       {/* Expandable body with scrollable thumbnail list */}
       <div className={`object-panel-body${collapsed ? " is-collapsed" : ""}`}>
         <span className="object-panel-label">Objects</span>
+
+        <button
+          type="button"
+          className={`object-panel-add-big${isAddingObject ? " is-active" : ""}`}
+          onClick={handleAddObject}
+          disabled={disabled}
+        >
+          + Add object
+        </button>
 
         <div className="object-panel-list">
           {objects.map((obj) => (
@@ -122,15 +183,45 @@ export const ObjectPanel: React.FC<ObjectPanelProps> = ({
                 className={`object-thumbnail-btn${obj.objectId === selectedObjectId ? " is-active" : ""}`}
                 onClick={() => handleSelectObject(obj.objectId)}
                 disabled={disabled || obj.hidden}
-                aria-label={`Select object ${obj.objectId}`}
-                title={obj.hidden ? `Object ${obj.objectId} (hidden)` : `Object ${obj.objectId}`}
+                aria-label={`Select object ${obj.name ?? obj.objectId}`}
+                title={obj.hidden ? `${obj.name ?? `Object ${obj.objectId}`} (hidden)` : obj.name ?? `Object ${obj.objectId}`}
               >
                 <img
-                  src={obj.cutoutSrc}
-                  alt={`Object ${obj.objectId}`}
+                  src={effectiveCutoutSrc(
+                    obj,
+                    showOriginal && obj.objectId === selectedObjectId,
+                  )}
+                  alt={obj.name ?? `Object ${obj.objectId}`}
                   className="object-thumbnail-img"
                 />
+                {obj.rotation?.status === "pending" ? (
+                  <span className="object-thumbnail-rotating-badge" aria-label="Rotating">
+                    <span className="object-thumbnail-spinner" />
+                  </span>
+                ) : null}
               </button>
+
+              {editingObjectId === obj.objectId ? (
+                <input
+                  type="text"
+                  className="object-thumbnail-name-input"
+                  autoFocus
+                  value={draftName}
+                  onChange={(e) => setDraftName(e.target.value)}
+                  onBlur={() => commitEditing(obj)}
+                  onKeyDown={handleLabelKeyDown}
+                  onClick={(e) => e.stopPropagation()}
+                  aria-label={`Rename object ${obj.objectId}`}
+                />
+              ) : (
+                <span
+                  className={`object-thumbnail-name${obj.uuid ? " is-editable" : ""}`}
+                  onDoubleClick={(e) => startEditing(e, obj)}
+                  title={obj.uuid ? "Double-click to rename" : undefined}
+                >
+                  {obj.name ?? `Object ${obj.objectId}`}
+                </span>
+              )}
 
               <button
                 type="button"
@@ -142,6 +233,18 @@ export const ObjectPanel: React.FC<ObjectPanelProps> = ({
               >
                 {obj.hidden ? <EyeOffIcon /> : <EyeOpenIcon />}
               </button>
+            </div>
+          ))}
+
+          {/* In-flight inpaint jobs render as non-interactive placeholders
+              until their response lands and they become real thumbnails
+              above (see useSessionJobs.pendingJobs). */}
+          {pending.map((job) => (
+            <div key={job.jobId} className="object-thumbnail-row is-pending">
+              <div className="object-thumbnail-btn object-thumbnail-pending" aria-busy="true">
+                <span className="object-thumbnail-spinner" />
+              </div>
+              <span className="object-thumbnail-name">Removing...</span>
             </div>
           ))}
         </div>

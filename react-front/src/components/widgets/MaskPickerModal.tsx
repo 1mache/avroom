@@ -4,8 +4,6 @@ import type { SegmentMaskOption } from "../../types/api";
 
 export interface MaskPickerModalProps {
   masks: SegmentMaskOption[];
-  selectedMaskId?: string | null;
-  isInpainting: boolean;
   onSelect: (maskId: string) => void;
   onClose: () => void;
 }
@@ -16,26 +14,14 @@ const toDataUrl = (mask: SegmentMaskOption): string => {
   return `data:image/${mask.format};base64,${mask.cutout_b64}`;
 };
 
-export const MaskPickerModal: React.FC<MaskPickerModalProps> = ({
-  masks,
-  selectedMaskId,
-  isInpainting,
-  onSelect,
-  onClose,
-}) => {
-  // Backdrop click closes the modal, but not while inpainting is in progress —
-  // dismissing mid-flight would leave the UI in an unrecoverable pending state.
-  const handleBackdropClick: React.MouseEventHandler<HTMLDivElement> = () => {
-    if (isInpainting) {
-      return;
-    }
-
-    onClose();
-  };
-
+// Selecting a mask closes this modal immediately and fires inpainting
+// detached (see useSessionJobs.selectMask) — the object appears as a pending
+// placeholder in ObjectPanel while it runs. There is no in-flight state left
+// for this modal to protect, so a backdrop click or Close always dismisses.
+export const MaskPickerModal: React.FC<MaskPickerModalProps> = ({ masks, onSelect, onClose }) => {
   return (
     // Full-screen backdrop intercepts outside clicks; inner modal stops propagation.
-    <div className="mask-modal-backdrop" role="presentation" onClick={handleBackdropClick}>
+    <div className="mask-modal-backdrop" role="presentation" onClick={onClose}>
       <div
         className="mask-modal"
         role="dialog"
@@ -53,7 +39,6 @@ export const MaskPickerModal: React.FC<MaskPickerModalProps> = ({
             type="button"
             className="error-modal-close"
             onClick={onClose}
-            disabled={isInpainting}
             aria-label="Close mask picker"
           >
             Close
@@ -62,28 +47,22 @@ export const MaskPickerModal: React.FC<MaskPickerModalProps> = ({
 
         {/* Grid of candidate masks returned by SAM. Each card shows the BGRA
             cutout — opaque where the object was segmented, transparent elsewhere.
-            Clicking a card triggers inpainting for that mask immediately. */}
-        <div className="mask-option-grid" aria-busy={isInpainting}>
-          {masks.map((mask, index) => {
-            const selected = selectedMaskId === mask.mask_id;
-            return (
-              <button
-                key={mask.mask_id}
-                type="button"
-                className={`mask-option-card${selected ? " is-selected" : ""}`}
-                onClick={() => onSelect(mask.mask_id)}
-                disabled={isInpainting}
-              >
-                <span className="mask-option-label">
-                  {/* Swap label text while the selected card's inpaint request is in flight. */}
-                  {selected && isInpainting ? "Inpainting..." : `Option ${index + 1}`}
-                </span>
-                <span className="mask-option-preview">
-                  <img src={toDataUrl(mask)} alt={`Mask option ${index + 1}`} />
-                </span>
-              </button>
-            );
-          })}
+            Clicking a card closes this modal and kicks off inpainting for that
+            mask in the background. */}
+        <div className="mask-option-grid">
+          {masks.map((mask, index) => (
+            <button
+              key={mask.mask_id}
+              type="button"
+              className="mask-option-card"
+              onClick={() => onSelect(mask.mask_id)}
+            >
+              <span className="mask-option-label">{`Option ${index + 1}`}</span>
+              <span className="mask-option-preview">
+                <img src={toDataUrl(mask)} alt={`Mask option ${index + 1}`} />
+              </span>
+            </button>
+          ))}
         </div>
       </div>
     </div>

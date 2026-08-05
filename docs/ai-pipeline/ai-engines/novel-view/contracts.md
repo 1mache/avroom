@@ -1,12 +1,13 @@
 # Novel view contracts
 
 - **Inputs:** Flexible image representations accepted by `to_pil_rgba`, plus keyword args on `synthesize`:
-  - `elevation_deg` — absolute elevation of the **source** view (degrees)
+  - `elevation_deg` — absolute elevation of the **source** view (degrees); used by Zero123; accepted but unused for mesh orbit camera placement
   - `azimuth_deg` — relative azimuth to the **target** view (degrees)
   - `relative_elevation_deg` — relative elevation delta (default `0`)
-  - `radius` — optional zoom / distance (default `0` = model default)
+  - `radius` — optional zoom / distance (default `0` = model/orbit default)
+  - `mesh` — optional GLB (`bytes` / path). Ignored by Zero123; required by `MeshRenderNovelViewStrategy` unless a `Reconstruction3DFacade` was injected for fallback generation
 - **Outputs:** uint8 `numpy.ndarray` shape `(H, W, 4)` in **BGRA** channel order (OpenCV convention), matching existing cutout PNG layout.
-- **RNG seed:** fixed at `0` for HTTP requests (not exposed on the API).
+- **RNG seed:** fixed at `0` for HTTP requests (not exposed on the API). Mesh render is deterministic and ignores `seed`.
 
 ## HTTP contract
 
@@ -24,7 +25,7 @@
 | `radius` | `float` | no (default `0`) |
 | `zoom_direction` | `"ZOOM_IN"` \| `"ZOOM_OUT"` | no |
 
-The client does **not** upload the cutout; the server resolves it from disk.
+The client does **not** upload the cutout or GLB; the server resolves the cutout from disk and ensures a GLB at `tmp/3d/{uid}_{object_id}.glb` (generate via `Reconstruction3DFacade` on miss) before mesh-rendering.
 
 ### Pose direction adapter (HTTP)
 
@@ -40,7 +41,7 @@ Rules:
 
 - **No direction on an axis:** the supplied signed value is passed through unchanged (backward compatible).
 - **Direction supplied:** the magnitude must be a finite non-negative number; negative magnitudes return **422**.
-- **Response:** echoes optional direction fields and returns the **resolved signed** `azimuth_deg`, `relative_elevation_deg`, and `radius` actually sent to Zero123.
+- **Response:** echoes optional direction fields and returns the **resolved signed** `azimuth_deg`, `relative_elevation_deg`, and `radius` actually sent to the mesh renderer (HTTP) / Zero123 (direct facade).
 
 Python named magnitudes (optional, for readability):
 

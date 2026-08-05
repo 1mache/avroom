@@ -32,6 +32,7 @@ class JobRequest:
     y: int | None = None
     object_uuid: str | None = None
     cutout_path: str | None = None
+    mesh_path: str | None = None
     elevation_deg: float | None = None
     azimuth_deg: float | None = None
     relative_elevation_deg: float | None = None

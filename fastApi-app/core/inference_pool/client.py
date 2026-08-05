@@ -176,12 +176,14 @@ class InferenceClient:
         azimuth_deg: float,
         relative_elevation_deg: float,
         radius: float,
+        mesh_path: Path,
     ) -> np.ndarray:
         job = JobRequest(
             job_id=str(uuid.uuid4()),
             kind=JobKind.NOVEL_VIEW,
             storage_dir=str(cutout_path.parent.resolve()),
             cutout_path=str(cutout_path.resolve()),
+            mesh_path=str(mesh_path.resolve()),
             elevation_deg=elevation_deg,
             azimuth_deg=azimuth_deg,
             relative_elevation_deg=relative_elevation_deg,

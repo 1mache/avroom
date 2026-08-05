@@ -2,51 +2,60 @@
 
 Invoked via `NovelViewFacade.synthesize(...)` or `POST /images/novel-view`.
 
-## Stable Zero123 (default)
+## HTTP path (mesh render)
 
 1. Resolve cutout path on disk (`{uid}_{object_id}_cutout.png`).
-2. **(HTTP only)** Normalize optional pose directions through `NovelViewRotationAdapter.resolve_pose(...)`.
-3. **(HTTP only)** Snap resolved azimuth/relative-elevation to the nearest 10° and wrap azimuth into `(-180, 180]` — see [contracts.md](contracts.md#http-layer-pose-snapping-and-cache). Radius is not snapped.
-4. **(HTTP only)** Check the disk cache for this exact (snapped azimuth, snapped elevation) pair. If a cache file exists and is newer than the cutout, return it directly — steps 5–10 below are skipped entirely.
-5. Normalize to PIL RGBA (`to_pil_rgba`).
-6. Crop to alpha bounding box; pad to square; resize to 256×256; composite onto white before RGB model input.
-7. Lazy-load Diffusers Zero1to3 pipeline on `kxic/stable-zero123` (override via `NOVEL_VIEW_MODEL_ID`).
-8. Run inference with pose `[elevation_deg + relative_elevation_deg, azimuth_deg, radius]`, `guidance_scale≈3`.
-9. Remask generated RGB (white background → transparent alpha).
-10. Upscale and composite back onto full-size transparent canvas.
-11. Encode PNG → base64; compute `cutout_bounds`; persist disk cache; **(HTTP only)** bump session `last_changed`.
+2. Normalize optional pose directions through `NovelViewRotationAdapter.resolve_pose(...)`.
+3. Snap resolved azimuth/relative-elevation to the nearest 10° and wrap azimuth into `(-180, 180]`.
+4. Check the disk PNG cache for this snapped pose. If fresh vs cutout mtime, return it — skip below.
+5. **Ensure GLB:** `resolve_object_glb_path`; on miss run `run_generate_3d` and write `{uid}_{object_id}.glb`.
+6. Inference pool: `NovelViewFacade(MeshRenderNovelViewStrategy()).synthesize(cutout, mesh=glb, pose)`.
+7. Strategy loads/normalizes GLB (recenter + scale), places OrbitControls-compatible camera, pyrender offscreen RGBA, composites onto cutout canvas → BGRA.
+8. Encode PNG → base64; persist disk cache; bump session `last_changed`.
 
 ```mermaid
 sequenceDiagram
   participant API
   participant Adapter as NovelViewRotationAdapter
-  participant Cache as Disk cache
-  participant Facade as NovelViewFacade
-  participant Strategy as StableZero123
-  participant Model as Zero123Pipeline
+  participant Cache as Disk_PNG_cache
+  participant Glb as GLB_storage
+  participant Pool as inference_pool
+  participant Strat as MeshRenderNovelViewStrategy
 
   API->>Adapter: resolve_pose(request)
   Adapter-->>API: signed azimuth elevation radius
   API->>API: snap azimuth/elevation to 10 deg grid
-  API->>Cache: check {uid}_{obj}_novel_az{az}_el{el}.png
-  alt cache hit (fresher than cutout)
+  API->>Cache: check novel PNG
+  alt cache hit
     Cache-->>API: cached PNG bytes
   else cache miss
-    API->>Facade: synthesize(cutout_path, pose)
-    Facade->>Strategy: synthesize(...)
-    Strategy->>Strategy: crop pad resize 256
-    Strategy->>Model: input_imgs + poses
-    Model-->>Strategy: RGB PIL
-    Strategy->>Strategy: remask composite canvas
-    Strategy-->>Facade: BGRA ndarray
-    Facade-->>API: BGRA ndarray
+    API->>Glb: resolve or generate GLB
+    API->>Pool: run_novel_view(cutout, mesh_path, pose)
+    Pool->>Strat: synthesize(..., mesh=glb)
+    Strat-->>Pool: BGRA ndarray
+    Pool-->>API: novel_view_bgra
     API->>Cache: write PNG
   end
 ```
 
+## Stable Zero123 (facade default / direct Python)
+
+Used when constructing `NovelViewFacade()` without a strategy (not the HTTP path):
+
+1. Normalize to PIL RGBA (`to_pil_rgba`).
+2. Crop to alpha bounding box; pad to square; resize to 256×256; composite onto white before RGB model input.
+3. Lazy-load Diffusers Zero1to3 pipeline on `kxic/stable-zero123` (override via `NOVEL_VIEW_MODEL_ID`).
+4. Run inference with pose `[elevation_deg + relative_elevation_deg, azimuth_deg, radius]`, `guidance_scale≈3`.
+5. Remask generated RGB (white background → transparent alpha).
+6. Upscale and composite back onto full-size transparent canvas.
+
+`mesh=` is accepted and ignored.
+
 ## Pose semantics
 
-The Zero1to3 community pipeline encodes pose as `[elevation, azimuth, radius]`:
+**Mesh render (HTTP):** OrbitControls-compatible deltas from a canonical start camera `(0, 1.5, 7)` looking at origin — matches `Model3DFrame.capture()`. `radius` scales distance (`distance = base * (1 + radius)`). Absolute `elevation_deg` is unused for camera placement.
+
+**Zero123:** community pipeline encodes pose as `[elevation, azimuth, radius]`:
 
 - **elevation** — target view elevation in degrees (source absolute + relative delta)
 - **azimuth** — relative rotation from source to target
@@ -56,6 +65,6 @@ Use **low CFG (~3)**; higher values over-amplify pose conditioning.
 
 ## Known limits
 
-- Large azimuth angles hallucinate unseen object backsides.
-- Pose is not guaranteed geometrically identical to a Trellis GLB orbit view.
-- Model is object-centric (Objaverse-style); cutout must be centered and isolated.
+- Mesh render quality is limited by the GLB (Hunyuan/TripoSR/etc.); it does not hallucinate unseen texture like Zero123.
+- Offscreen OpenGL (pyrender) required for mesh render; headless hosts may need `PYOPENGL_PLATFORM=osmesa` or `egl`.
+- Zero123: large azimuth angles hallucinate backsides; pose may not match the GLB orbit.

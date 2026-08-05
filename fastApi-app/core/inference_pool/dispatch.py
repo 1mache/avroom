@@ -116,20 +116,25 @@ def _execute_impl(job: JobRequest) -> JobResult:
         return JobResult(job_id=job.job_id, ok=True, glb_bytes=glb_bytes)
 
     if job.kind == JobKind.NOVEL_VIEW:
-        from avroom_object_removal.ai_engines.novel_view import NovelViewFacade
+        from avroom_object_removal.ai_engines.novel_view import (
+            MeshRenderNovelViewStrategy,
+            NovelViewFacade,
+        )
 
         assert job.cutout_path is not None
+        assert job.mesh_path is not None
         assert job.elevation_deg is not None
         assert job.azimuth_deg is not None
         assert job.relative_elevation_deg is not None
         assert job.radius is not None
-        result_bgra = NovelViewFacade().synthesize(
+        result_bgra = NovelViewFacade(MeshRenderNovelViewStrategy()).synthesize(
             Path(job.cutout_path),
             elevation_deg=job.elevation_deg,
             azimuth_deg=job.azimuth_deg,
             relative_elevation_deg=job.relative_elevation_deg,
             radius=job.radius,
             seed=0,
+            mesh=Path(job.mesh_path),
         )
         return JobResult(job_id=job.job_id, ok=True, novel_view_bgra=result_bgra)
 

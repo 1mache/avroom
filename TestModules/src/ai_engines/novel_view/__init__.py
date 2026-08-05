@@ -19,7 +19,12 @@ from .novel_view_rotation_adapter import (
     ZoomDirection,
 )
 from .novel_view_strategy import NovelViewStrategy
-from .strategies import StableZero123NovelViewError, StableZero123NovelViewStrategy
+from .strategies import (
+    MeshRenderNovelViewError,
+    MeshRenderNovelViewStrategy,
+    StableZero123NovelViewError,
+    StableZero123NovelViewStrategy,
+)
 
 __all__ = [
     "AzimuthDirection",
@@ -29,6 +34,8 @@ __all__ = [
     "HIGH_TILT",
     "LEVEL",
     "LOW_TILT",
+    "MeshRenderNovelViewError",
+    "MeshRenderNovelViewStrategy",
     "NO_ZOOM",
     "NovelViewFacade",
     "NovelViewRotationAdapter",

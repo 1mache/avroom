@@ -18,6 +18,8 @@ dependencies = [
     "opencv-python",
     "Pillow",
     "PyMCubes>=0.1.4",
+    "PyOpenGL>=3.1.0",
+    "pyrender>=0.1.45",
     "rembg",
     "torch>=2.1",
     "torchmcubes @ git+https://github.com/tatsy/torchmcubes.git",

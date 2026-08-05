@@ -9,7 +9,7 @@ Pattern everywhere under [`TestModules/src/ai_engines/`](../../../TestModules/sr
 | Depth | `DepthMappingFacade` | Near/far blend (`NearFarBlendedDepthMappingStrategy`) |
 | Segmentation | `ImageSegmentationFacade` | SAM (`SamSegmentationStrategy`) |
 | Inpainting | `ImageInpaintingFacade` | LaMa + optional SD (`HybridInpaintingStrategy`) |
-| Novel view | `NovelViewFacade` | Stable Zero123 (`StableZero123NovelViewStrategy`) |
+| Novel view | `NovelViewFacade` | Facade default: Stable Zero123; HTTP: MeshRender (`MeshRenderNovelViewStrategy`) |
 | Reconstruction 3D | `Reconstruction3DFacade` | OpenLRM local (`OpenLrmReconstructionStrategy`, default); Trellis HF Space (`TrellisReconstructionStrategy`) when injected |
 | Content validation | `ContentValidationFacade` | CLIP zero-shot (`ClipZeroShotContentValidationStrategy` via composite) |
 

@@ -20,10 +20,8 @@ import type {
 let pendingJobCounter = 0;
 const nextPendingJobId = (): string => `pending-${++pendingJobCounter}`;
 
-// The novel-view API requires an absolute source-view elevation, which the
-// frontend has no way to measure from a room photo. Assume the photo was shot
-// roughly level; tune this one constant if real results look off.
-const SOURCE_ELEVATION_DEG = 0;
+// Fallback when server metadata is unavailable (legacy sessions).
+const FALLBACK_SOURCE_ELEVATION_DEG = 15;
 
 // Zoom/radius delta is not exposed in the rotate UI -- always request the
 // model's default camera distance.
@@ -78,6 +76,11 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     imageIdRef.current = imageId;
   }, [imageId]);
 
+  const objectsRef = useRef(objects);
+  useEffect(() => {
+    objectsRef.current = objects;
+  }, [objects]);
+
   // Only ever moves forward. The canvas writer lock serializes commits
   // server-side so object_id is a valid commit order; this guards purely
   // against out-of-order *network* delivery of concurrent responses.
@@ -104,6 +107,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       rotation: null,
       hidden: false,
       offset: { x: 0, y: 0 },
+      sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
     }));
     setObjects(loaded);
     highestCommittedObjectIdRef.current = loaded.reduce(
@@ -187,6 +191,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
             rotation: null,
             hidden: false,
             offset: { x: 0, y: 0 },
+            sourceElevationDeg:
+              result.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
           };
 
           // Newly created object auto-selects — the user just made it.
@@ -240,6 +246,9 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         return;
       }
 
+      const target = objectsRef.current.find((o) => o.objectId === objectId);
+      const sourceElevationDeg = target?.sourceElevationDeg ?? FALLBACK_SOURCE_ELEVATION_DEG;
+
       setObjects((prev) =>
         prev.map((o) =>
           o.objectId === objectId
@@ -267,7 +276,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       synthesizeNovelView({
         uid: currentImageId,
         object_id: objectId,
-        elevation_deg: SOURCE_ELEVATION_DEG,
+        elevation_deg: sourceElevationDeg,
         azimuth_deg: pose.azimuthDeg,
         relative_elevation_deg: pose.relativeElevationDeg,
         radius: NO_RADIUS_DELTA,

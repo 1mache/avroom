@@ -17,6 +17,9 @@ without ever importing from internal sub-paths.
 from __future__ import annotations
 
 from .ai_engines import (
+    CameraCalibrationFacade,
+    CameraCalibrationResult,
+    CameraCalibrationStrategy,
     ClipZeroShotContentValidationStrategy,
     CompositeContentValidationStrategy,
     ContentValidationFacade,
@@ -25,6 +28,11 @@ from .ai_engines import (
     DepthAnythingMappingStrategy,
     DepthMappingFacade,
     DepthMappingStrategy,
+    ElevationEstimationFacade,
+    ElevationEstimationResult,
+    ElevationEstimationStrategy,
+    GeometricElevationEstimationStrategy,
+    GeoCalibCameraCalibrationStrategy,
     HybridInpaintingStrategy,
     ImageInpaintingFacade,
     ImageInpaintingStrategy,
@@ -55,6 +63,9 @@ from .routing import (
 __all__ = [
     "BoundaryVarianceRoutingStrategy",
     "CenterOfMassRoutingStrategy",
+    "CameraCalibrationFacade",
+    "CameraCalibrationResult",
+    "CameraCalibrationStrategy",
     "ClipZeroShotContentValidationStrategy",
     "CompositeContentValidationStrategy",
     "ContentImageValidator",
@@ -64,6 +75,11 @@ __all__ = [
     "DepthAnythingMappingStrategy",
     "DepthMappingFacade",
     "DepthMappingStrategy",
+    "ElevationEstimationFacade",
+    "ElevationEstimationResult",
+    "ElevationEstimationStrategy",
+    "GeometricElevationEstimationStrategy",
+    "GeoCalibCameraCalibrationStrategy",
     "HybridInpaintingStrategy",
     "ImageInpaintingFacade",
     "ImageInpaintingStrategy",

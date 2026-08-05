@@ -22,6 +22,8 @@ from core.depth_cache import (
     get_or_compute_depth,
     sample_depth_at_point,
 )
+from core.camera_calib_cache import load_camera_calib
+from core.camera_calibration import cache_dict_to_calibration_result
 from core.object_metadata import ObjectMetadata, create_object_metadata, get_object_by_uuid, set_object_average_depth
 from core.inference_lock import inference_session
 
@@ -424,18 +426,36 @@ def build_object_metadata_for_inpaint(
         )
         refined_mask = load_refined_mask(base_dir, image_id, mask_id)
         average_depth = compute_average_depth_over_mask(depth_map, refined_mask)
+
+        calib_payload = load_camera_calib(base_dir, image_id)
+        calibration = (
+            cache_dict_to_calibration_result(calib_payload) if calib_payload is not None else None
+        )
+
+        from avroom_object_removal.ai_engines.elevation_estimation import ElevationEstimationFacade
+
+        elevation_result = ElevationEstimationFacade().estimate(
+            depth_map,
+            refined_mask,
+            calibration=calibration,
+            image_width=depth_map.shape[1],
+            image_height=depth_map.shape[0],
+        )
+        source_elevation_deg = elevation_result.elevation_deg
     logger.info(
-        "Object metadata prepared: image_id=%s object_id=%d mask_id=%s average_depth=%.2f",
+        "Object metadata prepared: image_id=%s object_id=%d mask_id=%s average_depth=%.2f source_elevation=%.2f",
         image_id,
         object_id,
         mask_id,
         average_depth,
+        source_elevation_deg,
     )
     return create_object_metadata(
         session_id=image_id,
         object_id=object_id,
         average_depth=average_depth,
         content_hash=content_hash,
+        source_elevation_deg=source_elevation_deg,
     )
 
 

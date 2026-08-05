@@ -82,6 +82,8 @@ export function useSessionSync(options: UseSessionSyncOptions) {
               name: info.name ?? local.name,
               cutoutSrc,
               cutoutAlphaBounds: cutoutAlphaBounds ?? local.cutoutAlphaBounds,
+              sourceElevationDeg:
+                info.source_elevation_deg ?? local.sourceElevationDeg,
             };
           }
 
@@ -96,6 +98,7 @@ export function useSessionSync(options: UseSessionSyncOptions) {
             rotation: null,
             hidden: false,
             offset: { x: 0, y: 0 },
+            sourceElevationDeg: info.source_elevation_deg ?? 15,
           };
         });
 

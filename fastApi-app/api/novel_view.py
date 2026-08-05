@@ -17,11 +17,14 @@ from core.object_storage import (
     object_novel_view_preview_path,
     resolve_object_cutout_path,
 )
+from core.object_metadata import load_object_metadata
 from schemas.image import NovelViewPreviewCacheRequest, NovelViewRequest, NovelViewResponse
 from settings import get_image_storage_dir, touch_session
 
 router = APIRouter(prefix="/images", tags=["images"])
 logger = logging.getLogger(__name__)
+
+DEFAULT_SOURCE_ELEVATION_DEG = 15.0
 
 # Angular granularity the HTTP layer quantizes poses to before touching the
 # disk cache or the model. Synthesis is cached per (azimuth, relative
@@ -85,6 +88,20 @@ def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
         request.zoom_direction,
     )
 
+    storage_dir = get_image_storage_dir()
+    object_meta = load_object_metadata(storage_dir, request.uid, request.object_id)
+    source_elevation_deg = (
+        object_meta.source_elevation_deg
+        if object_meta is not None
+        else DEFAULT_SOURCE_ELEVATION_DEG
+    )
+    if object_meta is not None and abs(request.elevation_deg - source_elevation_deg) > 1e-3:
+        logger.info(
+            "novel-view overriding request elevation %.1f with stored source elevation %.1f",
+            request.elevation_deg,
+            source_elevation_deg,
+        )
+
     try:
         resolved_pose = NovelViewRotationAdapter.resolve_pose(
             azimuth_deg=request.azimuth_deg,
@@ -117,7 +134,6 @@ def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
         snapped_relative_elevation_deg,
     )
 
-    storage_dir = get_image_storage_dir()
     cutout_path = resolve_object_cutout_path(storage_dir, request.uid, request.object_id)
     if not cutout_path.exists():
         logger.error(
@@ -162,7 +178,7 @@ def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
         try:
             result_bgra = get_inference_client().run_novel_view(
                 cutout_path=cutout_path,
-                elevation_deg=request.elevation_deg,
+                elevation_deg=source_elevation_deg,
                 azimuth_deg=snapped_azimuth_deg,
                 relative_elevation_deg=snapped_relative_elevation_deg,
                 radius=resolved_pose.radius,
@@ -210,7 +226,7 @@ def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
         image_b64=base64.b64encode(png_bytes).decode("ascii"),
         format="png",
         cutout_bounds=cutout_bounds,
-        elevation_deg=request.elevation_deg,
+        elevation_deg=source_elevation_deg,
         azimuth_deg=snapped_azimuth_deg,
         azimuth_direction=request.azimuth_direction,
         relative_elevation_deg=snapped_relative_elevation_deg,

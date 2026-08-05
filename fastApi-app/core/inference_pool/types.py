@@ -15,6 +15,7 @@ class JobKind(str, Enum):
     GENERATE_3D = "generate_3d"
     NOVEL_VIEW = "novel_view"
     VALIDATE_CONTENT = "validate_content"
+    CALIBRATE_CAMERA = "calibrate_camera"
     SHUTDOWN = "shutdown"
 
 
@@ -63,3 +64,12 @@ class JobResult:
     validation_checks: dict[str, bool] | None = None
     validation_scores: dict[str, float] | None = None
     validation_messages: tuple[str, ...] | None = None
+    camera_calib_gravity: tuple[float, float, float] | None = None
+    camera_calib_roll_deg: float | None = None
+    camera_calib_pitch_deg: float | None = None
+    camera_calib_fx: float | None = None
+    camera_calib_fy: float | None = None
+    camera_calib_cx: float | None = None
+    camera_calib_cy: float | None = None
+    camera_calib_confidence: float | None = None
+    camera_calib_camera_model: str | None = None

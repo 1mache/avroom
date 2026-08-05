@@ -54,6 +54,8 @@ export interface CutoutObject {
   // Per-object drag offset, natural-image pixels. Every object stays composited
   // on the background simultaneously, so position can't live in shared state.
   offset: ClickPosition;
+  // Server-estimated Zero123 source elevation (degrees); used for novel-view.
+  sourceElevationDeg: number;
 }
 
 // Which image should currently represent an object on the stage: its rotated

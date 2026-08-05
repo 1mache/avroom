@@ -44,6 +44,13 @@ class ObjectMetadata(BaseModel):
         float,
         Field(description="Mean uint8 depth over the selected mask at creation."),
     ]
+    source_elevation_deg: Annotated[
+        float,
+        Field(
+            default=15.0,
+            description="Estimated Zero123 source elevation for this object (degrees).",
+        ),
+    ]
     content_hash: Annotated[
         str,
         Field(description="SHA-256 hex of canvas bytes when the object was created."),
@@ -107,11 +114,12 @@ def save_object_metadata(base_dir: Path, metadata: ObjectMetadata) -> None:
     )
     _save_object_index(index)
     logger.info(
-        "Saved object metadata: uuid=%s session_id=%s object_id=%d average_depth=%.2f",
+        "Saved object metadata: uuid=%s session_id=%s object_id=%d average_depth=%.2f source_elevation=%.2f",
         metadata.uuid,
         metadata.session_id,
         metadata.object_id,
         metadata.average_depth,
+        metadata.source_elevation_deg,
     )
 
 
@@ -213,6 +221,7 @@ def create_object_metadata(
     object_id: int,
     average_depth: float,
     content_hash: str,
+    source_elevation_deg: float = 15.0,
     name: str | None = None,
 ) -> ObjectMetadata:
     """Build a new metadata record with a fresh UUID and timestamp."""
@@ -222,6 +231,7 @@ def create_object_metadata(
         object_id=object_id,
         name=name,
         average_depth=average_depth,
+        source_elevation_deg=source_elevation_deg,
         content_hash=content_hash,
         created_at=datetime.now(UTC).isoformat(),
     )

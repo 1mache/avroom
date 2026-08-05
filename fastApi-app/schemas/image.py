@@ -242,6 +242,13 @@ class InpaintMaskResponse(ClickResultResponse):
         str,
         Field(description="Server-generated UUID for this object; primary searchable key."),
     ]
+    source_elevation_deg: Annotated[
+        float,
+        Field(
+            default=15.0,
+            description="Estimated Zero123 source elevation for this object (degrees).",
+        ),
+    ]
 
 
 class SetObjectNameRequest(BaseModel):
@@ -309,6 +316,13 @@ class ObjectMetadataResponse(BaseModel):
         float,
         Field(description="Mean uint8 depth over the selected mask at creation."),
     ]
+    source_elevation_deg: Annotated[
+        float,
+        Field(
+            default=15.0,
+            description="Estimated Zero123 source elevation for this object (degrees).",
+        ),
+    ]
     content_hash: Annotated[
         str,
         Field(description="SHA-256 hex of canvas bytes when the object was created."),
@@ -342,6 +356,10 @@ class ObjectInfo(BaseModel):
     average_depth: Annotated[
         float | None,
         Field(default=None, description="Mean uint8 depth over mask at creation."),
+    ]
+    source_elevation_deg: Annotated[
+        float | None,
+        Field(default=None, description="Estimated Zero123 source elevation (degrees)."),
     ]
     cutout_b64: Annotated[
         str,

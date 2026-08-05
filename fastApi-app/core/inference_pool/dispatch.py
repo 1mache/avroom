@@ -11,7 +11,12 @@ logger = logging.getLogger(__name__)
 
 # Facade-only jobs do not pass through image_processing helpers that already
 # acquire inference_session(); they need the lock here in inline mode.
-_FACADE_JOB_KINDS = frozenset({JobKind.GENERATE_3D, JobKind.NOVEL_VIEW, JobKind.VALIDATE_CONTENT})
+_FACADE_JOB_KINDS = frozenset({
+    JobKind.GENERATE_3D,
+    JobKind.NOVEL_VIEW,
+    JobKind.VALIDATE_CONTENT,
+    JobKind.CALIBRATE_CAMERA,
+})
 
 
 def _execute_impl(job: JobRequest) -> JobResult:
@@ -140,6 +145,25 @@ def _execute_impl(job: JobRequest) -> JobResult:
             validation_checks=outcome.checks,
             validation_scores=outcome.scores,
             validation_messages=outcome.messages,
+        )
+
+    if job.kind == JobKind.CALIBRATE_CAMERA:
+        from core.camera_calibration import calibrate_upload_image
+
+        assert job.image_bytes is not None
+        outcome = calibrate_upload_image(job.image_bytes)
+        return JobResult(
+            job_id=job.job_id,
+            ok=True,
+            camera_calib_gravity=outcome.gravity,
+            camera_calib_roll_deg=outcome.roll_deg,
+            camera_calib_pitch_deg=outcome.pitch_deg,
+            camera_calib_fx=outcome.fx,
+            camera_calib_fy=outcome.fy,
+            camera_calib_cx=outcome.cx,
+            camera_calib_cy=outcome.cy,
+            camera_calib_confidence=outcome.confidence,
+            camera_calib_camera_model=outcome.camera_model,
         )
 
     raise ValueError(f"Unsupported job kind: {job.kind}")

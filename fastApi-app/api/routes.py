@@ -31,6 +31,7 @@ from core.inference_pool.session_runtime import (
 )
 from core.mask_cache import delete_candidate, delete_candidates
 from core.depth_cache import delete_session_depth_maps
+from core.camera_calib_cache import delete_session_camera_calib, save_camera_calib
 from core.object_metadata import (
     ObjectMetadata,
     get_object_by_uuid,
@@ -83,6 +84,7 @@ from settings import (
     register_uid,
     remove_session_name,
     get_upload_validation_enabled,
+    get_camera_calibration_enabled,
     SessionNotFoundError,
     set_session_name,
     touch_session,
@@ -197,6 +199,19 @@ async def upload_image(
 
     register_uid(image_id)
     last_changed = touch_session(image_id)
+
+    if get_camera_calibration_enabled():
+        try:
+            calib_outcome = get_inference_client().run_calibrate_camera(image_bytes=file_bytes)
+            save_camera_calib(storage_dir, image_id, calib_outcome.to_cache_dict())
+        except Exception as exc:
+            logger.warning(
+                "Upload camera calibration failed (non-fatal): image_id=%s detail=%s",
+                image_id,
+                exc,
+            )
+    else:
+        logger.info("Upload camera calibration skipped: CAMERA_CALIB=false image_id=%s", image_id)
 
     return ImageUploadResponse(
         image_id=image_id,
@@ -423,6 +438,7 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
         cutout_bounds=cutout_bounds,
         object_id=object_id,
         object_uuid=object_metadata.uuid,
+        source_elevation_deg=object_metadata.source_elevation_deg,
     )
 
 
@@ -469,6 +485,7 @@ async def delete_session(uid: str) -> Response:
 
         delete_session_metadata(storage_dir, uid, obj_ids)
         removed += delete_session_depth_maps(storage_dir, uid)
+        removed += delete_session_camera_calib(storage_dir, uid)
 
         debug_path = storage_dir / "point" / f"{uid}_debug.png"
         if debug_path.exists():
@@ -568,6 +585,7 @@ def _metadata_to_response(
         object_id=metadata.object_id,
         name=metadata.name,
         average_depth=metadata.average_depth,
+        source_elevation_deg=metadata.source_elevation_deg,
         content_hash=metadata.content_hash,
         created_at=metadata.created_at,
         has_3d=has_3d,
@@ -699,6 +717,9 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
                     uuid=meta.uuid if meta is not None else None,
                     name=meta.name if meta is not None else None,
                     average_depth=meta.average_depth if meta is not None else None,
+                    source_elevation_deg=(
+                        meta.source_elevation_deg if meta is not None else None
+                    ),
                     cutout_b64=cutout_b64,
                     format="png",
                     cutout_bounds=cutout_bounds,

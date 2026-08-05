@@ -7,7 +7,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 const CAMERA_FOV = 40;
 const CAMERA_NEAR = 0.1;
 const CAMERA_FAR = 1000;
-const CAMERA_POSITION = { x: 0, y: 1.5, z: 7 };
+const CAMERA_POSITION = { x: 0, y: 0, z: 7 };
 
 // Cap device pixel ratio so retina screens do not multiply GPU cost too hard.
 const MAX_PIXEL_RATIO = 2;
@@ -28,8 +28,29 @@ const RIM_LIGHT_COLOR = 0xf3d39b;
 const RIM_LIGHT_INTENSITY = 0.45;
 const RIM_LIGHT_POSITION = { x: 0, y: -3, z: -6 };
 
-const MODEL_TARGET_SIZE = 3;
 const MATERIAL_ROUGHNESS = 0.3;
+
+// The viewer canvas is inflated by this factor around the object's on-stage
+// rect (see model3DFrameStyle in MainPage) and the model is fit to fill
+// 1/this of the viewport. Net effect: the model reads at the same size as the
+// 2D cutout it replaces, while still having empty canvas around it so parts
+// that swing outside the original silhouette during an orbit aren't clipped.
+export const MODEL_3D_FRAME_PADDING = 1.5;
+
+// Generated GLBs come back lying flat: the side the source photo saw faces the
+// mesh's -Y axis, with the photo's "up" along +X. Left uncorrected, the viewer
+// opens on an edge-on sliver and the user must orbit ~90 degrees before the
+// object even looks like itself. Mapping -Y onto the camera axis (+Z) and +X
+// onto screen up (+Y) makes the starting pose reproduce the photo, which is
+// also the pose the backend renders at zero rotation
+// (_GLB_TO_VIEW_ROTATION in mesh_render_novel_view_strategy.py).
+const glbToViewRotation = (): THREE.Matrix4 =>
+  new THREE.Matrix4().set(
+    0, 0, -1, 0,
+    1, 0, 0, 0,
+    0, -1, 0, 0,
+    0, 0, 0, 1,
+  );
 
 interface Props {
   glbData: ArrayBuffer | null;
@@ -53,6 +74,50 @@ export interface Model3DFrameHandle {
 }
 
 const radToDeg = (radians: number): number => (radians * 180) / Math.PI;
+
+// Above this many vertices the fit samples with a stride instead of reading
+// every one -- generated GLBs run to hundreds of thousands of vertices, and a
+// silhouette's extremes survive sampling far better than the loop cost does.
+const MAX_FIT_SAMPLE_POINTS = 60000;
+
+// Flat [x,y,z,...] of the model's vertices in camera space, used to fit the
+// model by its real silhouette. Bounding-box corners would be far cheaper but
+// project well outside a curved or concave shape (a chair, a sphere), which
+// fits the object noticeably smaller than the rect it is meant to fill.
+const collectCameraSpacePoints = (
+  root: THREE.Object3D,
+  camera: THREE.Camera,
+): Float64Array => {
+  const meshes: THREE.Mesh[] = [];
+  let totalVertices = 0;
+  root.traverse((child) => {
+    if (child instanceof THREE.Mesh && child.geometry?.getAttribute("position")) {
+      meshes.push(child);
+      totalVertices += child.geometry.getAttribute("position").count;
+    }
+  });
+
+  if (totalVertices === 0) {
+    return new Float64Array(0);
+  }
+
+  const stride = Math.max(1, Math.ceil(totalVertices / MAX_FIT_SAMPLE_POINTS));
+  const sampled: number[] = [];
+  const point = new THREE.Vector3();
+
+  for (const mesh of meshes) {
+    const position = mesh.geometry.getAttribute("position");
+    for (let i = 0; i < position.count; i += stride) {
+      point
+        .fromBufferAttribute(position as THREE.BufferAttribute, i)
+        .applyMatrix4(mesh.matrixWorld)
+        .applyMatrix4(camera.matrixWorldInverse);
+      sampled.push(point.x, point.y, point.z);
+    }
+  }
+
+  return Float64Array.from(sampled);
+};
 
 export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model3DFrame(
   { glbData, className, style },
@@ -157,18 +222,71 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
     const group = new THREE.Group();
     scene.add(group);
 
+    // Scales the model so its *projected* silhouette fills the viewport (minus
+    // MODEL_3D_FRAME_PADDING). Fitting on the bounding box's largest edge
+    // instead would shrink deep objects to a fraction of the frame, since the
+    // depth axis costs size on screen without ever occupying any.
+    const orbitRadius = camera.position.length();
+    const fitGroupToView = () => {
+      if (group.children.length === 0) {
+        return;
+      }
+
+      group.scale.setScalar(1);
+      camera.updateMatrixWorld();
+      group.updateMatrixWorld(true);
+
+      const points = collectCameraSpacePoints(group, camera);
+      if (points.length === 0) {
+        return;
+      }
+
+      // Each vertex's projected size depends on its own depth, which depends on
+      // the scale being solved for. Converge by repeatedly measuring the current
+      // projection and dividing out how far it overshoots the target -- the
+      // model must land at 1/MODEL_3D_FRAME_PADDING of the viewport, which is
+      // exactly the object's 2D cutout rect. This mirrors the backend's mesh
+      // render (MeshRenderNovelViewStrategy), so the snapshot preview and the
+      // synthesized result come back the same size.
+      const tanHalfFov = Math.tan((camera.fov * Math.PI) / 360);
+      const targetHalfNdc = 1 / MODEL_3D_FRAME_PADDING;
+      let scale = 1;
+      for (let i = 0; i < 8; i += 1) {
+        let overshoot = 0;
+        for (let p = 0; p < points.length; p += 3) {
+          // Scaling moves a vertex along the view axis, but not the camera, so
+          // its depth is the orbit radius minus how far scaling pulled it in.
+          const depth = Math.max(
+            orbitRadius - scale * (points[p + 2] + orbitRadius),
+            orbitRadius * 0.05,
+          );
+          const ndcX = Math.abs(scale * points[p]) / (depth * tanHalfFov * camera.aspect);
+          const ndcY = Math.abs(scale * points[p + 1]) / (depth * tanHalfFov);
+          overshoot = Math.max(overshoot, ndcX, ndcY);
+        }
+        if (overshoot <= 1e-8) {
+          break;
+        }
+        scale *= targetHalfNdc / overshoot;
+      }
+
+      group.scale.setScalar(scale);
+    };
+
     const loader = new GLTFLoader();
     loader.parse(glbData.slice(0), "", (gltf) => {
       const obj = gltf.scene;
       const box = new THREE.Box3().setFromObject(obj);
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z);
+      const maxDim = Math.max(size.x, size.y, size.z) || 1;
 
-      // Normalize imported model so wildly different GLB source scales still fit
-      // same viewer framing.
-      obj.position.copy(center).negate();
-      group.scale.setScalar(MODEL_TARGET_SIZE / maxDim);
+      // Normalize to roughly unit size first so the fit iteration below starts
+      // from extents comparable to the orbit radius, whatever scale the source
+      // GLB happens to use.
+      const normalizedScale = 1 / maxDim;
+      obj.scale.setScalar(normalizedScale);
+      obj.position.copy(center).multiplyScalar(-normalizedScale);
 
       obj.traverse((child) => {
         if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
@@ -176,7 +294,14 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
         }
       });
 
-      group.add(obj);
+      // Correction sits between the group and the model so the group's own scale
+      // stays the single thing fitGroupToView touches.
+      const oriented = new THREE.Group();
+      oriented.applyMatrix4(glbToViewRotation());
+      oriented.add(obj);
+
+      group.add(oriented);
+      fitGroupToView();
     });
 
     let frameId: number;
@@ -193,6 +318,7 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
       camera.aspect = nextWidth / nextHeight;
       renderer.setSize(nextWidth, nextHeight);
       camera.updateProjectionMatrix();
+      fitGroupToView();
     });
     observer.observe(mount);
 

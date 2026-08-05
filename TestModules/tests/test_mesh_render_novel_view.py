@@ -16,6 +16,7 @@ trimesh = pytest.importorskip("trimesh")
 from avroom_object_removal.ai_engines.novel_view.strategies.mesh_render_novel_view_strategy import (  # noqa: E402
     MeshRenderNovelViewError,
     MeshRenderNovelViewStrategy,
+    _CAMERA_START,
     _cartesian_from_spherical,
     _orbit_camera_position,
     _spherical_from_cartesian,
@@ -55,7 +56,7 @@ class TestOrbitCameraMath:
             relative_elevation_deg=0.0,
             radius=0.0,
         )
-        assert np.allclose(eye, np.array([0.0, 1.5, 7.0]), atol=1e-5)
+        assert np.allclose(eye, _CAMERA_START, atol=1e-5)
 
     def test_positive_radius_moves_farther(self) -> None:
         near = _orbit_camera_position(azimuth_deg=0.0, relative_elevation_deg=0.0, radius=0.0)

@@ -22,12 +22,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Match react-front Model3DFrame framing so preview ≈ committed mesh render.
-_MODEL_TARGET_SIZE = 3.0
+# _FRAME_PADDING mirrors MODEL_3D_FRAME_PADDING there: the render viewport covers
+# the cutout's square bbox grown by this factor, and the mesh is fit so its
+# projected silhouette lands at exactly the cutout's own size inside it. Scaling
+# the mesh by its largest bounding-box edge instead (the old behaviour) rendered
+# it at a fraction of the cutout, since the depth axis costs on-screen size
+# without ever occupying any.
+_FRAME_PADDING = 1.5
 _CAMERA_FOV_DEG = 40.0
 _CAMERA_NEAR = 0.1
 _CAMERA_FAR = 1000.0
-_CAMERA_START = np.array([0.0, 1.5, 7.0], dtype=np.float64)
+_CAMERA_START = np.array([0.0, 0.0, 7.0], dtype=np.float64)
 _DEFAULT_RENDER_SIZE = 512
+
+# Generated GLBs come back lying flat: the side the source photo saw faces the
+# mesh's -Y axis, with the photo's "up" along +X. Left uncorrected, the canonical
+# pose (azimuth 0, elevation 0) shows the object edge-on, so the object only ever
+# looks right after the user orbits ~90 degrees, and every rotation they ask for
+# is measured from a pose that never matched the photo. This maps -Y onto the
+# camera axis (+Z) and +X onto screen up (+Y), so pose zero reproduces the photo.
+_GLB_TO_VIEW_ROTATION = np.array(
+    [
+        [0.0, 0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, -1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ],
+    dtype=np.float64,
+)
 
 _AMBIENT_INTENSITY = 0.6
 _KEY_LIGHT_COLOR = np.array([0.60, 0.85, 0.86], dtype=np.float64)
@@ -122,16 +144,16 @@ class MeshRenderNovelViewStrategy(NovelViewStrategy):
         *,
         reconstruction: Reconstruction3DFacade | None = None,
         render_size: int = _DEFAULT_RENDER_SIZE,
-        model_target_size: float = _MODEL_TARGET_SIZE,
+        frame_padding: float = _FRAME_PADDING,
     ) -> None:
         self._reconstruction = reconstruction
         self._render_size = max(64, int(render_size))
-        self._model_target_size = float(model_target_size)
+        self._frame_padding = max(1.0, float(frame_padding))
         logger.info(
-            "MeshRenderNovelViewStrategy created (render_size=%d, model_target=%.2f, "
+            "MeshRenderNovelViewStrategy created (render_size=%d, frame_padding=%.2f, "
             "reconstruction=%s)",
             self._render_size,
-            self._model_target_size,
+            self._frame_padding,
             type(reconstruction).__name__ if reconstruction is not None else None,
         )
 
@@ -173,22 +195,34 @@ class MeshRenderNovelViewStrategy(NovelViewStrategy):
             relative_elevation_deg=relative_elevation_deg,
             radius=radius,
         )
+        # The render viewport maps onto the cutout's square bbox grown by the frame
+        # padding; the object itself must land back at its original width/height
+        # inside that region, so it is fit to those fractions of the viewport.
+        region_side = prep.square_size * self._frame_padding
+        target_fractions = (
+            (prep.crop_box[2] - prep.crop_box[0]) / region_side,
+            (prep.crop_box[3] - prep.crop_box[1]) / region_side,
+        )
         logger.debug(
-            "Mesh render camera eye=%s canvas=%s",
+            "Mesh render camera eye=%s canvas=%s target_fractions=%s",
             camera_eye.tolist(),
             prep.canvas_size,
+            target_fractions,
         )
 
         try:
-            rendered_rgba = self._render_glb_rgba(mesh_bytes, camera_eye)
+            rendered_rgba = self._render_glb_rgba(mesh_bytes, camera_eye, target_fractions)
         except MeshRenderNovelViewError:
             raise
         except Exception as exc:
             logger.exception("Mesh novel-view render failed")
             raise MeshRenderNovelViewError(f"Mesh novel-view render failed: {exc}") from exc
 
-        # Fit the square render into the cutout's square pad region on the canvas.
-        output_bgra = composite_model_output_on_canvas(rendered_rgba, prep)
+        output_bgra = composite_model_output_on_canvas(
+            rendered_rgba,
+            prep,
+            region_scale=self._frame_padding,
+        )
         logger.info(
             "Mesh render synthesize complete: shape=%s azimuth=%.1f",
             output_bgra.shape,
@@ -236,8 +270,12 @@ class MeshRenderNovelViewStrategy(NovelViewStrategy):
             )
         return glb
 
-    def _load_normalized_trimesh(self, mesh_bytes: bytes) -> Any:
-        """Load GLB bytes, merge scene geometry, recenter, and scale to target size."""
+    def _load_normalized_trimesh(
+        self,
+        mesh_bytes: bytes,
+        target_fractions: tuple[float, float],
+    ) -> Any:
+        """Load GLB bytes, merge scene geometry, recenter, and fit it to the frame."""
 
         try:
             import trimesh
@@ -278,17 +316,75 @@ class MeshRenderNovelViewStrategy(NovelViewStrategy):
 
         geometry = geometry.copy()
         geometry.apply_translation(-center)
-        geometry.apply_scale(self._model_target_size / max_dim)
+        geometry.apply_transform(_GLB_TO_VIEW_ROTATION)
+        # Normalize to roughly unit size first so the fit below starts from extents
+        # comparable to the orbit radius, whatever scale the source GLB uses.
+        geometry.apply_scale(1.0 / max_dim)
+
+        fit_scale = self._projected_fit_scale(geometry, target_fractions)
+        geometry.apply_scale(fit_scale)
         logger.debug(
-            "Normalized mesh: verts=%d faces=%d max_dim=%.4f -> target=%.2f",
+            "Normalized mesh: verts=%d faces=%d max_dim=%.4f fit_scale=%.4f",
             len(geometry.vertices),
             len(geometry.faces),
             max_dim,
-            self._model_target_size,
+            fit_scale,
         )
         return geometry
 
-    def _render_glb_rgba(self, mesh_bytes: bytes, camera_eye: np.ndarray) -> Image.Image:
+    def _projected_fit_scale(
+        self,
+        geometry: Any,
+        target_fractions: tuple[float, float],
+    ) -> float:
+        """Scale that makes the mesh's *projected* silhouette fill the target rect.
+
+        Measured at the canonical start pose (never the requested orbit pose), so
+        the object keeps one constant on-canvas size across every rotation, exactly
+        like the frontend viewer which fits once and then only orbits.
+        """
+
+        frac_x, frac_y = target_fractions
+        if frac_x <= 0.0 or frac_y <= 0.0:
+            return 1.0
+
+        view = np.linalg.inv(self._look_at_matrix(_CAMERA_START, np.zeros(3, dtype=np.float64)))
+        # Real vertices, not bounding-box corners: a box drawn around a chair (or
+        # any curved/concave shape) projects well outside the silhouette it
+        # encloses, which would leave the object short of the rect it must fill.
+        points = np.asarray(geometry.vertices, dtype=np.float64)
+        if points.size == 0:
+            return 1.0
+        in_camera = points @ view[:3, :3].T + view[:3, 3]
+
+        # OpenGL camera looks down -Z, so the origin sits at z = -distance and a
+        # vertex leaning toward the camera has a larger (less negative) z.
+        distance = float(np.linalg.norm(_CAMERA_START))
+        toward_camera = in_camera[:, 2] + distance
+
+        # Each vertex's projected size depends on its own depth, which depends on
+        # the scale being solved for. Converge by repeatedly measuring the current
+        # projection and dividing out how far it overshoots the target rect.
+        tan_half_fov = math.tan(math.radians(_CAMERA_FOV_DEG) / 2.0)
+        scale = 1.0
+        for _ in range(8):
+            depth = np.maximum(distance - scale * toward_camera, distance * 0.05)
+            projected = np.abs(scale * in_camera[:, :2]) / (depth[:, None] * tan_half_fov)
+            overshoot = max(
+                float(np.max(projected[:, 0])) / frac_x,
+                float(np.max(projected[:, 1])) / frac_y,
+            )
+            if overshoot <= 1e-8:
+                return scale
+            scale /= overshoot
+        return scale
+
+    def _render_glb_rgba(
+        self,
+        mesh_bytes: bytes,
+        camera_eye: np.ndarray,
+        target_fractions: tuple[float, float],
+    ) -> Image.Image:
         """Rasterize the normalized GLB to an RGBA PIL image via pyrender."""
 
         try:
@@ -299,7 +395,7 @@ class MeshRenderNovelViewStrategy(NovelViewStrategy):
                 "Install project dependencies: pip install -r requirements.txt"
             ) from exc
 
-        geometry = self._load_normalized_trimesh(mesh_bytes)
+        geometry = self._load_normalized_trimesh(mesh_bytes, target_fractions)
 
         try:
             mesh = pyrender.Mesh.from_trimesh(geometry, smooth=True)

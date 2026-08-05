@@ -23,7 +23,11 @@ import {
   type CutoutObject,
 } from "../../types/session";
 import { MaskPickerModal } from "../widgets/MaskPickerModal";
-import { Model3DFrame, type Model3DFrameHandle } from "../widgets/Model3DFrame";
+import {
+  MODEL_3D_FRAME_PADDING,
+  Model3DFrame,
+  type Model3DFrameHandle,
+} from "../widgets/Model3DFrame";
 import { ObjectPanel } from "../widgets/ObjectPanel";
 import { SessionPicker } from "../widgets/SessionPicker";
 import { UploadFrame } from "../widgets/UploadFrame";
@@ -123,6 +127,36 @@ const compositePreviewOntoCanvas = async (
     target.bottom - target.top,
   );
   return canvas.toDataURL("image/png");
+};
+
+// Grows a rect around its own center. Used to give the 3D viewer canvas margin
+// around the object's rect (MODEL_3D_FRAME_PADDING) and, when its snapshot is
+// pasted back onto a cutout-sized canvas, to place that snapshot at the exact
+// same enlarged region so the object doesn't shift or resize on commit.
+const inflateAroundCenter = <T extends { width: number; height: number }>(
+  rect: T & { left: number; top: number },
+  factor: number,
+) => {
+  const width = rect.width * factor;
+  const height = rect.height * factor;
+  return {
+    left: rect.left - (width - rect.width) / 2,
+    top: rect.top - (height - rect.height) / 2,
+    width,
+    height,
+  };
+};
+
+const inflateBounds = (bounds: CutoutAlphaBounds, factor: number): CutoutAlphaBounds => {
+  const growX = ((bounds.right - bounds.left) * (factor - 1)) / 2;
+  const growY = ((bounds.bottom - bounds.top) * (factor - 1)) / 2;
+  return {
+    ...bounds,
+    left: bounds.left - growX,
+    right: bounds.right + growX,
+    top: bounds.top - growY,
+    bottom: bounds.bottom + growY,
+  };
 };
 
 const clampCutoutOffset = (
@@ -498,7 +532,11 @@ export const MainPage: React.FC = () => {
     // picker -- everything after this point works from the extracted data URL.
     const capture = model3DFrameRef.current?.capture();
     const targetObjectId = jobs.selectedObjectId;
-    const bounds = selectedObject?.cutoutAlphaBounds ?? null;
+    // The snapshot spans the inflated viewer canvas, not the object's tight
+    // rect, so it must be pasted back over that same inflated region.
+    const bounds = selectedObject?.cutoutAlphaBounds
+      ? inflateBounds(selectedObject.cutoutAlphaBounds, MODEL_3D_FRAME_PADDING)
+      : null;
     setRotateMode(false);
     setShowOriginal(false);
 
@@ -1029,9 +1067,12 @@ export const MainPage: React.FC = () => {
 
   // The 3D model replaces the selected object's 2D cutout in place, so swapping
   // between 2D and 3D doesn't jump the object to a different spot/scale.
+  // Inflated by MODEL_3D_FRAME_PADDING (the same factor the viewer fits the
+  // model to), so the model itself lands at the 2D cutout's size with room to
+  // orbit outside that silhouette without clipping against the canvas edge.
   const model3DFrameStyle: React.CSSProperties | undefined = selectedObjectStageRect
     ? {
-        ...positionOverSelected(selectedObjectStageRect),
+        ...positionOverSelected(inflateAroundCenter(selectedObjectStageRect, MODEL_3D_FRAME_PADDING)),
         // Above .result-interaction-overlay (z-index 100) so OrbitControls
         // receive pointer events instead of the 2D drag/hit-test layer.
         zIndex: 200,

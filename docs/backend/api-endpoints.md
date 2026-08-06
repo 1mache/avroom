@@ -17,6 +17,8 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `GET` | `/images/{uid}/background` | path `uid` | PNG file |
 | `GET` | `/images/{uid}/cutout` | path `uid` | latest object cutout PNG |
 | `GET` | `/images/{uid}/original` | path `uid` | original image file |
+| `GET` | `/images/{uid}/preview` | path `uid` | dashboard thumbnail JPEG (404 if none yet) |
+| `POST` | `/images/{uid}/preview` | `SessionPreviewRequest` | 204 No Content |
 | `GET` | `/images/objects/{object_uuid}` | path `object_uuid` | `ObjectMetadataResponse` |
 | `PATCH` | `/images/objects/{object_uuid}` | `SetObjectNameRequest` | `ObjectMetadataResponse` |
 | `POST` | `/images/objects/{object_uuid}/duplicate` | path `object_uuid` | `DuplicateObjectResponse` |
@@ -220,6 +222,21 @@ These do **not** bump session dirty state: `POST /images/segment` candidate cach
 ## `GET /images/sessions`
 
 Returns all registered UIDs enriched with human-readable names from `names.json` and each session's `last_changed` timestamp when recorded. Uids without a saved name have `name: null`.
+
+## `GET /images/{uid}/preview` and `POST /images/{uid}/preview`
+
+Dashboard thumbnail for one session — the room roughly as the user left it, so cards on the dashboard are recognizable rather than name-only.
+
+- **`GET`** serves `{uid}_preview.jpg`. Returns **404** when the file doesn't exist yet; the dashboard card falls back to a placeholder rather than treating this as an error. Callers add a `?t=<last_changed>` query param purely as a browser cache-buster — the server ignores it.
+- **`POST`** stores a client-composited thumbnail. Body: `SessionPreviewRequest` (`image_b64`, base64 JPEG, no `data:` prefix).
+  1. **404** if `uid` isn't registered in `sessions.json`.
+  2. **422** if `image_b64` isn't valid base64, or if the decoded bytes don't open as an image (`PIL.Image.verify()`).
+  3. Written atomically (temp file + `os.replace`) to `{uid}_preview.jpg`.
+  4. **Does not** call `touch_session` — the frontend fires this ~1.5s after the mutation that already bumped `last_changed` (see `WorkspaceScreen.tsx`'s debounced capture), so the cache-buster the dashboard reads is already correct.
+
+**`POST /images/upload`** also writes an initial thumbnail — a downscaled copy of the original upload via `core/session_preview.py::write_upload_preview` — so a session has a preview from the moment it's created, before any edit. Failure here is logged and swallowed (non-fatal, same shape as camera calibration), never fails the upload.
+
+`DELETE /images/{uid}` removes `{uid}_preview.jpg` along with the rest of the session's artifacts.
 
 ## `GET /images/{uid}/cache`
 

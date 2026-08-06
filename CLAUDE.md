@@ -143,10 +143,20 @@ Install: `pip install -e ./TrellisModule` (or `pip install -r requirements.txt` 
 
 ## Frontend Notes
 
-- Frontend is **MVP**: single page (`MainPage.tsx`), no routing, no auth.
-- All state managed with `useState` in `MainPage.tsx`. `UploadFrame` and `ResultFrame` are pure display components.
-- API base URL defaults to `http://127.0.0.1:8000`; override with `VITE_API_BASE_URL` env var.
-- Click coordinates are translated from display-space to natural image-space before sending to the API.
+The product is planned as **two screens: a dashboard and a workspace**. Only the workspace exists (`components/layout/WorkspaceScreen.tsx`); there is no routing and no auth. The dashboard will own the logo, the session list, creating a session (upload), and deleting a session — **none of those belong in the workspace**, so the workspace boots straight into the most recently edited session (`getSessions()` sorted by `last_changed`) and stays there. With no dashboard yet there is no way to switch or create sessions from the UI, and the back arrow is rendered disabled on purpose.
+
+- API base URL defaults to `http://127.0.0.1:8000`; override with `VITE_API_BASE_URL` env var. A failed boot fetch shows an offline message on the stage rather than the error modal.
+- Click coordinates are translated from display-space to natural image-space before sending to the API. All the contain-fit ↔ natural-pixel conversions live in `src/utils/stageGeometry.ts` (`getContainedImageRect`, `toNaturalPoint`, `clampCutoutOffset`, `getBoundsStageRect`, `buildHitTestOrder`, `compositePreviewOntoCanvas`) — reuse them rather than re-deriving the math.
+
+### Workspace layout (Photoshop-inspired)
+
+- **The photo is the screen.** `.stage` fills everything under the toolbar and the image is `object-fit: contain`, so it renders at max size without distortion and letterboxes when the aspect ratio demands it. `.stage-canvas-edge` traces the rendered image rect with a hairline + cast shadow so the photo reads as a sheet on the graphite surround.
+- **`Toolbar`** (`components/workspace/Toolbar.tsx`) is the only permanent chrome, always visible: back arrow (disabled), editable session name (Enter saves), then icon-only tools — cutout (scissors), rotate, copy, smart-paste toggle — and a red trash at the far right. Icons carry no text; they name themselves on hover through the shared `[data-tip]` CSS tooltip. Everything object-scoped (rotate, copy, smart paste, delete) greys out instead of disappearing when nothing is selected, so the row never reflows.
+- **Cutout is armed, not confirmed.** Pressing scissors sets `cutMode`; the next click on the photo becomes the segmentation seed and fires `runSegment` immediately, disarming the tool. Escape cancels. There is no separate "Cut Out" button any more.
+- **Smart paste is a stub** — a local boolean with no behavior behind it; drag-and-drop is still plain dragging.
+- **Trash deletes the selected object client-side only.** There is no `DELETE /images/objects/{uuid}` endpoint yet, so `useSessionJobs.deleteObject` records the id in `deletedObjectIdsRef` and `useSessionSync` filters those ids out of every reconcile (`isDeleted`) — without that the object returns on the next sync tick. Deletions are lost on reload. Delete both halves once the endpoint lands.
+- **`ObjectRail`** (`components/workspace/ObjectRail.tsx`) replaces the old `ObjectPanel`. It hides in the right screen edge and slides out on hover of that edge, retracting after a ~220 ms grace once the pointer leaves (suppressed while a rename input is focused). Retracted, its spine still shows one notch per object — bright for the selected one, grey for hidden, pulsing while work is in flight. Each row carries an eye toggle, and a revert toggle when that object has a rotation result.
+- **Design tokens** live at the top of `src/style.css`: graphite chrome (`--chrome-*`), cyan accent (`--cyan`, `--cyan-bright`), IBM Plex Sans for UI and IBM Plex Mono for counters/status readouts (loaded in `index.html`). Radii stay at 2–3 px throughout.
 
 ### Multi-object preview & selection model
 
@@ -169,6 +179,10 @@ The backend (`docs/backend/concurrency.md`) allows a second non-overlapping inpa
 - **`useConflictNotices`** turns backend 409s (mask overlaps an in-flight removal, segment click inside a lease, canvas-writer timeout) into a dismissible, auto-expiring inline notice instead of the modal error dialog — a 409 here is expected traffic under the region-lease model, not a failure. Any error that isn't an `ApiError` with `status === 409` is rethrown, landing back in the caller's `try/catch` and the normal error modal. `setSessionName`'s 409 (duplicate name) is a different, real conflict and is never routed through this hook.
 
 `api/images.ts`'s `handleJsonResponse` throws a typed `ApiError` (with `.status` and `.detail` parsed from FastAPI's `{"detail": ...}` envelope) instead of a plain `Error`, so callers can distinguish 409 from a real failure by status code rather than string-matching the message.
+
+### Dashboard preview thumbnails
+
+`GET`/`POST /images/{uid}/preview` (`fastApi-app/api/routes.py`) back the session card thumbnail — a JPEG of the room roughly as the user left it. `POST /images/upload` writes an initial one (downscaled original) via `core/session_preview.py::write_upload_preview` so a card is never empty. `WorkspaceScreen.tsx`'s `capturePreviewRef` composites background + every visible cutout at its current offset (`utils/preview.ts::composeSessionPreview`, canvas-based, 640px long edge, JPEG q0.82) and calls `saveSessionPreview` debounced ~1.5s (`PREVIEW_DEBOUNCE_MS`) after any mutation settles — wired through `onMutated` for inpaint/rotation/rename/duplicate/delete/hide, and directly from `finishDrag` for drag-end (drags never go through `useSessionJobs`, so `onMutated` alone doesn't cover them). The POST never calls `touch_session` — it fires well after the mutation that already bumped `last_changed`, so the dashboard's `?t=` cache-buster is already correct.
 
 ## Planned but Not Yet Implemented
 

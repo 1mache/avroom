@@ -5,10 +5,14 @@ from typing import Annotated
 import uuid
 import logging
 import base64
+import binascii
+import io
+import os
 
 import json
 import cv2
 import numpy as np
+from PIL import Image, UnidentifiedImageError
 
 from fastapi import APIRouter, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
@@ -32,6 +36,7 @@ from core.inference_pool.session_runtime import (
 from core.mask_cache import delete_candidate, delete_candidates
 from core.depth_cache import delete_session_depth_maps
 from core.camera_calib_cache import delete_session_camera_calib, save_camera_calib
+from core.session_preview import write_upload_preview
 from core.object_metadata import (
     ObjectMetadata,
     build_clone_metadata,
@@ -57,6 +62,7 @@ from schemas.image import (
     SegmentRequest,
     SegmentResponse,
     SessionInfo,
+    SessionPreviewRequest,
     SessionSyncCheckRequest,
     SessionSyncCheckResponse,
     SetNameRequest,
@@ -75,6 +81,7 @@ from core.object_storage import (
     object_glb_path,
     resolve_object_cutout_path,
     resolve_object_glb_path,
+    session_preview_path,
 )
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from settings import (
@@ -85,6 +92,7 @@ from settings import (
     get_session_last_changed,
     get_sessions_file,
     evaluate_session_sync,
+    is_session_registered,
     load_names,
     register_uid,
     remove_session_name,
@@ -204,6 +212,8 @@ async def upload_image(
 
     register_uid(image_id)
     last_changed = touch_session(image_id)
+
+    write_upload_preview(storage_dir, image_id, file_bytes)
 
     if get_camera_calibration_enabled():
         try:
@@ -470,7 +480,7 @@ async def delete_session(uid: str) -> Response:
             path.unlink(missing_ok=True)
             removed += 1
 
-        for suffix in ("_background.png", "_cutout.png"):
+        for suffix in ("_background.png", "_cutout.png", "_preview.jpg"):
             p = storage_dir / f"{uid}{suffix}"
             if p.exists():
                 p.unlink()
@@ -946,4 +956,69 @@ async def get_original_image(uid: str) -> FileResponse:
     media_type = "image/jpeg" if suffix in ("jpg", "jpeg") else f"image/{suffix}"
     logger.info("Original image served: uid=%s path=%s", uid, path)
     return FileResponse(path, media_type=media_type)
+
+
+@router.get("/{uid}/preview")
+async def get_session_preview(uid: str) -> FileResponse:
+    """Serve the dashboard thumbnail for the given UID.
+
+    Written at upload time (a downscaled copy of the original) and
+    overwritten by the frontend after each edit settles, so it always shows
+    the room roughly as the user left it. Returns 404 when absent — callers
+    (the dashboard card) fall back to a placeholder rather than treating this
+    as an error.
+    """
+    logger.info("Session preview requested: uid=%s", uid)
+    path = session_preview_path(get_image_storage_dir(), uid)
+    if not path.exists():
+        logger.warning("Session preview not found: uid=%s path=%s", uid, path)
+        raise HTTPException(status_code=404, detail="Preview not found")
+    logger.info("Session preview served: uid=%s path=%s", uid, path)
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@router.post("/{uid}/preview", status_code=204)
+async def save_session_preview(uid: str, request: SessionPreviewRequest) -> Response:
+    """Store a client-composited dashboard thumbnail for the given UID.
+
+    Called fire-and-forget from the frontend, debounced, after edits settle
+    (see ``composeSessionPreview`` / ``saveSessionPreview`` in the React app).
+    Does not call ``touch_session``: the mutation that triggered this preview
+    already bumped ``last_changed`` well before the debounced capture runs,
+    so the dashboard's cache-buster is already correct, and bumping it again
+    here would spin an extra, pointless sync-check reconcile in the open
+    workspace.
+    """
+    logger.info("Session preview save requested: uid=%s", uid)
+    if not is_session_registered(uid):
+        logger.warning("Session preview save failed — unknown uid: %s", uid)
+        raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'")
+
+    try:
+        image_bytes = base64.b64decode(request.image_b64, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        logger.warning("Session preview save rejected — invalid base64: uid=%s detail=%s", uid, exc)
+        raise HTTPException(status_code=422, detail="image_b64 is not valid base64.") from exc
+
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            img.verify()
+    except (UnidentifiedImageError, OSError) as exc:
+        logger.warning("Session preview save rejected — not a valid image: uid=%s detail=%s", uid, exc)
+        raise HTTPException(status_code=422, detail="image_b64 does not decode to a valid image.") from exc
+
+    storage_dir = get_image_storage_dir()
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    path = session_preview_path(storage_dir, uid)
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+    try:
+        tmp_path.write_bytes(image_bytes)
+        os.replace(tmp_path, path)
+    except OSError as exc:
+        logger.error("Session preview save failed: uid=%s error=%s", uid, exc)
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Preview save failed: {exc}") from exc
+
+    logger.info("Session preview saved: uid=%s path=%s size_bytes=%d", uid, path, len(image_bytes))
+    return Response(status_code=204)
 

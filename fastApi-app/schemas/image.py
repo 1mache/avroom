@@ -58,6 +58,21 @@ class SessionSyncCheckResponse(BaseModel):
     ]
 
 
+class SessionPreviewRequest(BaseModel):
+    """Request payload for POST /images/{uid}/preview.
+
+    The frontend composites the inpainted background with every visible
+    cutout at its current position onto an offscreen canvas and posts the
+    result here, best-effort and debounced, so the dashboard can show each
+    session as the user left it.
+    """
+
+    image_b64: Annotated[
+        str,
+        Field(min_length=1, description="Base64-encoded preview JPEG (no data: prefix)."),
+    ]
+
+
 class SetNameRequest(BaseModel):
     """Request payload for assigning a human-readable name to a session."""
 

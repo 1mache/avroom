@@ -57,6 +57,14 @@ Response is `InpaintMaskResponse`, which extends `ClickResultResponse` and adds 
 
 `setSessionName(uid, name)` posts `{name}` to `POST /images/{uid}/name` and returns the updated `SessionInfo`. Backend enforces uniqueness — on collision the backend returns 409 and `handleJsonResponse` throws with the body text, which `MainPage` routes to the error modal.
 
+### Dashboard preview thumbnails
+
+`sessionPreviewUrl(uid, lastChanged)` builds a `GET /images/{uid}/preview` URL with `lastChanged` as a `?t=` cache-buster; `SessionCard` renders it directly as an `<img src>` and falls back to a placeholder on `onError` (404 when no preview exists yet).
+
+`saveSessionPreview(uid, imageB64)` posts `{ image_b64 }` to `POST /images/{uid}/preview`, best-effort (caller swallows failures). `PREVIEW_API_READY` in `api/images.ts` gates both — currently `true`.
+
+`WorkspaceScreen` composites the thumbnail client-side (`utils/preview.ts::composeSessionPreview` — background plus every visible cutout at its current offset, drawn onto an offscreen canvas, downscaled to 640px, JPEG q0.82) and calls `saveSessionPreview` debounced ~1.5s after any mutation settles: inpaint, novel-view result, rename, duplicate, drag-end, delete, and hide/show toggles. The backend also writes an initial thumbnail at upload time (a downscaled copy of the original), so a session never shows an empty placeholder once uploaded.
+
 ## Objects
 
 `getSessionObjects(uid)` fetches `GET /images/${uid}/objects` and returns `ObjectListResponse`. Used by `MainPage` on session restore to populate the full `objects[]` array. Each `ObjectInfo` may include `uuid`, `name`, and `average_depth` when metadata was persisted at inpaint time.

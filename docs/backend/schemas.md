@@ -31,6 +31,12 @@ All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.
 | `last_changed` | `str` | Server-side last-changed timestamp. Empty string when the session exists but has no recorded timestamp yet. |
 | `needs_refresh` | `bool` | `true` when the client must re-poll session data from the server. |
 
+`SessionPreviewRequest` is the body of `POST /images/{uid}/preview`.
+
+| Field | Type | Description |
+|---|---|---|
+| `image_b64` | `str` | Base64-encoded preview JPEG, no `data:` prefix (min length 1). |
+
 ## Upload
 
 `ImageUploadResponse` is returned by `POST /images/upload`.

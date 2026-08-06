@@ -208,6 +208,24 @@ def current_background_path(base_dir: Path, uid: str) -> Path:
     return base_dir / f"{uid}_background.png"
 
 
+def session_preview_path(base_dir: Path, uid: str) -> Path:
+    """Return the dashboard thumbnail path for one session.
+
+    The path is always ``base_dir / "{uid}_preview.jpg"``; no fallback logic
+    is applied. JPEG (not PNG) because the thumbnail is a lossy, small-file
+    compositing of the background plus every visible cutout — matching what
+    the frontend's ``composeSessionPreview`` already produces.
+
+    Args:
+        base_dir: Directory that contains session artifacts.
+        uid: Session UID.
+
+    Returns:
+        A :class:`~pathlib.Path` for the session preview file.
+    """
+    return base_dir / f"{uid}_preview.jpg"
+
+
 def list_object_novel_view_paths(base_dir: Path, uid: str, object_id: int) -> list[Path]:
     """Return novel-view and preview PNG paths belonging to one object.
 

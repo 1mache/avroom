@@ -548,7 +548,7 @@ async def set_name(uid: str, request: SetNameRequest) -> SessionInfo:
 @router.post("/{uid}/sync-check", response_model=SessionSyncCheckResponse)
 async def sync_check_session(uid: str, request: SessionSyncCheckRequest) -> SessionSyncCheckResponse:
     """Compare a client-held session timestamp against server truth."""
-    logger.info(
+    logger.debug(
         "Session sync-check requested: uid=%s client_last_changed=%r",
         uid,
         request.client_last_changed,
@@ -561,12 +561,18 @@ async def sync_check_session(uid: str, request: SessionSyncCheckRequest) -> Sess
     except SessionNotFoundError:
         logger.warning("Session sync-check failed — unknown uid: %s", uid)
         raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'") from None
-    logger.info(
-        "Session sync-check complete: uid=%s needs_refresh=%s last_changed=%r",
-        uid,
-        needs_refresh,
-        server_last_changed,
-    )
+    if needs_refresh:
+        logger.info(
+            "Session sync-check mismatch: uid=%s last_changed=%r",
+            uid,
+            server_last_changed,
+        )
+    else:
+        logger.debug(
+            "Session sync-check match: uid=%s last_changed=%r",
+            uid,
+            server_last_changed,
+        )
     return SessionSyncCheckResponse(
         last_changed=server_last_changed,
         needs_refresh=needs_refresh,

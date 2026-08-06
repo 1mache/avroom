@@ -11,7 +11,12 @@ logger = logging.getLogger(__name__)
 
 # Facade-only jobs do not pass through image_processing helpers that already
 # acquire inference_session(); they need the lock here in inline mode.
-_FACADE_JOB_KINDS = frozenset({JobKind.GENERATE_3D, JobKind.NOVEL_VIEW, JobKind.VALIDATE_CONTENT})
+_FACADE_JOB_KINDS = frozenset({
+    JobKind.GENERATE_3D,
+    JobKind.NOVEL_VIEW,
+    JobKind.VALIDATE_CONTENT,
+    JobKind.CALIBRATE_CAMERA,
+})
 
 
 def _execute_impl(job: JobRequest) -> JobResult:
@@ -111,20 +116,25 @@ def _execute_impl(job: JobRequest) -> JobResult:
         return JobResult(job_id=job.job_id, ok=True, glb_bytes=glb_bytes)
 
     if job.kind == JobKind.NOVEL_VIEW:
-        from avroom_object_removal.ai_engines.novel_view import NovelViewFacade
+        from avroom_object_removal.ai_engines.novel_view import (
+            MeshRenderNovelViewStrategy,
+            NovelViewFacade,
+        )
 
         assert job.cutout_path is not None
+        assert job.mesh_path is not None
         assert job.elevation_deg is not None
         assert job.azimuth_deg is not None
         assert job.relative_elevation_deg is not None
         assert job.radius is not None
-        result_bgra = NovelViewFacade().synthesize(
+        result_bgra = NovelViewFacade(MeshRenderNovelViewStrategy()).synthesize(
             Path(job.cutout_path),
             elevation_deg=job.elevation_deg,
             azimuth_deg=job.azimuth_deg,
             relative_elevation_deg=job.relative_elevation_deg,
             radius=job.radius,
             seed=0,
+            mesh=Path(job.mesh_path),
         )
         return JobResult(job_id=job.job_id, ok=True, novel_view_bgra=result_bgra)
 
@@ -140,6 +150,25 @@ def _execute_impl(job: JobRequest) -> JobResult:
             validation_checks=outcome.checks,
             validation_scores=outcome.scores,
             validation_messages=outcome.messages,
+        )
+
+    if job.kind == JobKind.CALIBRATE_CAMERA:
+        from core.camera_calibration import calibrate_upload_image
+
+        assert job.image_bytes is not None
+        outcome = calibrate_upload_image(job.image_bytes)
+        return JobResult(
+            job_id=job.job_id,
+            ok=True,
+            camera_calib_gravity=outcome.gravity,
+            camera_calib_roll_deg=outcome.roll_deg,
+            camera_calib_pitch_deg=outcome.pitch_deg,
+            camera_calib_fx=outcome.fx,
+            camera_calib_fy=outcome.fy,
+            camera_calib_cx=outcome.cx,
+            camera_calib_cy=outcome.cy,
+            camera_calib_confidence=outcome.confidence,
+            camera_calib_camera_model=outcome.camera_model,
         )
 
     raise ValueError(f"Unsupported job kind: {job.kind}")

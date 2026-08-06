@@ -62,6 +62,15 @@ Set `HF_TOKEN` in `fastApi-app/.env` (loaded by `main.py` via `load_dotenv()`) f
 - First run downloads ~5 GB of weights from Hugging Face.
 - If TripoSR/Hunyuan and Zero123 cannot coexist in VRAM, run them sequentially or document an exclusive-GPU unload policy.
 
+## Mesh render (HTTP)
+
+`POST /images/novel-view` uses `MeshRenderNovelViewStrategy` (trimesh + pyrender). Requires:
+
+- `pyrender` and `PyOpenGL` (see `requirements.txt` / `TestModules/pyproject.toml`)
+- A working offscreen OpenGL context (GPU display on Windows; on headless Linux try `PYOPENGL_PLATFORM=egl` or `osmesa`)
+
+First call per object may still be slow if the GLB must be generated; subsequent rotations of the same object only rasterize.
+
 ## Inference defaults
 
 | Parameter | Default | Notes |
@@ -73,13 +82,14 @@ Set `HF_TOKEN` in `fastApi-app/.env` (loaded by `main.py` via `load_dotenv()`) f
 
 ## Smoke test
 
-From repo root (requires deps; CUDA recommended):
+From repo root (requires deps; CUDA recommended for Zero123):
 
 ```bash
 python TestModules/tests/test_novel_view_stable_zero123.py [path/to/cutout.png]
+pytest TestModules/tests/test_mesh_render_novel_view.py
 ```
 
-First run downloads `kxic/stable-zero123` (~5 GB). Debug outputs:
+First Zero123 run downloads `kxic/stable-zero123` (~5 GB). Debug outputs:
 
 - `TestModules/outputs/novel_view_rotation_debug/preprocessing/` — stages 00–05 per azimuth
 - `TestModules/outputs/novel_view_rotation_debug/final_results/` — generated novel views

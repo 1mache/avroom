@@ -31,10 +31,13 @@ from core.inference_pool.session_runtime import (
 )
 from core.mask_cache import delete_candidate, delete_candidates
 from core.depth_cache import delete_session_depth_maps
+from core.camera_calib_cache import delete_session_camera_calib, save_camera_calib
 from core.object_metadata import (
     ObjectMetadata,
+    build_clone_metadata,
     get_object_by_uuid,
     load_object_metadata,
+    remove_object_index_entry,
     save_object_metadata,
     set_object_name,
     delete_session_metadata,
@@ -43,6 +46,7 @@ from schemas.image import (
     ClickRequest,
     ClickResultResponse,
     CutoutBounds,
+    DuplicateObjectResponse,
     ImageUploadResponse,
     InpaintMaskRequest,
     InpaintMaskResponse,
@@ -62,7 +66,9 @@ from schemas.image import (
     UidCacheStatusResponse,
 )
 from core.object_storage import (
+    copy_object_artifacts,
     current_background_path,
+    delete_object_artifact_files,
     list_object_ids,
     next_object_id,
     object_cutout_path,
@@ -83,6 +89,7 @@ from settings import (
     register_uid,
     remove_session_name,
     get_upload_validation_enabled,
+    get_camera_calibration_enabled,
     SessionNotFoundError,
     set_session_name,
     touch_session,
@@ -197,6 +204,19 @@ async def upload_image(
 
     register_uid(image_id)
     last_changed = touch_session(image_id)
+
+    if get_camera_calibration_enabled():
+        try:
+            calib_outcome = get_inference_client().run_calibrate_camera(image_bytes=file_bytes)
+            save_camera_calib(storage_dir, image_id, calib_outcome.to_cache_dict())
+        except Exception as exc:
+            logger.warning(
+                "Upload camera calibration failed (non-fatal): image_id=%s detail=%s",
+                image_id,
+                exc,
+            )
+    else:
+        logger.info("Upload camera calibration skipped: CAMERA_CALIB=false image_id=%s", image_id)
 
     return ImageUploadResponse(
         image_id=image_id,
@@ -423,6 +443,7 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
         cutout_bounds=cutout_bounds,
         object_id=object_id,
         object_uuid=object_metadata.uuid,
+        source_elevation_deg=object_metadata.source_elevation_deg,
     )
 
 
@@ -469,6 +490,7 @@ async def delete_session(uid: str) -> Response:
 
         delete_session_metadata(storage_dir, uid, obj_ids)
         removed += delete_session_depth_maps(storage_dir, uid)
+        removed += delete_session_camera_calib(storage_dir, uid)
 
         debug_path = storage_dir / "point" / f"{uid}_debug.png"
         if debug_path.exists():
@@ -526,7 +548,7 @@ async def set_name(uid: str, request: SetNameRequest) -> SessionInfo:
 @router.post("/{uid}/sync-check", response_model=SessionSyncCheckResponse)
 async def sync_check_session(uid: str, request: SessionSyncCheckRequest) -> SessionSyncCheckResponse:
     """Compare a client-held session timestamp against server truth."""
-    logger.info(
+    logger.debug(
         "Session sync-check requested: uid=%s client_last_changed=%r",
         uid,
         request.client_last_changed,
@@ -539,12 +561,18 @@ async def sync_check_session(uid: str, request: SessionSyncCheckRequest) -> Sess
     except SessionNotFoundError:
         logger.warning("Session sync-check failed — unknown uid: %s", uid)
         raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'") from None
-    logger.info(
-        "Session sync-check complete: uid=%s needs_refresh=%s last_changed=%r",
-        uid,
-        needs_refresh,
-        server_last_changed,
-    )
+    if needs_refresh:
+        logger.info(
+            "Session sync-check mismatch: uid=%s last_changed=%r",
+            uid,
+            server_last_changed,
+        )
+    else:
+        logger.debug(
+            "Session sync-check match: uid=%s last_changed=%r",
+            uid,
+            server_last_changed,
+        )
     return SessionSyncCheckResponse(
         last_changed=server_last_changed,
         needs_refresh=needs_refresh,
@@ -568,6 +596,7 @@ def _metadata_to_response(
         object_id=metadata.object_id,
         name=metadata.name,
         average_depth=metadata.average_depth,
+        source_elevation_deg=metadata.source_elevation_deg,
         content_hash=metadata.content_hash,
         created_at=metadata.created_at,
         has_3d=has_3d,
@@ -609,6 +638,111 @@ async def rename_object(object_uuid: str, request: SetObjectNameRequest) -> Obje
     logger.info("Object renamed: uuid=%s name=%r", object_uuid, request.name)
     return response
 
+
+@router.post("/objects/{object_uuid}/duplicate", response_model=DuplicateObjectResponse)
+def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
+    """Clone one object into a new object within the same session.
+
+    Copies the cutout and any available GLB / novel-view caches. Session-level
+    artifacts (background, depth cache, original upload) are shared, not
+    duplicated. The clone receives a fresh UUID, sequential object_id, and a
+    ``<root>-copy`` / ``<root>-copyN`` nickname.
+    """
+    logger.info("Object duplicate requested: uuid=%s", object_uuid)
+    storage_dir = get_image_storage_dir()
+    three_d_dir = get_3d_storage_dir()
+
+    source = get_object_by_uuid(storage_dir, object_uuid)
+    if source is None:
+        logger.warning("Object duplicate failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(
+            status_code=404,
+            detail=f"Object not found for uuid='{object_uuid}'",
+        )
+
+    source_cutout = resolve_object_cutout_path(
+        storage_dir, source.session_id, source.object_id
+    )
+    if not source_cutout.exists():
+        logger.warning(
+            "Object duplicate failed — cutout missing: uuid=%s session_id=%s object_id=%d",
+            object_uuid,
+            source.session_id,
+            source.object_id,
+        )
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Source cutout not found for uuid='{object_uuid}' "
+                f"(session_id='{source.session_id}', object_id={source.object_id})"
+            ),
+        )
+
+    new_object_id: int | None = None
+    clone_metadata: ObjectMetadata | None = None
+    try:
+        try:
+            acquire_canvas_writer(source.session_id)
+        except SessionConflictError as exc:
+            logger.warning(
+                "Object duplicate rejected due to canvas writer timeout: uuid=%s",
+                object_uuid,
+            )
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        try:
+            new_object_id = next_object_id(storage_dir, source.session_id)
+            clone_metadata = build_clone_metadata(storage_dir, source, new_object_id)
+            copy_object_artifacts(
+                base_dir=storage_dir,
+                glb_dir=three_d_dir,
+                uid=source.session_id,
+                source_object_id=source.object_id,
+                dest_object_id=new_object_id,
+            )
+            save_object_metadata(storage_dir, clone_metadata)
+            touch_session(source.session_id)
+        finally:
+            release_canvas_writer(source.session_id)
+    except HTTPException:
+        raise
+    except FileNotFoundError as exc:
+        logger.warning("Object duplicate failed — missing artifact: uuid=%s detail=%s", object_uuid, exc)
+        if new_object_id is not None:
+            delete_object_artifact_files(
+                base_dir=storage_dir,
+                glb_dir=three_d_dir,
+                uid=source.session_id,
+                object_id=new_object_id,
+            )
+            if clone_metadata is not None:
+                remove_object_index_entry(clone_metadata.uuid)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Object duplicate failed: uuid=%s", object_uuid)
+        if new_object_id is not None:
+            delete_object_artifact_files(
+                base_dir=storage_dir,
+                glb_dir=three_d_dir,
+                uid=source.session_id,
+                object_id=new_object_id,
+            )
+            if clone_metadata is not None:
+                remove_object_index_entry(clone_metadata.uuid)
+        raise HTTPException(status_code=500, detail=f"Object duplicate failed: {exc}") from exc
+
+    assert clone_metadata is not None
+    logger.info(
+        "Object duplicated: source_uuid=%s clone_uuid=%s session_id=%s "
+        "source_id=%d clone_id=%d name=%r",
+        object_uuid,
+        clone_metadata.uuid,
+        clone_metadata.session_id,
+        source.object_id,
+        clone_metadata.object_id,
+        clone_metadata.name,
+    )
+    return DuplicateObjectResponse(object_uuid=clone_metadata.uuid)
 
 @router.post("/objects/{object_uuid}/rescale-by-depth", response_model=RescaleByDepthResponse)
 def rescale_object_by_depth(
@@ -699,6 +833,9 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
                     uuid=meta.uuid if meta is not None else None,
                     name=meta.name if meta is not None else None,
                     average_depth=meta.average_depth if meta is not None else None,
+                    source_elevation_deg=(
+                        meta.source_elevation_deg if meta is not None else None
+                    ),
                     cutout_b64=cutout_b64,
                     format="png",
                     cutout_bounds=cutout_bounds,

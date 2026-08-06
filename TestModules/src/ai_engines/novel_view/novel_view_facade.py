@@ -40,6 +40,7 @@ class NovelViewFacade:
         relative_elevation_deg: float = 0.0,
         radius: float = 0.0,
         seed: int = 0,
+        mesh: bytes | Path | str | None = None,
     ) -> np.ndarray:
         """Synthesize a novel 2D view of ``image`` via the active strategy."""
 
@@ -50,4 +51,5 @@ class NovelViewFacade:
             relative_elevation_deg=relative_elevation_deg,
             radius=radius,
             seed=seed,
+            mesh=mesh,
         )

@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+from .camera_calibration import (
+    CameraCalibrationFacade,
+    CameraCalibrationResult,
+    CameraCalibrationStrategy,
+    GeoCalibCameraCalibrationStrategy,
+)
 from .content_validation import (
     ClipZeroShotContentValidationStrategy,
     CompositeContentValidationStrategy,
     ContentValidationFacade,
     ContentValidationResult,
     ContentValidationStrategy,
+)
+from .elevation_estimation import (
+    ElevationEstimationFacade,
+    ElevationEstimationResult,
+    ElevationEstimationStrategy,
+    GeometricElevationEstimationStrategy,
 )
 from .depth import (
     DepthAnythingMappingStrategy,
@@ -43,11 +55,19 @@ from .segmentation import (
 )
 
 __all__ = [
+    "CameraCalibrationFacade",
+    "CameraCalibrationResult",
+    "CameraCalibrationStrategy",
+    "GeoCalibCameraCalibrationStrategy",
     "ClipZeroShotContentValidationStrategy",
     "CompositeContentValidationStrategy",
     "ContentValidationFacade",
     "ContentValidationResult",
     "ContentValidationStrategy",
+    "ElevationEstimationFacade",
+    "ElevationEstimationResult",
+    "ElevationEstimationStrategy",
+    "GeometricElevationEstimationStrategy",
     "DepthAnythingMappingStrategy",
     "DepthMappingFacade",
     "DepthMappingStrategy",

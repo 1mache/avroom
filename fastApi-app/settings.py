@@ -292,6 +292,11 @@ def get_upload_validation_enabled() -> bool:
     return _env_bool("VALIDATE", True)
 
 
+def get_camera_calibration_enabled() -> bool:
+    """Return whether upload-time GeoCalib calibration runs (default: enabled)."""
+    return _env_bool("CAMERA_CALIB", True)
+
+
 def get_upload_min_bytes() -> int:
     return max(1, _env_int("UPLOAD_MIN_BYTES", 1024))
 

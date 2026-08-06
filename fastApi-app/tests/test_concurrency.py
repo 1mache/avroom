@@ -48,6 +48,7 @@ def test_heavy_endpoints_are_sync_handlers() -> None:
         "segment_image",
         "inpaint_mask",
         "rescale_object_by_depth",
+        "duplicate_object",
         "generate_test_3d",
         "synthesize_novel_view",
     }

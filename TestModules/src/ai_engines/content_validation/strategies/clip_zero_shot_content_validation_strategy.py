@@ -12,67 +12,34 @@ from ..content_validation_strategy import ContentValidationStrategy
 
 logger = logging.getLogger(__name__)
 
-# Label groups for zero-shot CLIP scoring. Each group contributes one check.
-_SCENE_POSITIVE_LABELS: tuple[str, ...] = (
-    "a photo of an indoor room",
-    "a photo of a living room",
-    "a photo of a bedroom interior",
-    "a photo of a kitchen interior",
-    "a photo of an outdoor landscape",
-    "a photo of a garden or patio space",
-)
-_SCENE_NEGATIVE_LABELS: tuple[str, ...] = (
-    "a photo of a single person",
-    "a photo of a product on white background",
-    "a photo of a selfie",
-    "a photo of one isolated object",
-)
-_PERSON_LABELS: tuple[str, ...] = (
-    "a photo of a person",
-    "a portrait photo of a person",
-    "a selfie photo",
-    "a close-up of a human face",
-)
-_PRODUCT_LABELS: tuple[str, ...] = (
-    "a product photo on white background",
-    "a studio product shot",
-    "a single object on plain background",
-    "an e-commerce product image",
-)
-_SCREENSHOT_LABELS: tuple[str, ...] = (
-    "a screenshot of a computer screen",
-    "a photo of a phone screen",
-    "a photo of a monitor or TV",
-    "a UI screenshot",
-)
-_OBSTRUCTION_LABELS: tuple[str, ...] = (
-    "a photo with a hand covering the lens",
-    "a photo with a finger in front of the camera",
-    "a photo with a body blocking most of the view",
-)
-_NSFW_LABELS: tuple[str, ...] = (
-    "a nude photo",
-    "an explicit NSFW image",
-    "a sexual image",
-)
-_STYLIZED_LABELS: tuple[str, ...] = (
-    "an anime illustration",
-    "a painting or artwork",
-    "a heavily filtered Instagram photo",
-    "a cartoon image",
-)
+# Binary CLIP contests: one concept label vs one concrete room/space alternative.
+_SCENE_LABEL = "a photo of an indoor room or outdoor space"
+_SCENE_ALTERNATIVE_LABEL = "a photo of something else"
+_PERSON_LABEL = "a photo of a person, selfie, or portrait"
+_PERSON_ALTERNATIVE_LABEL = "a photo of an empty room or outdoor space"
+_PRODUCT_LABEL = "a product photo on plain background"
+_PRODUCT_ALTERNATIVE_LABEL = "a photo of a room or outdoor space"
+_SCREENSHOT_LABEL = "a screenshot or photo of a screen"
+_SCREENSHOT_ALTERNATIVE_LABEL = "a photo of a real room or outdoor space"
+_OBSTRUCTION_LABEL = "a photo with a hand or body blocking the camera"
+_OBSTRUCTION_ALTERNATIVE_LABEL = "a clear photo of a room or outdoor space"
+_NSFW_LABEL = "an explicit NSFW or nude photo"
+_NSFW_ALTERNATIVE_LABEL = "a normal photo of a room or outdoor space"
+_STYLIZED_LABEL = "an anime, painting, cartoon, or heavily filtered image"
+_STYLIZED_ALTERNATIVE_LABEL = "a real photograph of a room or outdoor space"
 
 
 class ClipZeroShotContentValidationStrategy(ContentValidationStrategy):
     """Zero-shot CLIP classifier for upload content suitability.
 
+    Each gate runs a 2-label softmax (concept vs concrete room/space).
     Uses ``openai/clip-vit-base-patch32`` (lazy-loaded on first ``validate``).
     Thresholds are configurable at construction for testing.
     """
 
     DEFAULT_MODEL_ID = "openai/clip-vit-base-patch32"
-    DEFAULT_POSITIVE_THRESHOLD = 0.20
-    DEFAULT_NEGATIVE_THRESHOLD = 0.25
+    DEFAULT_POSITIVE_THRESHOLD = 0.5
+    DEFAULT_NEGATIVE_THRESHOLD = 0.5
 
     def __init__(
         self,
@@ -128,11 +95,10 @@ class ClipZeroShotContentValidationStrategy(ContentValidationStrategy):
 
         return {label: float(probs[index].item()) for index, label in enumerate(labels)}
 
-    @staticmethod
-    def _group_max(scores: dict[str, float]) -> float:
-        if not scores:
-            return 0.0
-        return max(scores.values())
+    def _binary_prob(self, pil_image: Image.Image, positive: str, negative: str) -> float:
+        """Return P(positive) from a 2-label softmax over positive vs negative."""
+        scores = self._score_labels(pil_image, (positive, negative))
+        return scores[positive]
 
     def validate(self, image: np.ndarray) -> ContentValidationResult:
         if image.ndim != 3 or image.shape[2] != 3:
@@ -141,31 +107,21 @@ class ClipZeroShotContentValidationStrategy(ContentValidationStrategy):
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(rgb)
 
-        positive_scores = self._score_labels(pil_image, _SCENE_POSITIVE_LABELS)
-        negative_scores = self._score_labels(pil_image, _SCENE_NEGATIVE_LABELS)
-        person_scores = self._score_labels(pil_image, _PERSON_LABELS)
-        product_scores = self._score_labels(pil_image, _PRODUCT_LABELS)
-        screenshot_scores = self._score_labels(pil_image, _SCREENSHOT_LABELS)
-        obstruction_scores = self._score_labels(pil_image, _OBSTRUCTION_LABELS)
-        nsfw_scores = self._score_labels(pil_image, _NSFW_LABELS)
-        stylized_scores = self._score_labels(pil_image, _STYLIZED_LABELS)
+        scene_p = self._binary_prob(pil_image, _SCENE_LABEL, _SCENE_ALTERNATIVE_LABEL)
+        person_p = self._binary_prob(pil_image, _PERSON_LABEL, _PERSON_ALTERNATIVE_LABEL)
+        product_p = self._binary_prob(pil_image, _PRODUCT_LABEL, _PRODUCT_ALTERNATIVE_LABEL)
+        screenshot_p = self._binary_prob(pil_image, _SCREENSHOT_LABEL, _SCREENSHOT_ALTERNATIVE_LABEL)
+        obstruction_p = self._binary_prob(pil_image, _OBSTRUCTION_LABEL, _OBSTRUCTION_ALTERNATIVE_LABEL)
+        nsfw_p = self._binary_prob(pil_image, _NSFW_LABEL, _NSFW_ALTERNATIVE_LABEL)
+        stylized_p = self._binary_prob(pil_image, _STYLIZED_LABEL, _STYLIZED_ALTERNATIVE_LABEL)
 
-        positive_max = self._group_max(positive_scores)
-        negative_max = self._group_max(negative_scores)
-        person_max = self._group_max(person_scores)
-        product_max = self._group_max(product_scores)
-        screenshot_max = self._group_max(screenshot_scores)
-        obstruction_max = self._group_max(obstruction_scores)
-        nsfw_max = self._group_max(nsfw_scores)
-        stylized_max = self._group_max(stylized_scores)
-
-        scene_pass = positive_max >= self._positive_threshold and positive_max > negative_max
-        person_pass = person_max < self._negative_threshold
-        product_pass = product_max < self._negative_threshold
-        screenshot_pass = screenshot_max < self._negative_threshold
-        obstruction_pass = obstruction_max < self._negative_threshold
-        nsfw_pass = nsfw_max < self._negative_threshold
-        stylized_pass = stylized_max < self._negative_threshold
+        scene_pass = scene_p >= self._positive_threshold
+        person_pass = person_p < self._negative_threshold
+        product_pass = product_p < self._negative_threshold
+        screenshot_pass = screenshot_p < self._negative_threshold
+        obstruction_pass = obstruction_p < self._negative_threshold
+        nsfw_pass = nsfw_p < self._negative_threshold
+        stylized_pass = stylized_p < self._negative_threshold
 
         checks = {
             "scene_space_or_landscape": scene_pass,
@@ -178,14 +134,13 @@ class ClipZeroShotContentValidationStrategy(ContentValidationStrategy):
         }
 
         scores: dict[str, float] = {
-            "scene_positive_max": positive_max,
-            "scene_negative_max": negative_max,
-            "person_max": person_max,
-            "product_max": product_max,
-            "screenshot_max": screenshot_max,
-            "obstruction_max": obstruction_max,
-            "nsfw_max": nsfw_max,
-            "stylized_max": stylized_max,
+            "scene_p": scene_p,
+            "person_p": person_p,
+            "product_p": product_p,
+            "screenshot_p": screenshot_p,
+            "obstruction_p": obstruction_p,
+            "nsfw_p": nsfw_p,
+            "stylized_p": stylized_p,
         }
 
         messages: list[str] = []

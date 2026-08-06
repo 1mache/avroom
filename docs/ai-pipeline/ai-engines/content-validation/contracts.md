@@ -21,15 +21,17 @@ class ContentValidationResult:
 
 ## Check keys (CLIP default strategy)
 
+Each check is a 2-label softmax: concept vs a concrete room/space alternative.
+
 | Key | Pass when |
 |-----|-----------|
-| `scene_space_or_landscape` | Room/landscape positive labels beat person/product negatives |
-| `not_person_centric` | Person/portrait/selfie score below threshold |
-| `not_product_shot` | Product/studio single-object score below threshold |
-| `not_screenshot` | Screenshot/UI score below threshold |
-| `not_obstructed` | Hand/lens obstruction score below threshold |
-| `not_nsfw` | NSFW label score below threshold |
-| `not_heavily_stylized` | Painting/anime/filter score below threshold |
+| `scene_space_or_landscape` | `P(indoor room or outdoor space) >= positive_threshold` |
+| `not_person_centric` | `P(person/selfie/portrait) < negative_threshold` |
+| `not_product_shot` | `P(product on plain background) < negative_threshold` |
+| `not_screenshot` | `P(screenshot or screen photo) < negative_threshold` |
+| `not_obstructed` | `P(hand/body blocking camera) < negative_threshold` |
+| `not_nsfw` | `P(explicit NSFW/nude) < negative_threshold` |
+| `not_heavily_stylized` | `P(anime/painting/cartoon/filtered) < negative_threshold` |
 
 ## HTTP mapping
 

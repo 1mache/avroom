@@ -11,8 +11,8 @@
 
 | Parameter | Default | Meaning |
 |-----------|---------|---------|
-| `positive_threshold` | `0.20` | Minimum best positive scene label score |
-| `negative_threshold` | `0.25` | Maximum allowed person/product/etc. scores |
+| `positive_threshold` | `0.5` | Minimum `P(scene)` from the scene binary contest |
+| `negative_threshold` | `0.5` | Maximum allowed `P(bad concept)` from each negative binary contest |
 
 ## Inference pool
 

@@ -176,12 +176,14 @@ class InferenceClient:
         azimuth_deg: float,
         relative_elevation_deg: float,
         radius: float,
+        mesh_path: Path,
     ) -> np.ndarray:
         job = JobRequest(
             job_id=str(uuid.uuid4()),
             kind=JobKind.NOVEL_VIEW,
             storage_dir=str(cutout_path.parent.resolve()),
             cutout_path=str(cutout_path.resolve()),
+            mesh_path=str(mesh_path.resolve()),
             elevation_deg=elevation_deg,
             azimuth_deg=azimuth_deg,
             relative_elevation_deg=relative_elevation_deg,
@@ -212,6 +214,36 @@ class InferenceClient:
             checks=result.validation_checks,
             scores=result.validation_scores,
             messages=result.validation_messages,
+        )
+
+    def run_calibrate_camera(self, *, image_bytes: bytes) -> CameraCalibrationOutcome:
+        from core.camera_calibration import CameraCalibrationOutcome
+
+        job = JobRequest(
+            job_id=str(uuid.uuid4()),
+            kind=JobKind.CALIBRATE_CAMERA,
+            storage_dir=str(Path.cwd()),
+            image_bytes=image_bytes,
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.camera_calib_gravity is not None
+        assert result.camera_calib_roll_deg is not None
+        assert result.camera_calib_pitch_deg is not None
+        assert result.camera_calib_fx is not None
+        assert result.camera_calib_fy is not None
+        assert result.camera_calib_cx is not None
+        assert result.camera_calib_cy is not None
+        return CameraCalibrationOutcome(
+            gravity=result.camera_calib_gravity,
+            roll_deg=result.camera_calib_roll_deg,
+            pitch_deg=result.camera_calib_pitch_deg,
+            fx=result.camera_calib_fx,
+            fy=result.camera_calib_fy,
+            cx=result.camera_calib_cx,
+            cy=result.camera_calib_cy,
+            confidence=result.camera_calib_confidence,
+            camera_model=result.camera_calib_camera_model or "pinhole",
         )
 
 

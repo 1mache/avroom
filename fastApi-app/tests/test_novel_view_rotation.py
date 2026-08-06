@@ -48,6 +48,12 @@ class _FakeInferenceClient:
 
     def __init__(self) -> None:
         self.calls: list[dict[str, Any]] = []
+        self.generate_3d_calls: list[Path] = []
+        self.glb_bytes: bytes = b"fake-glb-bytes"
+
+    def run_generate_3d(self, *, cutout_path: Path) -> bytes:
+        self.generate_3d_calls.append(cutout_path)
+        return self.glb_bytes
 
     def run_novel_view(
         self,
@@ -57,6 +63,7 @@ class _FakeInferenceClient:
         azimuth_deg: float,
         relative_elevation_deg: float,
         radius: float,
+        mesh_path: Path,
     ) -> np.ndarray:
         self.calls.append(
             {
@@ -65,6 +72,7 @@ class _FakeInferenceClient:
                 "azimuth_deg": azimuth_deg,
                 "relative_elevation_deg": relative_elevation_deg,
                 "radius": radius,
+                "mesh_path": mesh_path,
             }
         )
         # 4x4 fully-opaque BGRA image is enough to round-trip through
@@ -76,11 +84,14 @@ class _FakeInferenceClient:
 
 @pytest.fixture
 def storage_sandbox(monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Redirect image storage to an isolated directory with one real cutout."""
+    """Redirect image + 3D storage to an isolated directory with one cutout."""
     root = Path(tempfile.mkdtemp(prefix="avroom_novel_view_test_"))
     images_dir = root / "images"
+    glb_dir = root / "3d"
     images_dir.mkdir(parents=True, exist_ok=True)
+    glb_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(settings, "IMAGE_STORAGE_DIR", str(images_dir))
+    monkeypatch.setattr("api.novel_view.get_3d_storage_dir", lambda: glb_dir)
     assert settings.get_image_storage_dir() == images_dir
 
     cutout = np.zeros((4, 4, 4), dtype=np.uint8)
@@ -89,8 +100,17 @@ def storage_sandbox(monkeypatch: pytest.MonkeyPatch) -> Path:
     assert success
     (images_dir / "sess-1_0_cutout.png").write_bytes(encoded.tobytes())
 
+    # Pre-seed a GLB so existing tests exercise mesh_path without generating 3D.
+    (glb_dir / "sess-1_0.glb").write_bytes(b"cached-glb")
+
     return images_dir
 
+
+@pytest.fixture
+def glb_dir(storage_sandbox: Path) -> Path:
+    """Sibling 3D storage dir created by ``storage_sandbox``."""
+
+    return storage_sandbox.parent / "3d"
 
 @pytest.fixture
 def fake_client(monkeypatch: pytest.MonkeyPatch) -> _FakeInferenceClient:
@@ -122,7 +142,7 @@ def _post_novel_view(client: Any, **overrides: Any) -> Any:
 
 
 def test_response_echoes_snapped_azimuth(
-    storage_sandbox: Path, fake_client: _FakeInferenceClient
+    storage_sandbox: Path, fake_client: _FakeInferenceClient, glb_dir: Path
 ) -> None:
     with _build_client() as client:
         response = _post_novel_view(client, azimuth_deg=37.0)
@@ -131,6 +151,30 @@ def test_response_echoes_snapped_azimuth(
     body = response.json()
     assert body["azimuth_deg"] == 40.0
     assert fake_client.calls[0]["azimuth_deg"] == 40.0
+    assert fake_client.calls[0]["mesh_path"] == glb_dir / "sess-1_0.glb"
+    assert not fake_client.generate_3d_calls
+
+
+def test_glb_cache_miss_generates_and_writes(
+    storage_sandbox: Path, fake_client: _FakeInferenceClient, glb_dir: Path
+) -> None:
+    missing_cutout = storage_sandbox / "sess-1_1_cutout.png"
+    cutout = np.zeros((4, 4, 4), dtype=np.uint8)
+    cutout[:, :, 3] = 255
+    success, encoded = cv2.imencode(".png", cutout)
+    assert success
+    missing_cutout.write_bytes(encoded.tobytes())
+
+    with _build_client() as client:
+        response = _post_novel_view(client, object_id=1, azimuth_deg=20.0)
+
+    assert response.status_code == 200
+    assert len(fake_client.generate_3d_calls) == 1
+    written = glb_dir / "sess-1_1.glb"
+    assert written.exists()
+    assert written.read_bytes() == b"fake-glb-bytes"
+    assert fake_client.calls[0]["mesh_path"] == written
+    assert fake_client.calls[0]["azimuth_deg"] == 20.0
 
 
 def test_near_identical_poses_share_one_cache_entry(

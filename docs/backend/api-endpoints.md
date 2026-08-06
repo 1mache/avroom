@@ -19,6 +19,7 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `GET` | `/images/{uid}/original` | path `uid` | original image file |
 | `GET` | `/images/objects/{object_uuid}` | path `object_uuid` | `ObjectMetadataResponse` |
 | `PATCH` | `/images/objects/{object_uuid}` | `SetObjectNameRequest` | `ObjectMetadataResponse` |
+| `POST` | `/images/objects/{object_uuid}/duplicate` | path `object_uuid` | `DuplicateObjectResponse` |
 | `POST` | `/images/objects/{object_uuid}/rescale-by-depth` | `RescaleByDepthRequest` | `RescaleByDepthResponse` |
 | `POST` | `/images/novel-view` | `NovelViewRequest` | `NovelViewResponse` |
 | `POST` | `/3d/test-3d` | `{"uid":"...", "object_id": 0}` | GLB bytes |
@@ -99,6 +100,27 @@ Returns `404` when the UUID is absent from `object_index.json`.
 ## `PATCH /images/objects/{object_uuid}`
 
 Updates the optional human-readable name on one object. Body: `SetObjectNameRequest` (`name` string or `null` to clear). Returns updated `ObjectMetadataResponse`. Bumps the parent session's `last_changed` timestamp.
+
+## `POST /images/objects/{object_uuid}/duplicate`
+
+Clones one finalized object into a new object in the same session. No request body. Returns `DuplicateObjectResponse` with the new `object_uuid`.
+
+Behavior:
+
+1. Resolve source metadata by UUID; **404** if missing.
+2. Resolve the source cutout (`{uid}_{object_id}_cutout.png`); **404** if missing.
+3. Acquire the session canvas writer (no region lease — clone has no mask). **409** on writer timeout.
+4. Allocate the next sequential `object_id`.
+5. Build clone metadata: fresh UUID/`created_at`, copied `average_depth` / `source_elevation_deg` / `content_hash`, plus sticky lineage fields (`clone_root_uuid`, `clone_root_label`, `clone_index`).
+6. Nickname: first clone is `"<root>-copy"`; later clones are `"<root>-copy1"`, `"<root>-copy2"`, …. Unnamed roots use `"Object <object_id>"` as the root label. Cloning a clone (or a renamed copy) keeps the original root label/ordinal sequence.
+7. Copy per-object artifacts under the writer: cutout (required), optional GLB, and any novel-view / preview PNG caches (timestamps preserved via `copy2`).
+8. Persist clone metadata JSON and register the new UUID in `object_index.json`.
+9. `touch_session(uid)` so sync clients refresh.
+10. On failure after allocation, delete partial destination artifacts and prune any index entry; return **500**.
+
+Does **not** rewrite `{uid}_background.png`, depth `.npy` caches, camera calib, the original upload, or temp segment masks. Depth is shared through the copied `content_hash`.
+
+Not wired in the React frontend today; session sync can discover the new object after `last_changed` advances.
 
 ## `POST /images/objects/{object_uuid}/rescale-by-depth`
 
@@ -188,6 +210,7 @@ Client-visible durable mutations bump `last_changed` through `touch_session` in 
 | `POST /images/inpaint` | `api/routes.py` |
 | `POST /images/{uid}/name` | `api/routes.py` |
 | `PATCH /images/objects/{object_uuid}` | `api/routes.py` |
+| `POST /images/objects/{object_uuid}/duplicate` | `api/routes.py` |
 | `POST /images/objects/{object_uuid}/rescale-by-depth` | `api/routes.py` |
 | `POST /3d/test-3d` | `api/model_3d.py` |
 | `POST /images/novel-view` (cache miss only — a cache hit changes nothing and skips the touch) | `api/novel_view.py` |

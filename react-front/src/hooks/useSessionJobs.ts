@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   cacheNovelViewPreview,
+  duplicateObject as duplicateObjectRequest,
+  getSessionObjects,
   inpaintMask,
   segmentImage,
   setObjectName,
@@ -20,10 +22,8 @@ import type {
 let pendingJobCounter = 0;
 const nextPendingJobId = (): string => `pending-${++pendingJobCounter}`;
 
-// The novel-view API requires an absolute source-view elevation, which the
-// frontend has no way to measure from a room photo. Assume the photo was shot
-// roughly level; tune this one constant if real results look off.
-const SOURCE_ELEVATION_DEG = 0;
+// Fallback when server metadata is unavailable (legacy sessions).
+const FALLBACK_SOURCE_ELEVATION_DEG = 15;
 
 // Zoom/radius delta is not exposed in the rotate UI -- always request the
 // model's default camera distance.
@@ -72,11 +72,17 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   const [pendingJobs, setPendingJobs] = useState<PendingInpaintJob[]>([]);
   const [segmentState, setSegmentState] = useState<SegmentPickerState>({ status: "idle" });
   const [backgroundSrc, setBackgroundSrc] = useState<string | null>(null);
+  const [isDuplicating, setIsDuplicating] = useState(false);
 
   const imageIdRef = useRef(imageId);
   useEffect(() => {
     imageIdRef.current = imageId;
   }, [imageId]);
+
+  const objectsRef = useRef(objects);
+  useEffect(() => {
+    objectsRef.current = objects;
+  }, [objects]);
 
   // Only ever moves forward. The canvas writer lock serializes commits
   // server-side so object_id is a valid commit order; this guards purely
@@ -89,6 +95,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     setPendingJobs([]);
     setSegmentState({ status: "idle" });
     setBackgroundSrc(null);
+    setIsDuplicating(false);
     highestCommittedObjectIdRef.current = -1;
   }, []);
 
@@ -104,6 +111,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       rotation: null,
       hidden: false,
       offset: { x: 0, y: 0 },
+      sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
     }));
     setObjects(loaded);
     highestCommittedObjectIdRef.current = loaded.reduce(
@@ -187,6 +195,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
             rotation: null,
             hidden: false,
             offset: { x: 0, y: 0 },
+            sourceElevationDeg:
+              result.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
           };
 
           // Newly created object auto-selects — the user just made it.
@@ -240,6 +250,9 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         return;
       }
 
+      const target = objectsRef.current.find((o) => o.objectId === objectId);
+      const sourceElevationDeg = target?.sourceElevationDeg ?? FALLBACK_SOURCE_ELEVATION_DEG;
+
       setObjects((prev) =>
         prev.map((o) =>
           o.objectId === objectId
@@ -267,7 +280,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       synthesizeNovelView({
         uid: currentImageId,
         object_id: objectId,
-        elevation_deg: SOURCE_ELEVATION_DEG,
+        elevation_deg: sourceElevationDeg,
         azimuth_deg: pose.azimuthDeg,
         relative_elevation_deg: pose.relativeElevationDeg,
         radius: NO_RADIUS_DELTA,
@@ -330,6 +343,67 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [onError, onMutated],
   );
 
+  const duplicateObject = useCallback(
+    async (objectId: number) => {
+      const currentImageId = imageIdRef.current;
+      const source = objectsRef.current.find((o) => o.objectId === objectId);
+      if (!currentImageId || !source?.uuid || isDuplicating) {
+        return;
+      }
+
+      setIsDuplicating(true);
+      try {
+        const { object_uuid: cloneUuid } = await duplicateObjectRequest(source.uuid);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+
+        const list = await getSessionObjects(currentImageId);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+
+        const info = list.objects.find((o) => o.uuid === cloneUuid);
+        if (!info) {
+          onMutated?.();
+          return;
+        }
+
+        const newObject: CutoutObject = {
+          objectId: info.object_id,
+          uuid: info.uuid ?? cloneUuid,
+          name: info.name ?? null,
+          cutoutSrc: `data:image/${info.format};base64,${info.cutout_b64}`,
+          cutoutAlphaBounds: toCutoutAlphaBounds(info.cutout_bounds),
+          normalizedClickPos: source.normalizedClickPos,
+          // Server copied the GLB; reuse in-memory bytes so Rotate works immediately.
+          glbData: source.glbData,
+          rotation: null,
+          hidden: false,
+          offset: { ...source.offset },
+          sourceElevationDeg:
+            info.source_elevation_deg ?? source.sourceElevationDeg ?? FALLBACK_SOURCE_ELEVATION_DEG,
+        };
+
+        setObjects((prev) => [...prev, newObject]);
+        setSelectedObjectId(info.object_id);
+        if (info.object_id > highestCommittedObjectIdRef.current) {
+          highestCommittedObjectIdRef.current = info.object_id;
+        }
+        onMutated?.();
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "generic");
+        }
+      } finally {
+        if (imageIdRef.current === currentImageId) {
+          setIsDuplicating(false);
+        }
+      }
+    },
+    [isDuplicating, onError, onMutated],
+  );
+
   return {
     objects,
     setObjects,
@@ -337,13 +411,16 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     setSelectedObjectId,
     pendingJobs,
     hasPendingWork:
-      pendingJobs.length > 0 || objects.some((o) => o.rotation?.status === "pending"),
+      pendingJobs.length > 0 ||
+      isDuplicating ||
+      objects.some((o) => o.rotation?.status === "pending"),
     segmentState,
     isSegmenting: segmentState.status === "loading",
     isChoosingMask: segmentState.status === "choosing",
     maskOptions: segmentState.status === "choosing" ? segmentState.maskOptions : [],
     backgroundSrc,
     setBackgroundSrc,
+    isDuplicating,
     runSegment,
     closeMaskPicker,
     selectMask,
@@ -351,6 +428,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     toggleHidden,
     updateOffset,
     renameObject,
+    duplicateObject,
     resetSession,
     loadRestoredObjects,
   };

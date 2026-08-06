@@ -31,8 +31,8 @@ sequenceDiagram
 ## CLIP strategy steps
 
 1. Convert BGR input to RGB PIL image.
-2. Score label groups via CLIP (`openai/clip-vit-base-patch32`, lazy-loaded).
-3. Derive seven named checks (see [contracts.md](contracts.md)).
+2. Run seven 2-label CLIP softmax contests (concept vs concrete room/space) via `openai/clip-vit-base-patch32` (lazy-loaded).
+3. Derive seven named checks from each contest's `P(concept)` (see [contracts.md](contracts.md)).
 4. Aggregate pass/fail and human-readable rejection messages.
 
 ## Composite strategy

@@ -102,29 +102,44 @@ def test_composite_merges_checks_and_fails_when_any_child_fails() -> None:
     assert result.messages == ("child failed",)
 
 
-def test_clip_strategy_scene_check_passes_with_high_positive_scores(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """CLIP strategy should pass scene check when positive labels dominate."""
+_SCENE_LABEL = "a photo of an indoor room or outdoor space"
+_SCENE_ALTERNATIVE_LABEL = "a photo of something else"
+_PERSON_LABEL = "a photo of a person, selfie, or portrait"
+_PERSON_ALTERNATIVE_LABEL = "a photo of an empty room or outdoor space"
+_PRODUCT_LABEL = "a product photo on plain background"
+_PRODUCT_ALTERNATIVE_LABEL = "a photo of a room or outdoor space"
+_SCREENSHOT_LABEL = "a screenshot or photo of a screen"
+_SCREENSHOT_ALTERNATIVE_LABEL = "a photo of a real room or outdoor space"
+_OBSTRUCTION_LABEL = "a photo with a hand or body blocking the camera"
+_OBSTRUCTION_ALTERNATIVE_LABEL = "a clear photo of a room or outdoor space"
+_NSFW_LABEL = "an explicit NSFW or nude photo"
+_NSFW_ALTERNATIVE_LABEL = "a normal photo of a room or outdoor space"
+_STYLIZED_LABEL = "an anime, painting, cartoon, or heavily filtered image"
+_STYLIZED_ALTERNATIVE_LABEL = "a real photograph of a room or outdoor space"
+
+
+def _binary_scores(positive: str, negative: str, positive_prob: float) -> dict[str, float]:
+    """Return a 2-label distribution that sums to 1.0."""
+    return {positive: positive_prob, negative: 1.0 - positive_prob}
+
+
+def test_clip_strategy_scene_check_passes_with_high_positive_scores() -> None:
+    """CLIP strategy should pass all checks when scene wins and bad concepts lose."""
 
     def fake_score(_pil_image: Image.Image, labels: tuple[str, ...]) -> dict[str, float]:
-        if "indoor room" in labels[0]:
-            return {label: (0.8 if "room" in label or "landscape" in label else 0.05) for label in labels}
-        if "single person" in labels[0]:
-            return {label: 0.05 for label in labels}
-        if "person" in labels[0]:
-            return {label: 0.05 for label in labels}
-        if "product" in labels[0]:
-            return {label: 0.05 for label in labels}
-        if "screenshot" in labels[0]:
-            return {label: 0.05 for label in labels}
-        if "hand" in labels[0]:
-            return {label: 0.05 for label in labels}
-        if "nude" in labels[0]:
-            return {label: 0.05 for label in labels}
-        if "anime" in labels[0]:
-            return {label: 0.05 for label in labels}
-        return {label: 0.05 for label in labels}
+        positive, negative = labels
+        if positive == _SCENE_LABEL:
+            return _binary_scores(positive, negative, 0.9)
+        if positive in {
+            _PERSON_LABEL,
+            _PRODUCT_LABEL,
+            _SCREENSHOT_LABEL,
+            _OBSTRUCTION_LABEL,
+            _NSFW_LABEL,
+            _STYLIZED_LABEL,
+        }:
+            return _binary_scores(positive, negative, 0.1)
+        raise AssertionError(f"Unexpected binary pair: {labels}")
 
     strategy = ClipZeroShotContentValidationStrategy(
         score_fn=lambda pil, labels: fake_score(pil, labels),
@@ -136,19 +151,24 @@ def test_clip_strategy_scene_check_passes_with_high_positive_scores(
     assert result.checks["scene_space_or_landscape"] is True
 
 
-def test_clip_strategy_fails_person_centric_when_person_score_high(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """CLIP strategy should fail when person label probability exceeds threshold."""
+def test_clip_strategy_fails_person_centric_when_person_score_high() -> None:
+    """CLIP strategy should fail when person probability exceeds threshold."""
 
     def fake_score(_pil_image: Image.Image, labels: tuple[str, ...]) -> dict[str, float]:
-        if "indoor room" in labels[0]:
-            return {label: 0.5 for label in labels}
-        if "single person" in labels[0]:
-            return {label: 0.05 for label in labels}
-        if "person" in labels[0]:
-            return {label: 0.9 for label in labels}
-        return {label: 0.05 for label in labels}
+        positive, negative = labels
+        if positive == _PERSON_LABEL:
+            return _binary_scores(positive, negative, 0.8)
+        if positive == _SCENE_LABEL:
+            return _binary_scores(positive, negative, 0.9)
+        if positive in {
+            _PRODUCT_LABEL,
+            _SCREENSHOT_LABEL,
+            _OBSTRUCTION_LABEL,
+            _NSFW_LABEL,
+            _STYLIZED_LABEL,
+        }:
+            return _binary_scores(positive, negative, 0.1)
+        raise AssertionError(f"Unexpected binary pair: {labels}")
 
     strategy = ClipZeroShotContentValidationStrategy(
         score_fn=lambda pil, labels: fake_score(pil, labels),

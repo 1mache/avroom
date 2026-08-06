@@ -65,6 +65,7 @@ export interface InpaintMaskRequest {
 export interface InpaintMaskResponse extends ClickResultResponse {
   object_id: number;
   object_uuid: string;
+  source_elevation_deg?: number;
 }
 
 export interface ObjectMetadataResponse {
@@ -73,6 +74,7 @@ export interface ObjectMetadataResponse {
   object_id: number;
   name: string | null;
   average_depth: number;
+  source_elevation_deg?: number;
   content_hash: string;
   created_at: string;
   has_3d: boolean;
@@ -81,6 +83,10 @@ export interface ObjectMetadataResponse {
 
 export interface SetObjectNameRequest {
   name: string | null;
+}
+
+export interface DuplicateObjectResponse {
+  object_uuid: string;
 }
 
 export interface UidCacheStatusResponse {
@@ -108,6 +114,7 @@ export interface ObjectInfo {
   uuid?: string | null;
   name?: string | null;
   average_depth?: number | null;
+  source_elevation_deg?: number | null;
   cutout_b64: string;
   format: string;
   cutout_bounds?: CutoutBounds | null;

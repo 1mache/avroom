@@ -179,8 +179,16 @@ class StableZero123NovelViewStrategy(NovelViewStrategy):
         relative_elevation_deg: float = 0.0,
         radius: float = 0.0,
         seed: int = 0,
+        mesh: bytes | Path | str | None = None,
     ) -> np.ndarray:
-        """Run Stable Zero123 on a cutout and return a full-canvas BGRA array."""
+        """Run Stable Zero123 on a cutout and return a full-canvas BGRA array.
+
+        ``mesh`` is accepted for contract parity with mesh-render strategies and
+        is ignored — Zero123 is image-to-image only.
+        """
+
+        if mesh is not None:
+            logger.debug("Stable Zero123 ignoring mesh=%r (image-to-image only)", type(mesh))
 
         try:
             import torch

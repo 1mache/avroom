@@ -114,17 +114,23 @@ def rgb_to_rgba_with_white_background(
 def composite_model_output_on_canvas(
     model_rgba: Image.Image,
     prep: PreprocessResult,
+    *,
+    region_scale: float = 1.0,
 ) -> np.ndarray:
-    """Upscale model output and place it back on a full-size transparent canvas."""
+    """Upscale model output and place it back on a full-size transparent canvas.
 
-    square = model_rgba.resize(
-        (prep.square_size, prep.square_size),
-        Image.Resampling.LANCZOS,
-    )
+    ``region_scale`` grows the pasted region around the cutout's centre. Renderers
+    that frame the object with margin (so a rotated silhouette can extend past the
+    original bounding box without being clipped) must pass the same factor they
+    rendered with, otherwise the object comes back scaled down by it.
+    """
+
+    region = max(1, int(round(prep.square_size * region_scale)))
+    square = model_rgba.resize((region, region), Image.Resampling.LANCZOS)
     canvas = Image.new("RGBA", prep.canvas_size, (0, 0, 0, 0))
-    left, top, _, _ = prep.crop_box
-    paste_x = left - (prep.square_size - (prep.crop_box[2] - prep.crop_box[0])) // 2
-    paste_y = top - (prep.square_size - (prep.crop_box[3] - prep.crop_box[1])) // 2
+    left, top, right, bottom = prep.crop_box
+    paste_x = int(round((left + right) / 2.0 - region / 2.0))
+    paste_y = int(round((top + bottom) / 2.0 - region / 2.0))
     canvas.paste(square, (paste_x, paste_y), square)
 
     arr = np.array(canvas)

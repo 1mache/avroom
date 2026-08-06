@@ -158,7 +158,8 @@ def test_upload_skips_validation_when_validate_false(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     register_mock.assert_called_once()
-    assert len(list(tmp_path.glob("*"))) == 1
+    # Original upload plus its dashboard-preview thumbnail (write_upload_preview).
+    assert len(list(tmp_path.glob("*"))) == 2
 
 
 @pytest.mark.skipif(
@@ -244,5 +245,6 @@ def test_upload_success_persists_file(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     register_mock.assert_called_once()
-    assert len(list(tmp_path.glob("*"))) == 1
+    # Original upload plus its dashboard-preview thumbnail (write_upload_preview).
+    assert len(list(tmp_path.glob("*"))) == 2
     assert "image_id" in response.json()

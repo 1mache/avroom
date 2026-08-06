@@ -27,6 +27,7 @@ export interface ToolbarProps {
   onCopy: () => void;
   smartPaste: boolean;
   onToggleSmartPaste: () => void;
+  isDeleting: boolean;
   onDeleteObject: () => void;
   /** Short readout of in-flight work, e.g. "removing 2". Null when idle. */
   status: string | null;
@@ -52,6 +53,7 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onCopy,
   smartPaste,
   onToggleSmartPaste,
+  isDeleting,
   onDeleteObject,
   status,
 }) => {
@@ -154,9 +156,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         data-tip="Delete object"
         aria-label="Delete object"
         onClick={onDeleteObject}
-        disabled={objectToolsDisabled}
+        disabled={objectToolsDisabled || isDeleting || rotateMode}
       >
-        <TrashIcon />
+        {isDeleting ? <span className="tool-spinner" /> : <TrashIcon />}
       </button>
     </header>
   );

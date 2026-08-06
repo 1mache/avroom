@@ -74,6 +74,7 @@ from schemas.image import (
 from core.object_storage import (
     copy_object_artifacts,
     current_background_path,
+    delete_legacy_object_artifacts,
     delete_object_artifact_files,
     list_object_ids,
     next_object_id,
@@ -753,6 +754,78 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
         clone_metadata.name,
     )
     return DuplicateObjectResponse(object_uuid=clone_metadata.uuid)
+
+
+@router.delete("/objects/{object_uuid}", status_code=204)
+def delete_object(object_uuid: str) -> Response:
+    """Permanently delete one object and all its per-object artifacts.
+
+    Removes the cutout, any GLB, all novel-view / preview caches, the
+    metadata JSON, and the UUID index entry. Session-level artifacts —
+    background canvas, depth cache, camera calibration, the original upload,
+    and the dashboard preview thumbnail — are shared with surviving objects
+    and are never touched here. In particular the background canvas already
+    has this object's region inpainted out; deleting the object does not
+    restore those pixels, it only removes the object's own cutout layer.
+
+    Plain ``def``, not ``async def``: this blocks on the canvas writer lock,
+    same as ``duplicate_object`` (see ``tests/test_concurrency.py``).
+    """
+    logger.info("Object delete requested: uuid=%s", object_uuid)
+    storage_dir = get_image_storage_dir()
+    three_d_dir = get_3d_storage_dir()
+
+    target = get_object_by_uuid(storage_dir, object_uuid)
+    if target is None:
+        logger.warning("Object delete failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(
+            status_code=404,
+            detail=f"Object not found for uuid='{object_uuid}'",
+        )
+
+    try:
+        try:
+            acquire_canvas_writer(target.session_id)
+        except SessionConflictError as exc:
+            logger.warning(
+                "Object delete rejected due to canvas writer timeout: uuid=%s",
+                object_uuid,
+            )
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        try:
+            removed = delete_object_artifact_files(
+                base_dir=storage_dir,
+                glb_dir=three_d_dir,
+                uid=target.session_id,
+                object_id=target.object_id,
+                include_metadata=True,
+            )
+            if target.object_id == 0:
+                removed += delete_legacy_object_artifacts(
+                    base_dir=storage_dir,
+                    glb_dir=three_d_dir,
+                    uid=target.session_id,
+                )
+            remove_object_index_entry(object_uuid)
+            touch_session(target.session_id)
+        finally:
+            release_canvas_writer(target.session_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Object delete failed: uuid=%s", object_uuid)
+        raise HTTPException(status_code=500, detail=f"Object delete failed: {exc}") from exc
+
+    logger.info(
+        "Object deleted: uuid=%s session_id=%s object_id=%d files_removed=%d",
+        object_uuid,
+        target.session_id,
+        target.object_id,
+        removed,
+    )
+    return Response(status_code=204)
+
 
 @router.post("/objects/{object_uuid}/rescale-by-depth", response_model=RescaleByDepthResponse)
 def rescale_object_by_depth(

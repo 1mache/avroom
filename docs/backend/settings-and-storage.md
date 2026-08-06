@@ -175,7 +175,8 @@ Key helpers:
 | `object_novel_view_path` / `object_novel_view_preview_path` | cached novel-view / preview PNG paths |
 | `list_object_novel_view_paths(base_dir, uid, object_id)` | all novel-view + preview files for one object |
 | `copy_object_artifacts(...)` | copy cutout + optional GLB + novel-view caches to a new object id (preserves mtimes) |
-| `delete_object_artifact_files(...)` | roll back a partial clone's per-object files |
+| `delete_object_artifact_files(...)` | roll back a partial clone's per-object files, or permanently delete an object (`DELETE /images/objects/{uuid}`) |
+| `delete_legacy_object_artifacts(...)` | delete the pre-numbering `{uid}_cutout.png` / `{uid}.glb` pair; called alongside `delete_object_artifact_files` when deleting legacy object id 0 |
 | `list_object_ids(base_dir, uid)` | sorted list of all object ids found on disk |
 | `next_object_id(base_dir, uid)` | `max(list_object_ids) + 1`, or `0` if none exist |
 | `current_background_path(base_dir, uid)` | `{uid}_background.png` (single cumulative canvas) |

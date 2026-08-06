@@ -384,3 +384,31 @@ def delete_object_artifact_files(
         removed,
     )
     return removed
+
+
+def delete_legacy_object_artifacts(*, base_dir: Path, glb_dir: Path, uid: str) -> int:
+    """Delete the pre-numbering ``{uid}_cutout.png`` / ``{uid}.glb`` pair.
+
+    ``delete_object_artifact_files`` only knows the numbered filenames
+    (``object_cutout_path`` / ``object_glb_path``), so deleting object id 0 on
+    a session created before per-object numbering leaves these legacy files
+    behind — and since ``list_object_ids`` treats a present legacy cutout as
+    id 0, the "deleted" object would reappear on the next listing. Callers
+    should invoke this alongside :func:`delete_object_artifact_files` when
+    deleting object id 0.
+
+    Returns:
+        Number of files removed (0, 1, or 2).
+    """
+    removed = 0
+    legacy_cutout = base_dir / f"{uid}_cutout.png"
+    if legacy_cutout.exists():
+        legacy_cutout.unlink()
+        removed += 1
+
+    legacy_glb = glb_dir / f"{uid}.glb"
+    if legacy_glb.exists():
+        legacy_glb.unlink()
+        removed += 1
+
+    return removed

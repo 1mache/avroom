@@ -33,6 +33,7 @@ import {
   type Rect,
   type Size,
 } from "../../utils/stageGeometry";
+import { ConfirmDialog } from "../widgets/ConfirmDialog";
 import { MaskPickerModal } from "../widgets/MaskPickerModal";
 import {
   MODEL_3D_FRAME_PADDING,
@@ -113,6 +114,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const [smartPaste, setSmartPaste] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Object id awaiting delete confirmation. Deletion is permanent (the
+  // background keeps its inpainted hole), so the trash button arms this
+  // instead of deleting directly.
+  const [pendingDeleteObjectId, setPendingDeleteObjectId] = useState<number | null>(null);
 
   const conflictNotices = useConflictNotices();
 
@@ -570,13 +575,35 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     void jobs.duplicateObject(jobs.selectedObjectId);
   }, [jobs.duplicateObject, jobs.selectedObjectId, selectedObject]);
 
+  // Arms the confirm dialog; the actual DELETE fires from
+  // handleConfirmDeleteObject once the user confirms.
   const handleDeleteObject = useCallback(() => {
     if (jobs.selectedObjectId === null) {
       return;
     }
+    // Same uuid precondition as duplicate — deletion is keyed on it too.
+    if (!selectedObject?.uuid) {
+      setError("This object is from an older session and can't be deleted.");
+      return;
+    }
     setRotateMode(false);
-    jobs.deleteObject(jobs.selectedObjectId);
-  }, [jobs.deleteObject, jobs.selectedObjectId]);
+    setPendingDeleteObjectId(jobs.selectedObjectId);
+  }, [jobs.selectedObjectId, selectedObject]);
+
+  const pendingDeleteObject =
+    jobs.objects.find((o) => o.objectId === pendingDeleteObjectId) ?? null;
+
+  const handleConfirmDeleteObject = useCallback(async () => {
+    if (pendingDeleteObjectId === null) {
+      return;
+    }
+    await jobs.deleteObject(pendingDeleteObjectId);
+    setPendingDeleteObjectId(null);
+  }, [jobs.deleteObject, pendingDeleteObjectId]);
+
+  const handleCancelDeleteObject = useCallback(() => {
+    setPendingDeleteObjectId(null);
+  }, []);
 
   const handleRenameObject = useCallback(
     (objectId: number, uuid: string, name: string | null) => {
@@ -848,7 +875,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         ? "rotating"
         : jobs.isDuplicating
           ? "copying"
-          : null;
+          : jobs.isDeleting
+            ? "deleting"
+            : null;
 
   return (
     <div className="workspace">
@@ -867,6 +896,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         onCopy={handleCopy}
         smartPaste={smartPaste}
         onToggleSmartPaste={() => setSmartPaste((on) => !on)}
+        isDeleting={jobs.isDeleting}
         onDeleteObject={handleDeleteObject}
         status={status}
       />
@@ -985,6 +1015,24 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           masks={jobs.maskOptions}
           onSelect={handleMaskSelected}
           onClose={handleMaskPickerClosed}
+        />
+      ) : null}
+
+      {pendingDeleteObject ? (
+        <ConfirmDialog
+          title="Delete this object?"
+          body={
+            <>
+              <strong>{pendingDeleteObject.name ?? `Object ${pendingDeleteObject.objectId}`}</strong>{" "}
+              will be removed for good. The background keeps its spot filled in — this can&rsquo;t
+              be undone.
+            </>
+          }
+          confirmLabel="Delete"
+          destructive
+          busy={jobs.isDeleting}
+          onConfirm={() => void handleConfirmDeleteObject()}
+          onCancel={handleCancelDeleteObject}
         />
       ) : null}
 

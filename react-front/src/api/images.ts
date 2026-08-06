@@ -246,6 +246,21 @@ export async function duplicateObject(objectUuid: string): Promise<DuplicateObje
   return handleJsonResponse<DuplicateObjectResponse>(response);
 }
 
+/**
+ * Permanently deletes one object and all its per-object artifacts (cutout,
+ * GLB, novel-view caches, metadata). The background canvas keeps the
+ * inpainted hole -- this never restores the object's original pixels.
+ */
+export async function deleteObject(objectUuid: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    return throwApiError(response);
+  }
+}
+
 // Compares a client-held last_changed timestamp against server truth so a
 // session that changed elsewhere (another tab, another client) can be
 // detected without unconditionally re-fetching everything.

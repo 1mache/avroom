@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   cacheNovelViewPreview,
+  deleteObject as deleteObjectRequest,
   duplicateObject as duplicateObjectRequest,
   getSessionObjects,
   inpaintMask,
@@ -88,6 +89,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   const [segmentState, setSegmentState] = useState<SegmentPickerState>({ status: "idle" });
   const [backgroundSrc, setBackgroundSrc] = useState<string | null>(null);
   const [isDuplicating, setIsDuplicating] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const imageIdRef = useRef(imageId);
   useEffect(() => {
@@ -104,10 +106,12 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   // against out-of-order *network* delivery of concurrent responses.
   const highestCommittedObjectIdRef = useRef(-1);
 
-  // Objects deleted in this tab. The backend has no delete-object endpoint
-  // yet, so deletion is client-side only and the server keeps returning them;
-  // useSessionSync consults isObjectDeleted to keep reconcile from
-  // resurrecting them. Drop this set once DELETE /images/objects/{uuid} lands.
+  // Object ids with a DELETE request in flight. A reconcile can land between
+  // the local removal and the server actually processing the delete, and
+  // without this set that reconcile would resurrect the object from the
+  // still-current server object list. Once the request settles (success or
+  // failure) the id is dropped -- server truth takes over from there, so a
+  // later object reusing the same freed id isn't permanently hidden.
   const deletedObjectIdsRef = useRef<Set<number>>(new Set());
 
   const resetSession = useCallback(() => {
@@ -117,6 +121,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     setSegmentState({ status: "idle" });
     setBackgroundSrc(null);
     setIsDuplicating(false);
+    setIsDeleting(false);
     highestCommittedObjectIdRef.current = -1;
     deletedObjectIdsRef.current = new Set();
   }, []);
@@ -124,18 +129,40 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   const isObjectDeleted = useCallback((objectId: number) => deletedObjectIdsRef.current.has(objectId), []);
 
   /**
-   * Removes an object from the canvas. Local-only for now: the cutout, its
-   * GLB, and its row in the session's object list all survive on the server,
-   * so the deletion is lost on reload.
+   * Permanently deletes an object: calls DELETE /images/objects/{uuid}, then
+   * removes it locally on success. Mirrors duplicateObject's shape (busy
+   * flag, uuid lookup via objectsRef, imageIdRef guards around the await).
    */
   const deleteObject = useCallback(
-    (objectId: number) => {
+    async (objectId: number) => {
+      const currentImageId = imageIdRef.current;
+      const target = objectsRef.current.find((o) => o.objectId === objectId);
+      if (!currentImageId || !target?.uuid || isDeleting) {
+        return;
+      }
+
       deletedObjectIdsRef.current.add(objectId);
-      setObjects((prev) => prev.filter((o) => o.objectId !== objectId));
-      setSelectedObjectId((current) => (current === objectId ? null : current));
-      onMutated?.();
+      setIsDeleting(true);
+      try {
+        await deleteObjectRequest(target.uuid);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+        setObjects((prev) => prev.filter((o) => o.objectId !== objectId));
+        setSelectedObjectId((current) => (current === objectId ? null : current));
+        onMutated?.();
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "generic");
+        }
+      } finally {
+        deletedObjectIdsRef.current.delete(objectId);
+        if (imageIdRef.current === currentImageId) {
+          setIsDeleting(false);
+        }
+      }
     },
-    [onMutated],
+    [isDeleting, onError, onMutated],
   );
 
   const loadRestoredObjects = useCallback((restored: ObjectInfo[]) => {
@@ -456,6 +483,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     hasPendingWork:
       pendingJobs.length > 0 ||
       isDuplicating ||
+      isDeleting ||
       objects.some((o) => o.rotation?.status === "pending"),
     segmentState,
     isSegmenting: segmentState.status === "loading",
@@ -473,6 +501,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     renameObject,
     duplicateObject,
     deleteObject,
+    isDeleting,
     isObjectDeleted,
     resetSession,
     loadRestoredObjects,

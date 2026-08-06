@@ -22,6 +22,7 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `GET` | `/images/objects/{object_uuid}` | path `object_uuid` | `ObjectMetadataResponse` |
 | `PATCH` | `/images/objects/{object_uuid}` | `SetObjectNameRequest` | `ObjectMetadataResponse` |
 | `POST` | `/images/objects/{object_uuid}/duplicate` | path `object_uuid` | `DuplicateObjectResponse` |
+| `DELETE` | `/images/objects/{object_uuid}` | path `object_uuid` | 204 No Content |
 | `POST` | `/images/objects/{object_uuid}/rescale-by-depth` | `RescaleByDepthRequest` | `RescaleByDepthResponse` |
 | `POST` | `/images/novel-view` | `NovelViewRequest` | `NovelViewResponse` |
 | `POST` | `/3d/test-3d` | `{"uid":"...", "object_id": 0}` | GLB bytes |
@@ -124,6 +125,23 @@ Does **not** rewrite `{uid}_background.png`, depth `.npy` caches, camera calib, 
 
 Not wired in the React frontend today; session sync can discover the new object after `last_changed` advances.
 
+## `DELETE /images/objects/{object_uuid}`
+
+Permanently deletes one object and every per-object artifact: the numbered cutout, GLB, all novel-view/preview caches, the metadata JSON, and the `object_index.json` UUID entry. For a legacy `object_id == 0` it also removes the unnumbered `{uid}_cutout.png` / `{uid}.glb` pair, so the object doesn't reappear (`list_object_ids` counts a present legacy cutout as id 0).
+
+**Does not** touch anything session-scoped: the background canvas keeps the object's inpainted hole (deletion never restores original pixels), the depth cache, camera calibration, the original upload, and the dashboard preview thumbnail all survive untouched. The preview goes briefly stale — the frontend reposts it on its own debounce, and `touch_session` alone is enough to invalidate its cache-buster.
+
+Behavior:
+
+1. Resolve `object_uuid` via `get_object_by_uuid`; **404** if unknown. A second delete of the same uuid also 404s (idempotent-ish).
+2. Acquire the session's canvas writer lock (same sandwich as `duplicate_object`); **409** on timeout. Needed because deletion changes what `list_object_ids`/`next_object_id` see, and a concurrent inpaint or duplicate could otherwise race an id allocation.
+3. Delete artifacts, remove the index entry, `touch_session` — all inside the lock.
+4. **500** on unexpected failure.
+
+Plain `def`, not `async def` — it blocks on the writer lock; see `tests/test_concurrency.py`. Freeing an id makes it eligible for reuse by the next inpaint (ids are `max(existing)+1`); no id is ever reserved.
+
+Known cosmetic edge: deleting a clone root leaves any surviving clones pointing at a dead `clone_root_uuid`, and since clone-name counting only scans survivors, a later duplicate can reuse a freed `-copy` name. Not repaired — no lineage cleanup runs on delete.
+
 ## `POST /images/objects/{object_uuid}/rescale-by-depth`
 
 Rescales a finalized cutout proportionally based on depth at a placement point. Body: `RescaleByDepthRequest` with natural-image `x`/`y`.
@@ -213,6 +231,7 @@ Client-visible durable mutations bump `last_changed` through `touch_session` in 
 | `POST /images/{uid}/name` | `api/routes.py` |
 | `PATCH /images/objects/{object_uuid}` | `api/routes.py` |
 | `POST /images/objects/{object_uuid}/duplicate` | `api/routes.py` |
+| `DELETE /images/objects/{object_uuid}` | `api/routes.py` |
 | `POST /images/objects/{object_uuid}/rescale-by-depth` | `api/routes.py` |
 | `POST /3d/test-3d` | `api/model_3d.py` |
 | `POST /images/novel-view` (cache miss only — a cache hit changes nothing and skips the touch) | `api/novel_view.py` |

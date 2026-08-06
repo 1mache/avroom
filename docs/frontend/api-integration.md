@@ -75,6 +75,8 @@ Response is `InpaintMaskResponse`, which extends `ClickResultResponse` and adds 
 
 `POST /images/objects/{uuid}/rescale-by-depth` exists on the backend but has no frontend wrapper or UI wiring yet.
 
+`deleteObject(objectUuid)` calls `DELETE /images/objects/${objectUuid}`, void-returning like `deleteSession`. `useSessionJobs.deleteObject` wraps it with a busy flag (`isDeleting`) and a `uuid` guard (objects from pre-UUID sessions can't be deleted, same precondition as duplicate). The Toolbar's trash button arms a `ConfirmDialog` in `WorkspaceScreen` rather than deleting directly — deletion is permanent and the background keeps the object's inpainted hole, it's never repainted. `deletedObjectIdsRef` in `useSessionJobs` is a *pending* set now, not permanent: an id is held only while its DELETE is in flight (so a racing sync-check reconcile can't resurrect the object mid-request), then dropped once the request settles — server truth takes over, so a later object reusing the freed `object_id` isn't hidden.
+
 ## 3D
 
 `generate3DModel(uid, objectId)` posts to `POST /3d/test-3d` with body `{ uid, object_id: objectId }`. Returns raw GLB `ArrayBuffer`.

@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   cacheNovelViewPreview,
+  duplicateObject as duplicateObjectRequest,
+  getSessionObjects,
   inpaintMask,
   segmentImage,
   setObjectName,
@@ -70,6 +72,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   const [pendingJobs, setPendingJobs] = useState<PendingInpaintJob[]>([]);
   const [segmentState, setSegmentState] = useState<SegmentPickerState>({ status: "idle" });
   const [backgroundSrc, setBackgroundSrc] = useState<string | null>(null);
+  const [isDuplicating, setIsDuplicating] = useState(false);
 
   const imageIdRef = useRef(imageId);
   useEffect(() => {
@@ -92,6 +95,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     setPendingJobs([]);
     setSegmentState({ status: "idle" });
     setBackgroundSrc(null);
+    setIsDuplicating(false);
     highestCommittedObjectIdRef.current = -1;
   }, []);
 
@@ -339,6 +343,67 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [onError, onMutated],
   );
 
+  const duplicateObject = useCallback(
+    async (objectId: number) => {
+      const currentImageId = imageIdRef.current;
+      const source = objectsRef.current.find((o) => o.objectId === objectId);
+      if (!currentImageId || !source?.uuid || isDuplicating) {
+        return;
+      }
+
+      setIsDuplicating(true);
+      try {
+        const { object_uuid: cloneUuid } = await duplicateObjectRequest(source.uuid);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+
+        const list = await getSessionObjects(currentImageId);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+
+        const info = list.objects.find((o) => o.uuid === cloneUuid);
+        if (!info) {
+          onMutated?.();
+          return;
+        }
+
+        const newObject: CutoutObject = {
+          objectId: info.object_id,
+          uuid: info.uuid ?? cloneUuid,
+          name: info.name ?? null,
+          cutoutSrc: `data:image/${info.format};base64,${info.cutout_b64}`,
+          cutoutAlphaBounds: toCutoutAlphaBounds(info.cutout_bounds),
+          normalizedClickPos: source.normalizedClickPos,
+          // Server copied the GLB; reuse in-memory bytes so Rotate works immediately.
+          glbData: source.glbData,
+          rotation: null,
+          hidden: false,
+          offset: { ...source.offset },
+          sourceElevationDeg:
+            info.source_elevation_deg ?? source.sourceElevationDeg ?? FALLBACK_SOURCE_ELEVATION_DEG,
+        };
+
+        setObjects((prev) => [...prev, newObject]);
+        setSelectedObjectId(info.object_id);
+        if (info.object_id > highestCommittedObjectIdRef.current) {
+          highestCommittedObjectIdRef.current = info.object_id;
+        }
+        onMutated?.();
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "generic");
+        }
+      } finally {
+        if (imageIdRef.current === currentImageId) {
+          setIsDuplicating(false);
+        }
+      }
+    },
+    [isDuplicating, onError, onMutated],
+  );
+
   return {
     objects,
     setObjects,
@@ -346,13 +411,16 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     setSelectedObjectId,
     pendingJobs,
     hasPendingWork:
-      pendingJobs.length > 0 || objects.some((o) => o.rotation?.status === "pending"),
+      pendingJobs.length > 0 ||
+      isDuplicating ||
+      objects.some((o) => o.rotation?.status === "pending"),
     segmentState,
     isSegmenting: segmentState.status === "loading",
     isChoosingMask: segmentState.status === "choosing",
     maskOptions: segmentState.status === "choosing" ? segmentState.maskOptions : [],
     backgroundSrc,
     setBackgroundSrc,
+    isDuplicating,
     runSegment,
     closeMaskPicker,
     selectMask,
@@ -360,6 +428,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     toggleHidden,
     updateOffset,
     renameObject,
+    duplicateObject,
     resetSession,
     loadRestoredObjects,
   };

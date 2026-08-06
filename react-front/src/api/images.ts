@@ -1,6 +1,7 @@
 import type {
   ClickRequest,
   ClickResultResponse,
+  DuplicateObjectResponse,
   ImageUploadResponse,
   InpaintMaskRequest,
   InpaintMaskResponse,
@@ -196,6 +197,14 @@ export async function setObjectName(
   });
 
   return handleJsonResponse<ObjectMetadataResponse>(response);
+}
+
+export async function duplicateObject(objectUuid: string): Promise<DuplicateObjectResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}/duplicate`, {
+    method: "POST",
+  });
+
+  return handleJsonResponse<DuplicateObjectResponse>(response);
 }
 
 // Compares a client-held last_changed timestamp against server truth so a

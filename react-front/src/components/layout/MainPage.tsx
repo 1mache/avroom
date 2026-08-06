@@ -675,6 +675,14 @@ export const MainPage: React.FC = () => {
     [jobs.renameObject],
   );
 
+  const handleCopyClick = useCallback(() => {
+    if (jobs.selectedObjectId === null) {
+      setError("No object selected to copy.");
+      return;
+    }
+    void jobs.duplicateObject(jobs.selectedObjectId);
+  }, [jobs.duplicateObject, jobs.selectedObjectId]);
+
   const handleDeleteSession = useCallback(async () => {
     if (!imageId) {
       return;
@@ -1293,6 +1301,32 @@ export const MainPage: React.FC = () => {
                     : rotateMode
                       ? "Apply rotation"
                       : "Rotate"}
+              </button>
+
+              <button
+                type="button"
+                className="primary-button secondary"
+                onClick={handleCopyClick}
+                disabled={
+                  isPreparing3D ||
+                  jobs.isDuplicating ||
+                  jobs.selectedObjectId === null ||
+                  !selectedObject?.uuid ||
+                  rotateMode
+                }
+                title={
+                  jobs.selectedObjectId === null
+                    ? "Select an object to copy"
+                    : !selectedObject?.uuid
+                      ? "Selected object has no server UUID yet"
+                      : "Duplicate selected object"
+                }
+              >
+                {jobs.isDuplicating
+                  ? "Copying..."
+                  : jobs.selectedObjectId === null
+                    ? "Select an object to copy"
+                    : "Copy"}
               </button>
 
               {rotateMode ? (

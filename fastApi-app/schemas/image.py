@@ -260,6 +260,15 @@ class SetObjectNameRequest(BaseModel):
     ]
 
 
+class DuplicateObjectResponse(BaseModel):
+    """Result of cloning one object into a new object within the same session."""
+
+    object_uuid: Annotated[
+        str,
+        Field(description="Server-generated UUID of the newly cloned object."),
+    ]
+
+
 class RescaleByDepthRequest(BaseModel):
     """Request payload for depth-proportional cutout rescaling at a placement point."""
 

@@ -2,15 +2,13 @@
 
 Welcome to the Avroom architecture documentation. These docs describe the **current state** of the project as found in the code (not aspirational design).
 
-> Last refresh: 2026-07-27
+> Last refresh: 2026-08-06
 
 What changed in this refresh:
 
-- Backend: documented session concurrency — canvas writer, region leases, candidate pinning, optional inference worker pool — new `backend/concurrency.md`; updated `backend/overview.md`, `backend/data-flow.md`, `backend/api-endpoints.md`, `backend/core-image-processing.md`, `architecture.md`, `repo-structure.md`, `docs-map.md`.
-- Backend: documented `POST /images/objects/{object_uuid}/rescale-by-depth` (depth-proportional cutout rescale; overwrites cutout PNG and updates `average_depth`) — updated `backend/api-endpoints.md`, `backend/schemas.md`, `backend/core-image-processing.md`, `backend/settings-and-storage.md`, `backend/data-flow.md`.
-- Backend: documented object metadata endpoints (`GET`/`PATCH /images/objects/{uuid}`), depth cache (`core/depth_cache.py`), and object metadata storage (`core/object_metadata.py`, `object_index.json`) — same backend pages plus `repo-structure.md`.
-- Backend: removed stale reference to non-existent `api/objects.py` — updated `backend/README.md`.
-- Frontend: noted `object_uuid`, `ObjectMetadataResponse`, and object metadata API helpers; rescale endpoint is backend-only (not wired in UI) — updated `frontend/api-integration.md`, `frontend/state-and-types.md`.
+- Backend: documented `POST /images/objects/{object_uuid}/duplicate` — clones cutout/GLB/novel-view caches into a new object with sticky `-copy` / `-copyN` naming and lineage metadata; shared session depth/original/background untouched.
+- Backend: documented clone helpers in `core/object_storage.py` / `core/object_metadata.py` and `DuplicateObjectResponse` — updated `backend/api-endpoints.md`, `backend/schemas.md`, `backend/settings-and-storage.md`.
+- Tests: added `fastApi-app/tests/test_object_duplicate.py` for naming, artifact copy, rollback, and sync dirty timestamp.
 
 If you change architecture, run the [`update-avroom-docs`](../.cursor/skills/update-avroom-docs/SKILL.md) skill to keep these files in sync with the code.
 

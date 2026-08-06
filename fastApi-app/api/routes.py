@@ -34,8 +34,10 @@ from core.depth_cache import delete_session_depth_maps
 from core.camera_calib_cache import delete_session_camera_calib, save_camera_calib
 from core.object_metadata import (
     ObjectMetadata,
+    build_clone_metadata,
     get_object_by_uuid,
     load_object_metadata,
+    remove_object_index_entry,
     save_object_metadata,
     set_object_name,
     delete_session_metadata,
@@ -44,6 +46,7 @@ from schemas.image import (
     ClickRequest,
     ClickResultResponse,
     CutoutBounds,
+    DuplicateObjectResponse,
     ImageUploadResponse,
     InpaintMaskRequest,
     InpaintMaskResponse,
@@ -63,7 +66,9 @@ from schemas.image import (
     UidCacheStatusResponse,
 )
 from core.object_storage import (
+    copy_object_artifacts,
     current_background_path,
+    delete_object_artifact_files,
     list_object_ids,
     next_object_id,
     object_cutout_path,
@@ -627,6 +632,111 @@ async def rename_object(object_uuid: str, request: SetObjectNameRequest) -> Obje
     logger.info("Object renamed: uuid=%s name=%r", object_uuid, request.name)
     return response
 
+
+@router.post("/objects/{object_uuid}/duplicate", response_model=DuplicateObjectResponse)
+def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
+    """Clone one object into a new object within the same session.
+
+    Copies the cutout and any available GLB / novel-view caches. Session-level
+    artifacts (background, depth cache, original upload) are shared, not
+    duplicated. The clone receives a fresh UUID, sequential object_id, and a
+    ``<root>-copy`` / ``<root>-copyN`` nickname.
+    """
+    logger.info("Object duplicate requested: uuid=%s", object_uuid)
+    storage_dir = get_image_storage_dir()
+    three_d_dir = get_3d_storage_dir()
+
+    source = get_object_by_uuid(storage_dir, object_uuid)
+    if source is None:
+        logger.warning("Object duplicate failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(
+            status_code=404,
+            detail=f"Object not found for uuid='{object_uuid}'",
+        )
+
+    source_cutout = resolve_object_cutout_path(
+        storage_dir, source.session_id, source.object_id
+    )
+    if not source_cutout.exists():
+        logger.warning(
+            "Object duplicate failed — cutout missing: uuid=%s session_id=%s object_id=%d",
+            object_uuid,
+            source.session_id,
+            source.object_id,
+        )
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"Source cutout not found for uuid='{object_uuid}' "
+                f"(session_id='{source.session_id}', object_id={source.object_id})"
+            ),
+        )
+
+    new_object_id: int | None = None
+    clone_metadata: ObjectMetadata | None = None
+    try:
+        try:
+            acquire_canvas_writer(source.session_id)
+        except SessionConflictError as exc:
+            logger.warning(
+                "Object duplicate rejected due to canvas writer timeout: uuid=%s",
+                object_uuid,
+            )
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        try:
+            new_object_id = next_object_id(storage_dir, source.session_id)
+            clone_metadata = build_clone_metadata(storage_dir, source, new_object_id)
+            copy_object_artifacts(
+                base_dir=storage_dir,
+                glb_dir=three_d_dir,
+                uid=source.session_id,
+                source_object_id=source.object_id,
+                dest_object_id=new_object_id,
+            )
+            save_object_metadata(storage_dir, clone_metadata)
+            touch_session(source.session_id)
+        finally:
+            release_canvas_writer(source.session_id)
+    except HTTPException:
+        raise
+    except FileNotFoundError as exc:
+        logger.warning("Object duplicate failed — missing artifact: uuid=%s detail=%s", object_uuid, exc)
+        if new_object_id is not None:
+            delete_object_artifact_files(
+                base_dir=storage_dir,
+                glb_dir=three_d_dir,
+                uid=source.session_id,
+                object_id=new_object_id,
+            )
+            if clone_metadata is not None:
+                remove_object_index_entry(clone_metadata.uuid)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Object duplicate failed: uuid=%s", object_uuid)
+        if new_object_id is not None:
+            delete_object_artifact_files(
+                base_dir=storage_dir,
+                glb_dir=three_d_dir,
+                uid=source.session_id,
+                object_id=new_object_id,
+            )
+            if clone_metadata is not None:
+                remove_object_index_entry(clone_metadata.uuid)
+        raise HTTPException(status_code=500, detail=f"Object duplicate failed: {exc}") from exc
+
+    assert clone_metadata is not None
+    logger.info(
+        "Object duplicated: source_uuid=%s clone_uuid=%s session_id=%s "
+        "source_id=%d clone_id=%d name=%r",
+        object_uuid,
+        clone_metadata.uuid,
+        clone_metadata.session_id,
+        source.object_id,
+        clone_metadata.object_id,
+        clone_metadata.name,
+    )
+    return DuplicateObjectResponse(object_uuid=clone_metadata.uuid)
 
 @router.post("/objects/{object_uuid}/rescale-by-depth", response_model=RescaleByDepthResponse)
 def rescale_object_by_depth(

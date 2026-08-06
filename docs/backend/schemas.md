@@ -100,6 +100,12 @@ All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.
 |---|---|---|
 | `name` | `str \| null` | New label, or `null` to clear. |
 
+`DuplicateObjectResponse` is returned by `POST /images/objects/{object_uuid}/duplicate`.
+
+| Field | Type | Description |
+|---|---|---|
+| `object_uuid` | `str` | Server-generated UUID of the newly cloned object. |
+
 ## Rescale by Depth
 
 `RescaleByDepthRequest` is sent to `POST /images/objects/{object_uuid}/rescale-by-depth`.

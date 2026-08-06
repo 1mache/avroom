@@ -134,7 +134,9 @@ fastApi-app/tmp/
 │   ├── {image_id}.{ext}             - one per upload (jpg/png/...)
 │   ├── {image_id}_background.png         - cumulative inpainted canvas (overwrites each inpaint)
 │   ├── {image_id}_{object_id}_cutout.png - per-object cutout (overwritten by rescale-by-depth)
-│   ├── {image_id}_{object_id}_meta.json   - object metadata (uuid, average_depth, …)
+│   ├── {image_id}_{object_id}_meta.json   - object metadata (uuid, average_depth, clone lineage, …)
+│   ├── {image_id}_{object_id}_novel_az{az}_el{el}.png - cached novel-view result (copied on duplicate)
+│   ├── {image_id}_{object_id}_novel_az{az}_el{el}.preview.png - client novel-view preview placeholder
 │   ├── {image_id}_depth_{hash}.npy         - cached depth map for session + canvas hash
 │   ├── {image_id}_cutout.png             - legacy flat cutout (sessions before per-object numbering)
 │   ├── {image_id}_mask_{n}_refined.npy   - candidate refined mask (segmentation, temporary)
@@ -142,7 +144,7 @@ fastApi-app/tmp/
 │   └── point/
 │       └── {image_id}_debug.png          - click-marker overlay
 └── 3d/
-    ├── {image_id}_{object_id}.glb        - per-object 3D model (written by POST /3d/test-3d)
+    ├── {image_id}_{object_id}.glb        - per-object 3D model (written by POST /3d/test-3d; copied on duplicate)
     └── {image_id}.glb                    - legacy flat 3D model (sessions before per-object numbering)
 ```
 
@@ -168,6 +170,10 @@ Key helpers:
 | `resolve_object_cutout_path(base_dir, uid, object_id)` | numbered path; for id 0, falls back to legacy `{uid}_cutout.png` if absent |
 | `object_glb_path(glb_dir, uid, object_id)` | `{uid}_{object_id}.glb` |
 | `resolve_object_glb_path(glb_dir, uid, object_id)` | numbered path; for id 0, falls back to legacy `{uid}.glb` if absent |
+| `object_novel_view_path` / `object_novel_view_preview_path` | cached novel-view / preview PNG paths |
+| `list_object_novel_view_paths(base_dir, uid, object_id)` | all novel-view + preview files for one object |
+| `copy_object_artifacts(...)` | copy cutout + optional GLB + novel-view caches to a new object id (preserves mtimes) |
+| `delete_object_artifact_files(...)` | roll back a partial clone's per-object files |
 | `list_object_ids(base_dir, uid)` | sorted list of all object ids found on disk |
 | `next_object_id(base_dir, uid)` | `max(list_object_ids) + 1`, or `0` if none exist |
 | `current_background_path(base_dir, uid)` | `{uid}_background.png` (single cumulative canvas) |
@@ -196,9 +202,19 @@ Each finalized object gets a UUID at inpaint time. Metadata is stored per object
 | Per-object JSON | `{uid}_{object_id}_meta.json` in image storage dir |
 | UUID index | `tmp/object_index.json` (maps uuid → session_id + object_id) |
 
-Key helpers: `save_object_metadata`, `get_object_by_uuid`, `set_object_name`, `set_object_average_depth`, `delete_session_metadata`.
+Key helpers: `save_object_metadata`, `get_object_by_uuid`, `set_object_name`, `set_object_average_depth`, `build_clone_metadata`, `format_clone_name`, `remove_object_index_entry`, `delete_session_metadata`.
 
 `average_depth` is set from mask depth at inpaint and updated after each rescale-by-depth call.
+
+Clone lineage fields on `ObjectMetadata` (all optional / default `None` for non-clones):
+
+| Field | Role |
+|---|---|
+| `clone_root_uuid` | UUID of the original root object this clone descends from |
+| `clone_root_label` | Sticky label used for nicknames (`Chair` → `Chair-copy`, `Chair-copy1`, …) |
+| `clone_index` | Zero-based ordinal under that root (`0` → `-copy`, `1` → `-copy1`) |
+
+`POST /images/objects/{uuid}/duplicate` copies per-object cutout/GLB/novel-view files and registers a new UUID. Session-level depth files keyed by `content_hash` are shared, not duplicated.
 
 ## What's not configurable
 

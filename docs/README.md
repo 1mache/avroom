@@ -2,13 +2,16 @@
 
 Welcome to the Avroom architecture documentation. These docs describe the **current state** of the project as found in the code (not aspirational design).
 
-> Last refresh: 2026-08-06
+> Last refresh: 2026-08-07
 
 What changed in this refresh:
 
-- Backend: documented `POST /images/objects/{object_uuid}/duplicate` — clones cutout/GLB/novel-view caches into a new object with sticky `-copy` / `-copyN` naming and lineage metadata; shared session depth/original/background untouched.
-- Backend: documented clone helpers in `core/object_storage.py` / `core/object_metadata.py` and `DuplicateObjectResponse` — updated `backend/api-endpoints.md`, `backend/schemas.md`, `backend/settings-and-storage.md`.
-- Tests: added `fastApi-app/tests/test_object_duplicate.py` for naming, artifact copy, rollback, and sync dirty timestamp.
+- Frontend: full rewrite of `frontend/` docs — they described the pre-redesign single-`MainPage` SPA (`UploadFrame`/`ResultFrame`/`ObjectPanel`/`SessionPicker`), which no longer exists. Now documents the real two-screen app: `App.tsx`'s local route switch (dashboard / upload / workspace, no router library), `DashboardScreen` + `UploadScreen` + `WorkspaceScreen`, the `Toolbar`/`ObjectRail` workspace chrome, and the three session hooks (`useSessionJobs`, `useSessionSync`, `useConflictNotices`).
+- Frontend: documented drag-to-reposition, object duplication, object deletion, 2D rotation (novel-view), and dashboard preview thumbnails end-to-end on the frontend side (backend side was already current).
+- Fixed a stale fact repeated in `CLAUDE.md` and `backend/api-endpoints.md`: the dashboard-preview debounce is 500ms (`PREVIEW_DEBOUNCE_MS`), not ~1.5s.
+- Fixed a stale architecture claim in `CLAUDE.md`'s Frontend Notes: the dashboard and upload screens exist and are wired up (they were previously described as "not yet built"); the workspace back arrow is enabled, not disabled.
+- Removed dead frontend code ahead of this refresh: the `clickImage` API wrapper (unused `POST /images/click` client), the unused `SessionSyncCheckRequest` TS type, and an orphaned `.stage-message-hint` CSS rule — `docs/frontend/api-integration.md` updated to match.
+- Root docs (`overview.md`, `data-flow.md`, `repo-structure.md`, `architecture.md`) had their remaining `MainPage`/`ObjectPanel`/`UploadFrame` references replaced.
 
 If you change architecture, run the [`update-avroom-docs`](../.cursor/skills/update-avroom-docs/SKILL.md) skill to keep these files in sync with the code.
 

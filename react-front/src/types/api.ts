@@ -11,10 +11,6 @@ export interface ImageUploadResponse {
   last_changed: string;
 }
 
-export interface SessionSyncCheckRequest {
-  client_last_changed: string | null;
-}
-
 export interface SessionSyncCheckResponse {
   last_changed: string;
   needs_refresh: boolean;

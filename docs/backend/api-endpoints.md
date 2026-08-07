@@ -253,7 +253,7 @@ Dashboard thumbnail for one session — the room roughly as the user left it, so
   1. **404** if `uid` isn't registered in `sessions.json`.
   2. **422** if `image_b64` isn't valid base64, or if the decoded bytes don't open as an image (`PIL.Image.verify()`).
   3. Written atomically (temp file + `os.replace`) to `{uid}_preview.jpg`.
-  4. **Does not** call `touch_session` — the frontend fires this ~1.5s after the mutation that already bumped `last_changed` (see `WorkspaceScreen.tsx`'s debounced capture), so the cache-buster the dashboard reads is already correct.
+  4. **Does not** call `touch_session` — the frontend fires this 500ms after the mutation that already bumped `last_changed` (`PREVIEW_DEBOUNCE_MS` in `WorkspaceScreen.tsx`'s debounced capture), so the cache-buster the dashboard reads is already correct.
 
 **`POST /images/upload`** also writes an initial thumbnail — a downscaled copy of the original upload via `core/session_preview.py::write_upload_preview` — so a session has a preview from the moment it's created, before any edit. Failure here is logged and swallowed (non-fatal, same shape as camera calibration), never fails the upload.
 

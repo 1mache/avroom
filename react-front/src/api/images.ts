@@ -1,6 +1,4 @@
 import type {
-  ClickRequest,
-  ClickResultResponse,
   DuplicateObjectResponse,
   ImageUploadResponse,
   InpaintMaskRequest,
@@ -83,18 +81,6 @@ export async function uploadImage(file: File): Promise<ImageUploadResponse> {
   });
 
   return handleJsonResponse<ImageUploadResponse>(response);
-}
-
-export async function clickImage(payload: ClickRequest): Promise<ClickResultResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/click`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  return handleJsonResponse<ClickResultResponse>(response);
 }
 
 export async function generate3DModel(uid: string, objectId: number): Promise<ArrayBuffer> {

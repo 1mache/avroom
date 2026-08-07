@@ -451,13 +451,6 @@ input {
   color: var(--ink-dim);
 }
 
-.stage-message-hint {
-  margin: 0;
-  max-width: 34ch;
-  color: var(--ink-faint);
-  font-size: 12.5px;
-}
-
 /* ── Conflict notices ────────────────────────────────────────────────────── */
 
 .notice-stack {

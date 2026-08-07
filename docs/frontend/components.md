@@ -1,160 +1,147 @@
 # Components
 
-Current frontend has six important screen components plus one data sidebar widget.
+## `DashboardScreen`
 
-## `MainPage`
+[`react-front/src/components/layout/DashboardScreen.tsx`](../../react-front/src/components/layout/DashboardScreen.tsx)
 
-[`react-front/src/components/layout/MainPage.tsx`](../../react-front/src/components/layout/MainPage.tsx)
+Props: `{ onOpenSession: (uid: string) => void; onNewSession: () => void }`.
 
-Screen orchestrator. Owns upload flow, segmentation mask choice, selected-mask inpainting, session restore flow, multi-object management, draggable cutout overlay, and optional 3D overlay.
+The app's home screen. Owns `sessions: SessionInfo[]`, `loadState: "loading" | "ready" | "offline"`, `pendingDeleteUid: string | null`, `isDeleting`, `error`.
 
-### Responsibilities
+- On mount, fetches `getSessions()` and sorts with `byMostRecentlyEdited` (`utils/time.ts`) — newest `last_changed` first, sessions with no timestamp sort last. A fetch failure sets `loadState = "offline"` and renders a retry state instead of the error modal.
+- Renders a "New session" CTA that calls `onNewSession`, a scrollable grid of `SessionCard`s (only the grid scrolls — the CTA stays reachable regardless of list length), a loading-skeleton state, and an empty state when there are no sessions.
+- Delete flow: a `SessionCard`'s trash button calls `onRequestDelete(uid)`, which sets `pendingDeleteUid`; a `ConfirmDialog` confirms; on confirm, `deleteSession(uid)` is awaited and the session is filtered out of local state on success, or `error` is set (generic error modal) on failure.
+- Clicking a `SessionCard` calls `onOpenSession(uid)`, which `App.tsx` routes into the workspace.
 
-- Hold upload/session state. Manage `objects: CutoutObject[]` array and `activeObjectId`.
-- Enable `isAddingObject` mode so `UploadFrame` reappears over the latest background for subsequent object selections.
-- Hold temporary `maskOptions` state while user chooses segmentation candidate.
-- Convert backend `cutout_bounds` metadata into local drag bounds.
-- Measure rendered result viewport and derive the exact contained image rect used by `object-fit: contain`.
-- Translate pointer movement from CSS pixels into natural-image pixels.
-- Clamp cutout movement by visible object bounds, not by full transparent PNG extent.
-- Restore full `objects[]` array from `/images/{uid}/objects` on session restore; fall back gracefully when no objects exist.
-- Manage session naming: editable name field above frame visible whenever `imageId` is set; Enter key calls `POST /images/{uid}/name`; 409 conflicts surface in error modal.
-- Render `ObjectPanel` when at least one object exists; toggle panel collapse.
+## `UploadScreen`
 
-### Result-stage note
+[`react-front/src/components/layout/UploadScreen.tsx`](../../react-front/src/components/layout/UploadScreen.tsx)
 
-`cutoutSrc` used in the JSX cutout overlay is derived from the active `CutoutObject`, not direct state — see [state-and-types.md](state-and-types.md) for the derivation.
+Props: `{ onCancel: () => void; onUploaded: (uid: string) => void }`.
 
-### Result-stage structure
+The file-intake step between dashboard and workspace. Constants `ACCEPTED_TYPES = ["image/jpeg","image/png","image/webp"]` and `MAX_BYTES = 25 * 1024 * 1024` mirror the backend's upload gate for instant client-side feedback before a round trip.
 
-When a background exists, `MainPage` no longer renders a plain `<img>`. It renders a measured stage:
+- State: `file`, `previewUrl` (object URL, revoked on replace/unmount), `phase: "choosing" | "checking" | "rejected"`, `rejection`, `isDragOver`.
+- Accepts a file via drag-drop or the file picker; `acceptFile` runs the client-side type/size check and either sets a preview or moves to `phase: "rejected"` with a reason.
+- Starting the upload (`handleStart`) calls `uploadImage(file)`; on success it calls `onUploaded(response.image_id)`. On an `ApiError` with `status === 422` it shows the backend's validation-rejection detail text as a normal outcome (not a crash); any other failure shows a generic message.
+- The back button is disabled while `phase === "checking"`.
 
-```tsx
-<div className="frame upload-frame result-main-frame">
-  <div ref={resultStageRef} className="image-container result-image-stage">
-    <img src={backgroundSrc} className="frame-image" onLoad={handleBackgroundLoad} />
-    {showCutout ? <img src={cutoutSrc} className="cutout-overlay" ... /> : null}
-    {show3D ? <Model3DFrame className="overlay-absolute model-overlay" ... /> : null}
-  </div>
-</div>
-```
+## `WorkspaceScreen`
 
-Non-trivial point: `cutout-overlay` and `Model3DFrame` are aligned to the inner `image-container`, not the outer `.frame`. This avoids hard-coded padding math and keeps overlays aligned with the real visible image box.
+[`react-front/src/components/layout/WorkspaceScreen.tsx`](../../react-front/src/components/layout/WorkspaceScreen.tsx)
 
-### Drag model
+Props: `{ uid: string; onExit: () => void }`.
 
-Drag is implemented in three spaces:
+The editor. The largest component in the tree — it owns most local UI state directly and composes the three session hooks ([state-and-types.md](state-and-types.md)) plus every workspace widget.
 
-1. **Natural image space**
-   `cutoutOffset` and `cutoutAlphaBounds` live here. This is the source of truth.
-2. **Rendered image space**
-   `renderedBackgroundRect` describes where the browser actually painted the background image inside the stage.
-3. **Pointer/screen space**
-   `PointerEvent.clientX/clientY` arrive here.
+### Session boot
 
-Conversion path during drag:
+On mount (`[uid]`-keyed effect; `App` remounts this component on `uid` change so it never needs to re-run for the same session):
 
-1. User presses cutout image.
-2. `handleCutoutPointerDown` stores pointer id, starting mouse coordinates, and starting `cutoutOffset`.
-3. Window-level `pointermove` listener computes screen delta.
-4. Delta is divided by `scaleX/scaleY` derived from `renderedBackgroundRect / backgroundNaturalSize`.
-5. Result becomes a natural-image delta.
-6. `clampCutoutOffset` clamps that natural offset using `cutoutAlphaBounds`.
-7. Render path scales natural offset back into CSS pixels for `left/top`.
+1. Sets `originalSrc` to `${API_BASE_URL}/images/${uid}/original` immediately (cheap, always safe to show).
+2. Calls `getUidCacheStatus(uid)` → sets `sessionName`, sets `backgroundSrc` if `has_background`.
+3. If `has_cutout`, calls `getSessionObjects(uid)` and `jobs.loadRestoredObjects(...)`.
+4. Seeds sync via `recordLocalMutationRef.current()`.
+5. On any failure, falls back to `sessionName = uid`.
 
-Why window-level listeners:
+While `photoSrc` (`backgroundSrc ?? originalSrc`) hasn't resolved, the stage renders a plain `"Opening the session"` placeholder (`.stage-message`) — there is no dedicated offline UI here (that lives in `DashboardScreen`'s session-list fetch).
 
-- Native image pointer flow can stop delivering events once pointer leaves image box.
-- Global listeners let drag continue smoothly even when user outruns overlay edge.
-- Refs carry latest geometry into those listeners without forcing re-subscription on every move.
+### Stage geometry and hit-testing
 
-## `UploadFrame`
+- `measureStage` + a `ResizeObserver` track the stage's rendered size; `getContainedImageRect` (`utils/stageGeometry.ts`) derives the actual `object-fit: contain` rect so overlays line up with the visible image, not the outer container.
+- Hit-testing is **alpha-precise, not DOM stacking**: cutout PNGs are full-image-sized with transparency outside the object, so a topmost DOM layer would swallow every click. `hitCanvasesRef` (a `Map<number, HitCanvasEntry>`) holds one offscreen `<canvas>` per object, invalidated whenever that object's *effective* cutout src changes (not just when the id first appears — rotation swaps the silhouette in place). `sampleObjectAlpha` reads a 1×1 pixel; a missing canvas is treated as fully opaque so a brand-new object is clickable before its canvas finishes building.
+- A single transparent `.stage-input` div owns all pointer-down handling. `handleStagePointerDown`: if `cutMode` is armed, the click becomes the segmentation seed (`jobs.runSegment(...)`) and disarms cut mode; otherwise it walks `buildHitTestOrder(objects, selectedObjectId)` (topmost-first, selected object tested first) and alpha-samples each candidate against `ALPHA_HIT_THRESHOLD`.
 
-[`react-front/src/components/widgets/UploadFrame.tsx`](../../react-front/src/components/widgets/UploadFrame.tsx)
+### Selection, cut, rotate, duplicate, delete
 
-Still responsible only for upload preview and point selection. No drag logic lives here.
+- `selectObject` always forces `rotateMode = false` and `cutMode = false` and clears `pickPoint` — changing selection always exits whatever tool was active.
+- `handleCut` arms `cutMode` (and clears rotate mode / any pick point); the next stage click fires the segment request and disarms itself. Escape cancels while `cutMode || rotateMode` is true (global keydown effect, ignored while focus is in an `<input>`/`<textarea>`).
+- `handleRotate`: if the picker is already open, delegates to `commitCurrentRotation`. Otherwise it requires a selection; if the object's GLB is already cached (`glbData`) it opens the picker immediately, otherwise it sets `isPreparing3D`, tries `fetchCached3DModel` then falls back to `generate3DModel`, stores the buffer via `jobs.setObjects`, and only opens the picker if the selection hasn't moved on in the meantime.
+- `commitCurrentRotation`: captures the viewer's pose + a canvas snapshot via `model3DFrameRef.current.capture()` **before** closing the picker, computes the on-stage bounds by inflating the object's existing alpha bounds by `MODEL_3D_FRAME_PADDING`, composites the snapshot onto a full-canvas transparent PNG (`compositePreviewOntoCanvas`), then calls `jobs.commitRotation(...)` — falling back to the raw (uncomposited) snapshot if compositing throws.
+- `handleCopy` and `handleDeleteObject` both require `selectedObject?.uuid` to exist; a legacy pre-UUID object surfaces an explicit "This object is from an older session and can't be deleted" error instead of silently no-op'ing. Delete opens a `ConfirmDialog` (`pendingDeleteObjectId`); confirming awaits `jobs.deleteObject(...)`.
 
-Important split:
+### Drag
 
-- `UploadFrame` handles **where user clicked on original image**.
-- `MainPage` handles **how returned cutout can later move on top of processed background**.
+A pointer-down inside `.stage-input` that hits an object (rather than arming cut mode) starts a drag: `dragStateRef` is set, `document.body` gets an `is-dragging-object` class, and the object is selected. A separate effect attaches window-level `pointermove`/`pointerup`/`pointercancel` listeners only while `isDragging` is true — converting screen-space pointer delta into natural-image pixels via the rendered rect and natural size, clamping through `clampCutoutOffset`, and calling `jobs.updateOffset` continuously (local-only, no network). On pointer-up (`finishDrag`) the drag state clears, the dashboard preview thumbnail is captured, and the final offset is persisted with `setObjectOffset(uuid, x, y)` — a single PATCH per drag, not per pointermove.
+
+### Preview thumbnail capture
+
+`PREVIEW_DEBOUNCE_MS = 500`. A ref-stashed function (`capturePreviewRef`) composites the current background plus every visible cutout at its offset via `composeSessionPreview` (`utils/preview.ts`) and calls `saveSessionPreview(uid, ...)`, debounced 500ms. It fires from two places:
+
+1. `handleMutated` — called as the `onMutated` callback passed into `useSessionJobs`, so it runs after every hook-driven mutation (inpaint success, rotation, rename, duplicate, delete, hide/show).
+2. Directly from `finishDrag` at drag-end, since drags never go through `useSessionJobs` and so never trigger `onMutated` on their own.
+
+### Rendering
+
+Renders `Toolbar` (wired to nearly all local + hook state), a `<main className="stage">` containing the background photo, one `.stage-cutout` `<img>` per visible object (z-index keeps the selected object on top regardless of creation order), the transparent `.stage-input` hit layer, a pick-point marker while `cutMode` is armed, the `Model3DFrame` in place of the selected object's 2D cutout while `rotateMode` is on, a 4-corner `.selection-frame` around the selected object, conflict notices (`useConflictNotices`), and `ObjectRail`. Outside `<main>`: `MaskPickerModal` (while choosing a segmentation candidate), the object-delete `ConfirmDialog`, and a generic error modal.
+
+## `Toolbar`
+
+[`react-front/src/components/workspace/Toolbar.tsx`](../../react-front/src/components/workspace/Toolbar.tsx)
+
+Purely presentational and controlled — owns no state of its own beyond one derived value, `objectToolsDisabled = !hasSelection`.
+
+Left to right: **back** arrow (always enabled, calls `onBack` → `WorkspaceScreen`'s `onExit` → dashboard) · editable **session name** (Enter saves) · **scissors** (arms `cutMode`; `is-armed` class + `aria-pressed` while active; never disabled) · **rotate** (icon swaps to a checkmark while `rotateMode` is on, a spinner while `isPreparing3D`; disabled when nothing is selected or while preparing) · **copy/duplicate** (spinner while `isDuplicating`; disabled with no selection, while duplicating, or while `rotateMode` is on) · **smart-paste** switch (`role="switch"`; a local boolean with no wired behavior — see [Planned but Not Yet Implemented](../../CLAUDE.md)) · a status readout string (only rendered when non-null) · **trash** (red/`is-danger`; spinner while `isDeleting`; disabled with no selection, while deleting, or while `rotateMode` is on).
+
+Every object-scoped tool (rotate, copy, smart-paste, trash) **greys out** via the `disabled` attribute rather than unmounting when nothing is selected, so the toolbar never reflows. Icons carry no text labels; they self-identify on hover via the shared `[data-tip]` CSS tooltip.
+
+## `ObjectRail`
+
+[`react-front/src/components/workspace/ObjectRail.tsx`](../../react-front/src/components/workspace/ObjectRail.tsx)
+
+Props: `objects`, `pending` (in-flight inpaint placeholders), `selectedObjectId`, `showOriginalIds`, `disabled`, `onSelectObject`, `onToggleHidden`, `onToggleShowOriginal`, `onRenameObject`.
+
+Replaces the old `ObjectPanel`. `CLOSE_DELAY_MS = 220`: the rail opens immediately on `pointerenter` (cancelling any pending close) and, on `pointerleave`, schedules a close after 220ms — unless a rename input is currently focused (`editingObjectId !== null`), so the panel never yanks an input out from under mid-typing.
+
+Two layers live in the DOM simultaneously and are shown/hidden purely via CSS keyed off a `data-open` attribute on the root:
+
+- **`.rail-spine`** — the always-visible collapsed state. One notch per object plus one per pending job; modifier classes `is-selected`, `is-hidden`, `is-working` (driven by `rotation?.status === "pending"`, or unconditionally true for pending inpaint jobs).
+- **`.rail-panel`** — the full slide-out list. Each row has a thumbnail (showing `effectiveCutoutSrc`, with a spinner badge while a rotation is pending), an editable name (double-click to rename; Enter commits, Escape discards via a `cancelledEditRef` flag that disambiguates from the commit-on-blur path), an eye/eye-off visibility toggle (always present), and a revert-to-original toggle that only renders — rather than greying out — when the object actually has a ready rotation result (`obj.rotation?.status === "ready"`).
+
+Pending inpaint jobs render as a spinner + "Removing" placeholder row (no thumbnail yet, since `object_id` doesn't exist until the response lands). An empty state ("Cut an object out of the photo and it lands here.") shows when there are no objects and no pending jobs.
+
+## `SessionCard`
+
+[`react-front/src/components/dashboard/SessionCard.tsx`](../../react-front/src/components/dashboard/SessionCard.tsx)
+
+Props: `{ uid, name: string | null, lastChanged: string | null, onOpen, onRequestDelete }`.
+
+One dashboard grid tile. Shows `sessionPreviewUrl(uid, lastChanged)` (cache-busted by `lastChanged`) as the thumbnail; on `<img onError>` it flips a local `previewFailed` flag and swaps to a placeholder icon + "No preview yet" instead of a broken image. A separate hover-revealed trash button calls `onRequestDelete(uid)`. The caption shows `name ?? "Untitled session"` and `formatEditedAgo(lastChanged)` (`utils/time.ts`), which falls back to "never edited".
+
+## `ConfirmDialog`
+
+[`react-front/src/components/widgets/ConfirmDialog.tsx`](../../react-front/src/components/widgets/ConfirmDialog.tsx)
+
+Props: `{ title, body, confirmLabel, cancelLabel = "Cancel", destructive = false, busy = false, onConfirm, onCancel }`. Shared by `DashboardScreen` (session delete) and `WorkspaceScreen` (object delete) — no other consumers.
+
+Escape and backdrop-click both cancel unless `busy`. The confirm button is `autoFocus`, styled `is-danger` when `destructive` else `is-primary`, and shows a spinner in place of its label while `busy`; both buttons are disabled while `busy`.
 
 ## `MaskPickerModal`
 
 [`react-front/src/components/widgets/MaskPickerModal.tsx`](../../react-front/src/components/widgets/MaskPickerModal.tsx)
 
-Renders segmentation candidates after `POST /images/segment`.
+Props: `{ masks: SegmentMaskOption[], onSelect: (maskId: string) => void, onClose: () => void }`. Stateless.
 
-- Shows cutout previews, not black-white masks.
-- Uses horizontal grid/scroll so several candidates can be compared.
-- Locks close/select buttons while selected mask is being inpainted.
-- Emits only `mask_id`; `MainPage` owns API call and final result state.
-
-## `SessionPicker`
-
-[`react-front/src/components/widgets/SessionPicker.tsx`](../../react-front/src/components/widgets/SessionPicker.tsx)
-
-Props:
-
-| Prop | Type | Purpose |
-|---|---|---|
-| `onSessionSelect` | `(uid: string) => void` | Called when user clicks a chip. |
-| `refreshKey` | `number` | Increment to force a re-fetch of session list. |
-
-Fetches `GET /images/sessions` (returns `SessionInfo[]`) on mount and whenever `refreshKey` changes. Enriches each session with a `hasResults` flag from `GET /images/{uid}/cache`.
-
-Chip label: displays `name` if set, otherwise truncated uid (`uid.slice(0,8)+"..."`). `title` attribute always shows full uid.
-
-`MainPage` increments `sessionsRefreshKey` after upload (so new session appears without page reload) and after a name is saved successfully (so chip label updates immediately).
+Renders a grid of candidate cutout previews (`data:image/{format};base64,{cutout_b64}`, not raw black/white masks) with zero-padded index labels. Clicking a card calls `onSelect(mask.mask_id)`. Backdrop click and the close button always dismiss unconditionally — by design, selecting a mask closes the picker immediately and fires the inpaint request detached (see `useSessionJobs.selectMask` in [state-and-types.md](state-and-types.md)), so there is no in-flight state left for the modal to protect.
 
 ## `Model3DFrame`
 
 [`react-front/src/components/widgets/Model3DFrame.tsx`](../../react-front/src/components/widgets/Model3DFrame.tsx)
 
-No behavioral change, but z-index contract changed:
+`forwardRef<Model3DFrameHandle, Props>`. Props: `{ glbData: ArrayBuffer | null, className?, style? }`. Exposes `MODEL_3D_FRAME_PADDING = 1.5` and `Model3DFrameHandle.capture(): RotationCapture | null`.
 
-- `.model-overlay` sits below `.cutout-overlay`.
-- This lets cutout stay visually draggable above 3D overlay if both are enabled.
+Builds a full Three.js scene/camera/renderer/`OrbitControls` (damping on, panning disabled, target pinned to the origin) per `glbData` change, loads the GLB via `GLTFLoader.parse`, normalizes its scale and recenters it, wraps it in an `oriented` group carrying a fixed correction matrix (`glbToViewRotation()` — compensates for generated GLBs coming back "lying flat" relative to the photo, matching `_GLB_TO_VIEW_ROTATION` in the backend's mesh-render novel-view strategy), then fits it to the viewport by sampling real projected vertices (not bounding-box corners, so concave/curved objects still fill the frame) rather than a simple bounding box.
 
-## `ObjectPanel`
+`capture()` reports **deltas** from the pose the viewer started at (captured once via `initialAzimuthalRef`/`initialPolarRef`), not absolute angles — and inverts the elevation delta (`initialPolar - currentPolar`) because Three's polar angle shrinks as the camera rises. It also reads back a PNG snapshot via `renderer.domElement.toDataURL(...)`, which requires `preserveDrawingBuffer: true` on the renderer or the readback comes back blank.
 
-[`react-front/src/components/widgets/ObjectPanel.tsx`](../../react-front/src/components/widgets/ObjectPanel.tsx)
+`WorkspaceScreen` treats this component purely as an angle picker, not a standalone preview: its only two effects on the rest of the app are the `capture()` ref method and continuous rendering. All rotation-commit logic (building the request, updating object state) lives in `WorkspaceScreen.commitCurrentRotation`.
 
-Right-side collapsible rail that shows all processed objects for the active session and provides a way to add a new one.
+## `icons.tsx`
 
-Props:
+[`react-front/src/components/icons.tsx`](../../react-front/src/components/icons.tsx)
 
-| Prop | Type | Purpose |
-|---|---|---|
-| `objects` | `ObjectEntry[]` | Minimal `{ objectId, cutoutSrc }` array — structural subset of `CutoutObject`. |
-| `activeObjectId` | `number \| null` | Which thumbnail is highlighted. |
-| `isAddingObject` | `boolean` | Highlights the `+` button when add mode is active. |
-| `disabled` | `boolean` | Disables thumbnails and add button while inpainting or generating 3D. |
-| `onSelectObject` | `(objectId: number) => void` | Called when user clicks a thumbnail. |
-| `onAddObject` | `() => void` | Called when user clicks the `+` button. |
-| `collapsed` | `boolean` | Controls collapsed/expanded state. |
-| `onToggleCollapsed` | `() => void` | Toggle handler from `MainPage`. |
-
-Structure: a narrow always-visible side column (28px) containing the collapse toggle and a permanently-visible `+` button; plus a 150px expandable body with a scrollable thumbnail list. The `+` button lives in the side column so it remains accessible even when the body is collapsed.
+A shared `Svg` wrapper (24-unit viewBox, `strokeWidth: 1.6`, round caps/joins, `fill: none`, `stroke: currentColor`) gives every icon a consistent hand-drawn look. Exports one `React.FC<IconProps>` per icon (`IconProps = { size?: number }`, default `18`): `BackIcon`, `ScissorsIcon`, `RotateIcon`, `CopyIcon`, `SmartPasteIcon`, `TrashIcon`, `CheckIcon`, `EyeIcon`, `EyeOffIcon`, `RevertIcon`, `PlusIcon`, `PhotoIcon`. No icon carries a text label — every usage relies on the `[data-tip]` hover tooltip (see [styling.md](styling.md)).
 
 ## CSS roles
 
-[`react-front/src/style.css`](../../react-front/src/style.css)
-
-Classes tied to drag feature:
-
-- `body.cutout-dragging`: global `grabbing` cursor during active drag.
-- `.result-image-stage`: isolated overlay stage that owns measurement and stacking context.
-- `.cutout-overlay`: absolute positioned draggable image with `touch-action: none`.
-- `.model-overlay`: z-index layer for 3D viewer.
-- `.overlay-absolute`: fills stage exactly.
-- `.main-frame-image-area`: `flex: 1; min-width: 0` wrapper inside `.main-frame-container` so `ObjectPanel` can sit alongside the image frame without squishing it.
-
-Classes for `ObjectPanel`:
-
-- `.object-panel-container`: outer flex row, `flex-shrink: 0`.
-- `.object-panel-side`: 28px always-visible column.
-- `.object-panel-toggle`: collapse/expand arrow button.
-- `.object-panel-add-side`: permanently-visible `+` button in the side column.
-- `.object-panel-body`: 150px expandable panel; `is-collapsed` collapses via `width: 0; opacity: 0; pointer-events: none`.
-- `.object-thumbnail-btn`: square thumbnail with checkerboard transparency background; `is-active` adds accent border.
+See [styling.md](styling.md) for the full section-by-section map of `style.css`. In short: `.stage*` classes belong to `WorkspaceScreen`, `.toolbar*`/`.tool-*` to `Toolbar`, `.rail*` to `ObjectRail`, `.dash*`/`.session-*` to `DashboardScreen`/`SessionCard`, `.dropzone*`/`.upload-*` to `UploadScreen`, and `.modal*`/`.mask-*`/`.confirm-*`/`.btn*` are shared across `ConfirmDialog`, `MaskPickerModal`, and the inline error modals in both screens.

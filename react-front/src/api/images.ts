@@ -1,6 +1,4 @@
 import type {
-  ClickRequest,
-  ClickResultResponse,
   DuplicateObjectResponse,
   ImageUploadResponse,
   InpaintMaskRequest,
@@ -14,8 +12,8 @@ import type {
   SegmentResponse,
   SessionInfo,
   SessionSyncCheckResponse,
-  SetObjectNameRequest,
   UidCacheStatusResponse,
+  UpdateObjectRequest,
 } from "../types/api";
 
 export const API_BASE_URL =
@@ -85,18 +83,6 @@ export async function uploadImage(file: File): Promise<ImageUploadResponse> {
   return handleJsonResponse<ImageUploadResponse>(response);
 }
 
-export async function clickImage(payload: ClickRequest): Promise<ClickResultResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/click`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  return handleJsonResponse<ClickResultResponse>(response);
-}
-
 export async function generate3DModel(uid: string, objectId: number): Promise<ArrayBuffer> {
   const response = await fetch(`${API_BASE_URL}/3d/test-3d`, {
     method: "POST",
@@ -116,6 +102,45 @@ export async function generate3DModel(uid: string, objectId: number): Promise<Ar
 export async function getSessions(): Promise<SessionInfo[]> {
   const response = await fetch(`${API_BASE_URL}/images/sessions`);
   return handleJsonResponse<SessionInfo[]>(response);
+}
+
+// --- Session previews (dashboard thumbnails) -------------------------------
+// The dashboard shows each session as the user left it. GET/POST
+// /images/{uid}/preview are live on the backend: the GET serves a JPEG (404
+// with a placeholder fallback when a session has none yet), and the POST
+// stores a client-composited thumbnail, best-effort.
+export const PREVIEW_API_READY = true;
+
+/**
+ * Thumbnail URL for a session. `lastChanged` is used as a cache-buster so a
+ * session edited in another tab doesn't keep showing a stale preview.
+ */
+export function sessionPreviewUrl(uid: string, lastChanged: string | null): string {
+  const bust = lastChanged ? `?t=${encodeURIComponent(lastChanged)}` : "";
+  return `${API_BASE_URL}/images/${uid}/preview${bust}`;
+}
+
+/**
+ * Stores the composed canvas as the session's dashboard thumbnail. Best-effort
+ * and detached, like cacheNovelViewPreview — a failure here must never affect
+ * the edit that triggered it.
+ */
+export async function saveSessionPreview(uid: string, imageB64: string): Promise<void> {
+  if (!PREVIEW_API_READY) {
+    return;
+  }
+
+  const response = await fetch(`${API_BASE_URL}/images/${uid}/preview`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ image_b64: imageB64 }),
+  });
+
+  if (!response.ok) {
+    return throwApiError(response);
+  }
 }
 
 export async function setSessionName(uid: string, name: string): Promise<SessionInfo> {
@@ -193,7 +218,31 @@ export async function setObjectName(
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ name } satisfies SetObjectNameRequest),
+    body: JSON.stringify({ name } satisfies UpdateObjectRequest),
+  });
+
+  return handleJsonResponse<ObjectMetadataResponse>(response);
+}
+
+/**
+ * Persists an object's drag offset. Fires from drag-end so the position
+ * survives a session close/reopen -- omits `name` entirely (not `name:
+ * null`) so the backend's partial-update semantics leave it untouched.
+ */
+export async function setObjectOffset(
+  objectUuid: string,
+  offsetX: number,
+  offsetY: number,
+): Promise<ObjectMetadataResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      offset_x: offsetX,
+      offset_y: offsetY,
+    } satisfies UpdateObjectRequest),
   });
 
   return handleJsonResponse<ObjectMetadataResponse>(response);
@@ -205,6 +254,21 @@ export async function duplicateObject(objectUuid: string): Promise<DuplicateObje
   });
 
   return handleJsonResponse<DuplicateObjectResponse>(response);
+}
+
+/**
+ * Permanently deletes one object and all its per-object artifacts (cutout,
+ * GLB, novel-view caches, metadata). The background canvas keeps the
+ * inpainted hole -- this never restores the object's original pixels.
+ */
+export async function deleteObject(objectUuid: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    return throwApiError(response);
+  }
 }
 
 // Compares a client-held last_changed timestamp against server truth so a

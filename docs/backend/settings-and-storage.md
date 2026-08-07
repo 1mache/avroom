@@ -132,6 +132,7 @@ fastApi-app/tmp/
 ├── object_index.json                - object UUID → {session_id, object_id}
 ├── images/
 │   ├── {image_id}.{ext}             - one per upload (jpg/png/...)
+│   ├── {image_id}_preview.jpg             - dashboard thumbnail (written at upload, overwritten after each edit settles)
 │   ├── {image_id}_background.png         - cumulative inpainted canvas (overwrites each inpaint)
 │   ├── {image_id}_{object_id}_cutout.png - per-object cutout (overwritten by rescale-by-depth)
 │   ├── {image_id}_{object_id}_meta.json   - object metadata (uuid, average_depth, clone lineage, …)
@@ -149,6 +150,7 @@ fastApi-app/tmp/
 ```
 
 - `{image_id}.{ext}` is written by `upload_image` — the suffix comes from the original filename or defaults to `.png` ([`api/routes.py`](../../fastApi-app/api/routes.py) lines 41–48).
+- `{image_id}_preview.jpg` is written once at upload time by `core/session_preview.py::write_upload_preview` (downscaled copy of the original, non-fatal on failure), then overwritten by `POST /images/{uid}/preview` after every edit the frontend decides is "settled" (debounced ~1.5s). Removed by `DELETE /images/{uid}`.
 - `{image_id}_background.png` is written (and overwritten) by `inpaint_mask` on every successful inpaint, becoming the progressive canvas for the next object.
 - `{image_id}_{object_id}_cutout.png` is written by `inpaint_mask` with a sequentially allocated `object_id`. It is **not** overwritten by later inpaints, but **is** overwritten by `POST /images/objects/{uuid}/rescale-by-depth`. Path construction lives in [`core/object_storage.py`](../../fastApi-app/core/object_storage.py) (`object_cutout_path`, `next_object_id`).
 - `{image_id}_{object_id}_meta.json` and `object_index.json` are written by `inpaint_mask` via [`core/object_metadata.py`](../../fastApi-app/core/object_metadata.py).
@@ -173,10 +175,12 @@ Key helpers:
 | `object_novel_view_path` / `object_novel_view_preview_path` | cached novel-view / preview PNG paths |
 | `list_object_novel_view_paths(base_dir, uid, object_id)` | all novel-view + preview files for one object |
 | `copy_object_artifacts(...)` | copy cutout + optional GLB + novel-view caches to a new object id (preserves mtimes) |
-| `delete_object_artifact_files(...)` | roll back a partial clone's per-object files |
+| `delete_object_artifact_files(...)` | roll back a partial clone's per-object files, or permanently delete an object (`DELETE /images/objects/{uuid}`) |
+| `delete_legacy_object_artifacts(...)` | delete the pre-numbering `{uid}_cutout.png` / `{uid}.glb` pair; called alongside `delete_object_artifact_files` when deleting legacy object id 0 |
 | `list_object_ids(base_dir, uid)` | sorted list of all object ids found on disk |
 | `next_object_id(base_dir, uid)` | `max(list_object_ids) + 1`, or `0` if none exist |
 | `current_background_path(base_dir, uid)` | `{uid}_background.png` (single cumulative canvas) |
+| `session_preview_path(base_dir, uid)` | `{uid}_preview.jpg` (dashboard thumbnail) |
 
 ## Depth cache — `core/depth_cache.py`
 

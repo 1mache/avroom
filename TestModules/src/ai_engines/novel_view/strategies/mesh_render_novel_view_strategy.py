@@ -35,32 +35,36 @@ _CAMERA_FAR = 1000.0
 _CAMERA_START = np.array([0.0, 0.0, 7.0], dtype=np.float64)
 _DEFAULT_RENDER_SIZE = 512
 
-# Generated GLBs come back lying flat: the side the source photo saw faces the
-# mesh's -Y axis, with the photo's "up" along +X. Left uncorrected, the canonical
-# pose (azimuth 0, elevation 0) shows the object edge-on, so the object only ever
-# looks right after the user orbits ~90 degrees, and every rotation they ask for
-# is measured from a pose that never matched the photo. This maps -Y onto the
-# camera axis (+Z) and +X onto screen up (+Y), so pose zero reproduces the photo.
-_GLB_TO_VIEW_ROTATION = np.array(
-    [
-        [0.0, 0.0, -1.0, 0.0],
-        [1.0, 0.0, 0.0, 0.0],
-        [0.0, -1.0, 0.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0],
-    ],
-    dtype=np.float64,
-)
+# Hunyuan3D-2.1 (the active reconstruction backend) emits glTF-standard Y-up
+# geometry with the photographed face toward +Z, so the canonical pose
+# (azimuth 0, elevation 0) already reproduces the photo -- no correction
+# needed. Kept as a named identity transform (mirrored by glbToViewRotation()
+# in Model3DFrame.tsx) so a future generator with a different axis convention
+# has a single place to fix it.
+_GLB_TO_VIEW_ROTATION: np.ndarray = np.eye(4, dtype=np.float64)
 
-_AMBIENT_INTENSITY = 0.6
-_KEY_LIGHT_COLOR = np.array([0.60, 0.85, 0.86], dtype=np.float64)
-_KEY_LIGHT_INTENSITY = 2.0
+# Neutral white studio rig, brighter than before so the object's real texture
+# reads instead of a dark, tinted silhouette. Mirrors Model3DFrame.tsx's
+# light constants (colors here are 0-1 floats, not hex) so the picker's
+# canvas snapshot and this synthesized render match.
+_AMBIENT_INTENSITY = 1.0
+_KEY_LIGHT_COLOR = np.array([1.0, 1.0, 1.0], dtype=np.float64)
+_KEY_LIGHT_INTENSITY = 2.2
 _KEY_LIGHT_POSITION = np.array([4.0, 6.0, 5.0], dtype=np.float64)
-_FILL_LIGHT_COLOR = np.array([0.05, 0.51, 0.53], dtype=np.float64)
-_FILL_LIGHT_INTENSITY = 0.8
+_FILL_LIGHT_COLOR = np.array([1.0, 1.0, 1.0], dtype=np.float64)
+_FILL_LIGHT_INTENSITY = 1.0
 _FILL_LIGHT_POSITION = np.array([-5.0, 2.0, -4.0], dtype=np.float64)
-_RIM_LIGHT_COLOR = np.array([0.95, 0.83, 0.61], dtype=np.float64)
-_RIM_LIGHT_INTENSITY = 0.45
+_RIM_LIGHT_COLOR = np.array([1.0, 1.0, 1.0], dtype=np.float64)
+_RIM_LIGHT_INTENSITY = 0.75
 _RIM_LIGHT_POSITION = np.array([0.0, -3.0, -6.0], dtype=np.float64)
+# Rides on the camera so whatever face is being orbited toward is never left
+# unlit by the three fixed world lights above.
+_HEADLIGHT_COLOR = np.array([1.0, 1.0, 1.0], dtype=np.float64)
+_HEADLIGHT_INTENSITY = 0.65
+# glTF defaults to metallicFactor=1; a fully metallic PBR material with no
+# environment map renders near-black under direct lights alone. Clamp it
+# down so the brighter rig above actually shows.
+_MAX_MATERIAL_METALNESS = 0.1
 
 
 class MeshRenderNovelViewError(RuntimeError):
@@ -321,6 +325,14 @@ class MeshRenderNovelViewStrategy(NovelViewStrategy):
         # comparable to the orbit radius, whatever scale the source GLB uses.
         geometry.apply_scale(1.0 / max_dim)
 
+        material = getattr(geometry.visual, "material", None)
+        if material is not None and hasattr(material, "metallicFactor"):
+            # trimesh materials from GLB import as PBRMaterial; ColorVisuals
+            # (untextured shape-only output) has no .material attribute at all.
+            current = material.metallicFactor
+            if current is not None:
+                material.metallicFactor = min(float(current), _MAX_MATERIAL_METALNESS)
+
         fit_scale = self._projected_fit_scale(geometry, target_fractions)
         geometry.apply_scale(fit_scale)
         logger.debug(
@@ -442,6 +454,16 @@ class MeshRenderNovelViewStrategy(NovelViewStrategy):
                 intensity=_RIM_LIGHT_INTENSITY,
             ),
             pose=self._look_at_matrix(_RIM_LIGHT_POSITION, target=np.zeros(3)),
+        )
+        # A pyrender directional light emits along its pose's -Z, which is
+        # exactly camera_pose's view direction -- reusing it makes this light
+        # follow the camera, matching Model3DFrame.tsx's headlight.
+        scene.add(
+            pyrender.DirectionalLight(
+                color=_HEADLIGHT_COLOR.astype(np.float32),
+                intensity=_HEADLIGHT_INTENSITY,
+            ),
+            pose=camera_pose,
         )
 
         # pyrender needs a writable OpenGL context. Prefer OSMesa/EGL when set;

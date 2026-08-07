@@ -11,13 +11,13 @@ The user clicks once on an object in a room photo, and Avroom returns:
 
 ## MVP scope (today)
 
-The current MVP exposes a multi-object interactive flow:
+The current MVP exposes a multi-object interactive flow across two screens (dashboard + workspace, no auth):
 
-1. Frontend uploads a room image to the backend.
-2. Frontend lets the user click an object to remove.
+1. Frontend uploads a room image to the backend from the upload screen.
+2. Frontend lets the user click an object to remove, in the workspace.
 3. Backend segments the click against the current canvas (previous removals already applied), returns mask candidates, user picks one, backend inpaints and returns the updated background plus a numbered cutout (`{uid}_{object_id}_cutout.png`).
-4. User can add more objects via the `ObjectPanel` right-side rail; each removal stacks on the previous result.
-5. Each session can have multiple processed objects, each with an optional 3D model.
+4. User can add more objects by re-arming the cutout tool and clicking again; each removal stacks on the previous result. Objects can also be dragged, duplicated, deleted, and rotated (2D novel-view synthesis) via the `ObjectRail` right-edge panel and the workspace toolbar.
+5. Each session can have multiple processed objects, each with an optional 3D model and a dashboard preview thumbnail.
 
 There is **no** auth, no multi-user state, and no 3D reconstruction in the live `/images/*` pipeline. The `avroom_object_removal` package does ship a `Reconstruction3DFacade` for optional image-to-3D (GLB): by default it uses **TripoSR** (`TriposrReconstructionStrategy`); other strategies (OpenLRM, Trellis, etc.) can be injected — see [ai-pipeline/ai-engines/reconstruction-3d/README.md](ai-pipeline/ai-engines/reconstruction-3d/README.md). The backend exposes a separate test endpoint (`POST /3d/test-3d`) per object. There is also no batch / async workflow yet.
 

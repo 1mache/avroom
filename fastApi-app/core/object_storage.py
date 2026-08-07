@@ -208,6 +208,24 @@ def current_background_path(base_dir: Path, uid: str) -> Path:
     return base_dir / f"{uid}_background.png"
 
 
+def session_preview_path(base_dir: Path, uid: str) -> Path:
+    """Return the dashboard thumbnail path for one session.
+
+    The path is always ``base_dir / "{uid}_preview.jpg"``; no fallback logic
+    is applied. JPEG (not PNG) because the thumbnail is a lossy, small-file
+    compositing of the background plus every visible cutout — matching what
+    the frontend's ``composeSessionPreview`` already produces.
+
+    Args:
+        base_dir: Directory that contains session artifacts.
+        uid: Session UID.
+
+    Returns:
+        A :class:`~pathlib.Path` for the session preview file.
+    """
+    return base_dir / f"{uid}_preview.jpg"
+
+
 def list_object_novel_view_paths(base_dir: Path, uid: str, object_id: int) -> list[Path]:
     """Return novel-view and preview PNG paths belonging to one object.
 
@@ -365,4 +383,32 @@ def delete_object_artifact_files(
         object_id,
         removed,
     )
+    return removed
+
+
+def delete_legacy_object_artifacts(*, base_dir: Path, glb_dir: Path, uid: str) -> int:
+    """Delete the pre-numbering ``{uid}_cutout.png`` / ``{uid}.glb`` pair.
+
+    ``delete_object_artifact_files`` only knows the numbered filenames
+    (``object_cutout_path`` / ``object_glb_path``), so deleting object id 0 on
+    a session created before per-object numbering leaves these legacy files
+    behind — and since ``list_object_ids`` treats a present legacy cutout as
+    id 0, the "deleted" object would reappear on the next listing. Callers
+    should invoke this alongside :func:`delete_object_artifact_files` when
+    deleting object id 0.
+
+    Returns:
+        Number of files removed (0, 1, or 2).
+    """
+    removed = 0
+    legacy_cutout = base_dir / f"{uid}_cutout.png"
+    if legacy_cutout.exists():
+        legacy_cutout.unlink()
+        removed += 1
+
+    legacy_glb = glb_dir / f"{uid}.glb"
+    if legacy_glb.exists():
+        legacy_glb.unlink()
+        removed += 1
+
     return removed

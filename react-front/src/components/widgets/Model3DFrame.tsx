@@ -12,23 +12,35 @@ const CAMERA_POSITION = { x: 0, y: 0, z: 7 };
 // Cap device pixel ratio so retina screens do not multiply GPU cost too hard.
 const MAX_PIXEL_RATIO = 2;
 
-// Three-light setup gives soft studio look without needing environment maps.
+// Neutral white studio rig, brighter than before so the object's real
+// texture reads instead of a dark, tinted silhouette. Colors are white on
+// every light -- a cyan/warm tint on key/fill/rim was staining the model.
 const AMBIENT_LIGHT_COLOR = 0xffffff;
-const AMBIENT_LIGHT_INTENSITY = 0.6;
+const AMBIENT_LIGHT_INTENSITY = 1.0;
 
-const KEY_LIGHT_COLOR = 0x9ad9db;
-const KEY_LIGHT_INTENSITY = 2.0;
+const KEY_LIGHT_COLOR = 0xffffff;
+const KEY_LIGHT_INTENSITY = 2.2;
 const KEY_LIGHT_POSITION = { x: 4, y: 6, z: 5 };
 
-const FILL_LIGHT_COLOR = 0x0c8186;
-const FILL_LIGHT_INTENSITY = 0.8;
+const FILL_LIGHT_COLOR = 0xffffff;
+const FILL_LIGHT_INTENSITY = 1.0;
 const FILL_LIGHT_POSITION = { x: -5, y: 2, z: -4 };
 
-const RIM_LIGHT_COLOR = 0xf3d39b;
-const RIM_LIGHT_INTENSITY = 0.45;
+const RIM_LIGHT_COLOR = 0xffffff;
+const RIM_LIGHT_INTENSITY = 0.75;
 const RIM_LIGHT_POSITION = { x: 0, y: -3, z: -6 };
 
+// Follows the camera so whatever face the user orbits toward is never left
+// unlit -- the three fixed world lights above only cover the pose the rig
+// was aimed at.
+const HEADLIGHT_COLOR = 0xffffff;
+const HEADLIGHT_INTENSITY = 0.65;
+
 const MATERIAL_ROUGHNESS = 0.3;
+// glTF defaults to metallicFactor=1; a fully metallic PBR material with no
+// environment map renders near-black under direct lights alone. Clamp it
+// down so brightening the rig above actually shows.
+const MAX_MATERIAL_METALNESS = 0.1;
 
 // The viewer canvas is inflated by this factor around the object's on-stage
 // rect (see model3DFrameStyle in MainPage) and the model is fit to fill
@@ -37,20 +49,13 @@ const MATERIAL_ROUGHNESS = 0.3;
 // that swing outside the original silhouette during an orbit aren't clipped.
 export const MODEL_3D_FRAME_PADDING = 1.5;
 
-// Generated GLBs come back lying flat: the side the source photo saw faces the
-// mesh's -Y axis, with the photo's "up" along +X. Left uncorrected, the viewer
-// opens on an edge-on sliver and the user must orbit ~90 degrees before the
-// object even looks like itself. Mapping -Y onto the camera axis (+Z) and +X
-// onto screen up (+Y) makes the starting pose reproduce the photo, which is
-// also the pose the backend renders at zero rotation
-// (_GLB_TO_VIEW_ROTATION in mesh_render_novel_view_strategy.py).
-const glbToViewRotation = (): THREE.Matrix4 =>
-  new THREE.Matrix4().set(
-    0, 0, -1, 0,
-    1, 0, 0, 0,
-    0, -1, 0, 0,
-    0, 0, 0, 1,
-  );
+// Hunyuan3D-2.1 (the active reconstruction backend) emits glTF-standard Y-up
+// geometry with the photographed face toward +Z, so the starting pose already
+// reproduces the photo -- no correction needed. Kept as a named identity
+// transform (mirrored by _GLB_TO_VIEW_ROTATION in
+// mesh_render_novel_view_strategy.py) so a future generator with a different
+// axis convention has a single place to fix it.
+const glbToViewRotation = (): THREE.Matrix4 => new THREE.Matrix4();
 
 interface Props {
   glbData: ArrayBuffer | null;
@@ -219,6 +224,16 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
     rim.position.set(RIM_LIGHT_POSITION.x, RIM_LIGHT_POSITION.y, RIM_LIGHT_POSITION.z);
     scene.add(rim);
 
+    // Headlight rides on the camera so it always points at whatever the user
+    // is currently orbiting toward. Requires the camera itself to be in the
+    // scene graph -- otherwise the light's parent transform never updates.
+    const headlight = new THREE.DirectionalLight(HEADLIGHT_COLOR, HEADLIGHT_INTENSITY);
+    headlight.position.set(0, 0, 0);
+    headlight.target.position.set(0, 0, -1);
+    camera.add(headlight);
+    camera.add(headlight.target);
+    scene.add(camera);
+
     const group = new THREE.Group();
     scene.add(group);
 
@@ -291,6 +306,7 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
       obj.traverse((child) => {
         if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
           child.material.roughness = MATERIAL_ROUGHNESS;
+          child.material.metalness = Math.min(child.material.metalness, MAX_MATERIAL_METALNESS);
         }
       });
 

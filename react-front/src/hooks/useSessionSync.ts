@@ -15,6 +15,8 @@ interface UseSessionSyncOptions {
   selectedObjectId: number | null;
   setSelectedObjectId: React.Dispatch<React.SetStateAction<number | null>>;
   setBackgroundSrc: React.Dispatch<React.SetStateAction<string | null>>;
+  /** Objects the user deleted client-side; the server still returns them. */
+  isDeleted: (objectId: number) => boolean;
 }
 
 /**
@@ -30,6 +32,7 @@ export function useSessionSync(options: UseSessionSyncOptions) {
     setObjects,
     setSelectedObjectId,
     setBackgroundSrc,
+    isDeleted,
   } = options;
 
   const [lastChanged, setLastChangedState] = useState<string | null>(null);
@@ -66,9 +69,12 @@ export function useSessionSync(options: UseSessionSyncOptions) {
         ]);
 
         const localById = new Map(objectsRef.current.map((o) => [o.objectId, o]));
-        const serverIds = new Set(objList.objects.map((o) => o.object_id));
+        // Client-side deletions have no server counterpart yet, so they must be
+        // re-applied on every reconcile or the object comes straight back.
+        const liveObjects = objList.objects.filter((info) => !isDeleted(info.object_id));
+        const serverIds = new Set(liveObjects.map((o) => o.object_id));
 
-        const merged: CutoutObject[] = objList.objects.map((info) => {
+        const merged: CutoutObject[] = liveObjects.map((info) => {
           const local = localById.get(info.object_id);
           const cutoutSrc = `data:image/${info.format};base64,${info.cutout_b64}`;
           const cutoutAlphaBounds = toCutoutAlphaBounds(info.cutout_bounds);
@@ -117,7 +123,7 @@ export function useSessionSync(options: UseSessionSyncOptions) {
         // Non-fatal — next poll/focus tick tries again.
       }
     },
-    [setObjects, setSelectedObjectId, setBackgroundSrc],
+    [setObjects, setSelectedObjectId, setBackgroundSrc, isDeleted],
   );
 
   const checkNow = useCallback(async () => {

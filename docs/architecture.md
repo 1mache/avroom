@@ -24,8 +24,8 @@ flowchart LR
 
 ### Frontend — [react-front/](../react-front/)
 
-- React 19 + Vite 5 SPA, single route, no router/state libraries.
-- Lets the user pick a file, preview it, click on it, and trigger processing.
+- React 19 + Vite 5 SPA, two screens (dashboard + workspace) plus an upload step, switched with local component state — no router library, no global state library.
+- Lets the user pick a file, preview it, click on it, and trigger processing; the workspace also supports dragging, duplicating, deleting, and rotating individual objects.
 - Talks to the backend through [`react-front/src/api/images.ts`](../react-front/src/api/images.ts) (`fetch`, base URL from `VITE_API_BASE_URL` or `http://127.0.0.1:8000`).
 - Sends **natural** image coordinates (un-scaled by display) so the backend always works in image pixels.
 - See [frontend/](frontend/README.md) for details.

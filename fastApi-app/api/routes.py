@@ -5,10 +5,14 @@ from typing import Annotated
 import uuid
 import logging
 import base64
+import binascii
+import io
+import os
 
 import json
 import cv2
 import numpy as np
+from PIL import Image, UnidentifiedImageError
 
 from fastapi import APIRouter, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
@@ -32,6 +36,7 @@ from core.inference_pool.session_runtime import (
 from core.mask_cache import delete_candidate, delete_candidates
 from core.depth_cache import delete_session_depth_maps
 from core.camera_calib_cache import delete_session_camera_calib, save_camera_calib
+from core.session_preview import write_upload_preview
 from core.object_metadata import (
     ObjectMetadata,
     build_clone_metadata,
@@ -40,6 +45,7 @@ from core.object_metadata import (
     remove_object_index_entry,
     save_object_metadata,
     set_object_name,
+    set_object_offset,
     delete_session_metadata,
 )
 from schemas.image import (
@@ -57,10 +63,11 @@ from schemas.image import (
     SegmentRequest,
     SegmentResponse,
     SessionInfo,
+    SessionPreviewRequest,
     SessionSyncCheckRequest,
     SessionSyncCheckResponse,
     SetNameRequest,
-    SetObjectNameRequest,
+    UpdateObjectRequest,
     RescaleByDepthRequest,
     RescaleByDepthResponse,
     UidCacheStatusResponse,
@@ -68,6 +75,7 @@ from schemas.image import (
 from core.object_storage import (
     copy_object_artifacts,
     current_background_path,
+    delete_legacy_object_artifacts,
     delete_object_artifact_files,
     list_object_ids,
     next_object_id,
@@ -75,6 +83,7 @@ from core.object_storage import (
     object_glb_path,
     resolve_object_cutout_path,
     resolve_object_glb_path,
+    session_preview_path,
 )
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from settings import (
@@ -85,6 +94,7 @@ from settings import (
     get_session_last_changed,
     get_sessions_file,
     evaluate_session_sync,
+    is_session_registered,
     load_names,
     register_uid,
     remove_session_name,
@@ -204,6 +214,8 @@ async def upload_image(
 
     register_uid(image_id)
     last_changed = touch_session(image_id)
+
+    write_upload_preview(storage_dir, image_id, file_bytes)
 
     if get_camera_calibration_enabled():
         try:
@@ -470,7 +482,7 @@ async def delete_session(uid: str) -> Response:
             path.unlink(missing_ok=True)
             removed += 1
 
-        for suffix in ("_background.png", "_cutout.png"):
+        for suffix in ("_background.png", "_cutout.png", "_preview.jpg"):
             p = storage_dir / f"{uid}{suffix}"
             if p.exists():
                 p.unlink()
@@ -601,6 +613,8 @@ def _metadata_to_response(
         created_at=metadata.created_at,
         has_3d=has_3d,
         cutout_bounds=cutout_bounds,
+        offset_x=metadata.offset_x,
+        offset_y=metadata.offset_y,
     )
 
 
@@ -624,18 +638,38 @@ async def get_object_by_uuid_endpoint(object_uuid: str) -> ObjectMetadataRespons
 
 
 @router.patch("/objects/{object_uuid}", response_model=ObjectMetadataResponse)
-async def rename_object(object_uuid: str, request: SetObjectNameRequest) -> ObjectMetadataResponse:
-    """Update the optional name on one object identified by UUID."""
-    logger.info("Object rename requested: uuid=%s name=%r", object_uuid, request.name)
+async def update_object(object_uuid: str, request: UpdateObjectRequest) -> ObjectMetadataResponse:
+    """Partially update one object identified by UUID: name and/or drag offset.
+
+    Only fields actually present in the request body are touched --
+    ``request.model_fields_set`` distinguishes an omitted field from an
+    explicit ``null``, so a drag-persist call (offset only) can never
+    accidentally clear the name, and a rename call (name only) can never
+    accidentally reset the offset back to (0, 0).
+    """
+    logger.info(
+        "Object update requested: uuid=%s fields=%s",
+        object_uuid,
+        sorted(request.model_fields_set),
+    )
     storage_dir = get_image_storage_dir()
-    try:
+
+    metadata = get_object_by_uuid(storage_dir, object_uuid)
+    if metadata is None:
+        logger.warning("Object update failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
+
+    fields = request.model_fields_set
+    if "name" in fields:
         metadata = set_object_name(storage_dir, object_uuid, request.name)
-    except FileNotFoundError as exc:
-        logger.warning("Object rename failed — not found: uuid=%s", object_uuid)
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if "offset_x" in fields or "offset_y" in fields:
+        next_offset_x = request.offset_x if request.offset_x is not None else metadata.offset_x
+        next_offset_y = request.offset_y if request.offset_y is not None else metadata.offset_y
+        metadata = set_object_offset(storage_dir, object_uuid, next_offset_x, next_offset_y)
+
     touch_session(metadata.session_id)
     response = _metadata_to_response(metadata, storage_dir, get_3d_storage_dir())
-    logger.info("Object renamed: uuid=%s name=%r", object_uuid, request.name)
+    logger.info("Object updated: uuid=%s fields=%s", object_uuid, sorted(fields))
     return response
 
 
@@ -678,6 +712,12 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
             ),
         )
 
+    # Drives a small leftward nudge on the clone's position (build_clone_metadata)
+    # so it doesn't land exactly on top of its source. None (undecodable cutout)
+    # falls back to copying the source's offset unchanged -- never worth failing
+    # the duplicate over.
+    source_bounds = extract_cutout_bounds_from_png_bytes(source_cutout.read_bytes())
+
     new_object_id: int | None = None
     clone_metadata: ObjectMetadata | None = None
     try:
@@ -692,7 +732,7 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
 
         try:
             new_object_id = next_object_id(storage_dir, source.session_id)
-            clone_metadata = build_clone_metadata(storage_dir, source, new_object_id)
+            clone_metadata = build_clone_metadata(storage_dir, source, new_object_id, source_bounds)
             copy_object_artifacts(
                 base_dir=storage_dir,
                 glb_dir=three_d_dir,
@@ -743,6 +783,78 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
         clone_metadata.name,
     )
     return DuplicateObjectResponse(object_uuid=clone_metadata.uuid)
+
+
+@router.delete("/objects/{object_uuid}", status_code=204)
+def delete_object(object_uuid: str) -> Response:
+    """Permanently delete one object and all its per-object artifacts.
+
+    Removes the cutout, any GLB, all novel-view / preview caches, the
+    metadata JSON, and the UUID index entry. Session-level artifacts —
+    background canvas, depth cache, camera calibration, the original upload,
+    and the dashboard preview thumbnail — are shared with surviving objects
+    and are never touched here. In particular the background canvas already
+    has this object's region inpainted out; deleting the object does not
+    restore those pixels, it only removes the object's own cutout layer.
+
+    Plain ``def``, not ``async def``: this blocks on the canvas writer lock,
+    same as ``duplicate_object`` (see ``tests/test_concurrency.py``).
+    """
+    logger.info("Object delete requested: uuid=%s", object_uuid)
+    storage_dir = get_image_storage_dir()
+    three_d_dir = get_3d_storage_dir()
+
+    target = get_object_by_uuid(storage_dir, object_uuid)
+    if target is None:
+        logger.warning("Object delete failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(
+            status_code=404,
+            detail=f"Object not found for uuid='{object_uuid}'",
+        )
+
+    try:
+        try:
+            acquire_canvas_writer(target.session_id)
+        except SessionConflictError as exc:
+            logger.warning(
+                "Object delete rejected due to canvas writer timeout: uuid=%s",
+                object_uuid,
+            )
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        try:
+            removed = delete_object_artifact_files(
+                base_dir=storage_dir,
+                glb_dir=three_d_dir,
+                uid=target.session_id,
+                object_id=target.object_id,
+                include_metadata=True,
+            )
+            if target.object_id == 0:
+                removed += delete_legacy_object_artifacts(
+                    base_dir=storage_dir,
+                    glb_dir=three_d_dir,
+                    uid=target.session_id,
+                )
+            remove_object_index_entry(object_uuid)
+            touch_session(target.session_id)
+        finally:
+            release_canvas_writer(target.session_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Object delete failed: uuid=%s", object_uuid)
+        raise HTTPException(status_code=500, detail=f"Object delete failed: {exc}") from exc
+
+    logger.info(
+        "Object deleted: uuid=%s session_id=%s object_id=%d files_removed=%d",
+        object_uuid,
+        target.session_id,
+        target.object_id,
+        removed,
+    )
+    return Response(status_code=204)
+
 
 @router.post("/objects/{object_uuid}/rescale-by-depth", response_model=RescaleByDepthResponse)
 def rescale_object_by_depth(
@@ -840,6 +952,8 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
                     format="png",
                     cutout_bounds=cutout_bounds,
                     has_3d=has_3d,
+                    offset_x=meta.offset_x if meta is not None else 0.0,
+                    offset_y=meta.offset_y if meta is not None else 0.0,
                 )
             )
         except FileNotFoundError as exc:
@@ -946,4 +1060,69 @@ async def get_original_image(uid: str) -> FileResponse:
     media_type = "image/jpeg" if suffix in ("jpg", "jpeg") else f"image/{suffix}"
     logger.info("Original image served: uid=%s path=%s", uid, path)
     return FileResponse(path, media_type=media_type)
+
+
+@router.get("/{uid}/preview")
+async def get_session_preview(uid: str) -> FileResponse:
+    """Serve the dashboard thumbnail for the given UID.
+
+    Written at upload time (a downscaled copy of the original) and
+    overwritten by the frontend after each edit settles, so it always shows
+    the room roughly as the user left it. Returns 404 when absent — callers
+    (the dashboard card) fall back to a placeholder rather than treating this
+    as an error.
+    """
+    logger.info("Session preview requested: uid=%s", uid)
+    path = session_preview_path(get_image_storage_dir(), uid)
+    if not path.exists():
+        logger.warning("Session preview not found: uid=%s path=%s", uid, path)
+        raise HTTPException(status_code=404, detail="Preview not found")
+    logger.info("Session preview served: uid=%s path=%s", uid, path)
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@router.post("/{uid}/preview", status_code=204)
+async def save_session_preview(uid: str, request: SessionPreviewRequest) -> Response:
+    """Store a client-composited dashboard thumbnail for the given UID.
+
+    Called fire-and-forget from the frontend, debounced, after edits settle
+    (see ``composeSessionPreview`` / ``saveSessionPreview`` in the React app).
+    Does not call ``touch_session``: the mutation that triggered this preview
+    already bumped ``last_changed`` well before the debounced capture runs,
+    so the dashboard's cache-buster is already correct, and bumping it again
+    here would spin an extra, pointless sync-check reconcile in the open
+    workspace.
+    """
+    logger.info("Session preview save requested: uid=%s", uid)
+    if not is_session_registered(uid):
+        logger.warning("Session preview save failed — unknown uid: %s", uid)
+        raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'")
+
+    try:
+        image_bytes = base64.b64decode(request.image_b64, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        logger.warning("Session preview save rejected — invalid base64: uid=%s detail=%s", uid, exc)
+        raise HTTPException(status_code=422, detail="image_b64 is not valid base64.") from exc
+
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as img:
+            img.verify()
+    except (UnidentifiedImageError, OSError) as exc:
+        logger.warning("Session preview save rejected — not a valid image: uid=%s detail=%s", uid, exc)
+        raise HTTPException(status_code=422, detail="image_b64 does not decode to a valid image.") from exc
+
+    storage_dir = get_image_storage_dir()
+    storage_dir.mkdir(parents=True, exist_ok=True)
+    path = session_preview_path(storage_dir, uid)
+    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
+    try:
+        tmp_path.write_bytes(image_bytes)
+        os.replace(tmp_path, path)
+    except OSError as exc:
+        logger.error("Session preview save failed: uid=%s error=%s", uid, exc)
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Preview save failed: {exc}") from exc
+
+    logger.info("Session preview saved: uid=%s path=%s size_bytes=%d", uid, path, len(image_bytes))
+    return Response(status_code=204)
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   cacheNovelViewPreview,
+  deleteObject as deleteObjectRequest,
   duplicateObject as duplicateObjectRequest,
   getSessionObjects,
   inpaintMask,
@@ -28,6 +29,21 @@ const FALLBACK_SOURCE_ELEVATION_DEG = 15;
 // Zoom/radius delta is not exposed in the rotate UI -- always request the
 // model's default camera distance.
 const NO_RADIUS_DELTA = 0;
+
+// A sync reconcile can pull a freshly committed object down from the server
+// before the request that created it has even returned, so "add this object"
+// has to mean upsert. Blind appends produce two rows with the same id.
+const upsertObject = (objects: CutoutObject[], next: CutoutObject): CutoutObject[] => {
+  const index = objects.findIndex((o) => o.objectId === next.objectId);
+  if (index === -1) {
+    return [...objects, next];
+  }
+  // Keep whatever local-only state the reconciled copy already accumulated
+  // (drag offset, hidden flag, 3D model) rather than resetting it.
+  const existing = objects[index];
+  const merged = { ...next, offset: existing.offset, hidden: existing.hidden, glbData: existing.glbData ?? next.glbData };
+  return objects.map((o, i) => (i === index ? merged : o));
+};
 
 export const toCutoutAlphaBounds = (
   bounds: CutoutBounds | null | undefined,
@@ -73,6 +89,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   const [segmentState, setSegmentState] = useState<SegmentPickerState>({ status: "idle" });
   const [backgroundSrc, setBackgroundSrc] = useState<string | null>(null);
   const [isDuplicating, setIsDuplicating] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const imageIdRef = useRef(imageId);
   useEffect(() => {
@@ -89,6 +106,14 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   // against out-of-order *network* delivery of concurrent responses.
   const highestCommittedObjectIdRef = useRef(-1);
 
+  // Object ids with a DELETE request in flight. A reconcile can land between
+  // the local removal and the server actually processing the delete, and
+  // without this set that reconcile would resurrect the object from the
+  // still-current server object list. Once the request settles (success or
+  // failure) the id is dropped -- server truth takes over from there, so a
+  // later object reusing the same freed id isn't permanently hidden.
+  const deletedObjectIdsRef = useRef<Set<number>>(new Set());
+
   const resetSession = useCallback(() => {
     setObjects([]);
     setSelectedObjectId(null);
@@ -96,8 +121,49 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     setSegmentState({ status: "idle" });
     setBackgroundSrc(null);
     setIsDuplicating(false);
+    setIsDeleting(false);
     highestCommittedObjectIdRef.current = -1;
+    deletedObjectIdsRef.current = new Set();
   }, []);
+
+  const isObjectDeleted = useCallback((objectId: number) => deletedObjectIdsRef.current.has(objectId), []);
+
+  /**
+   * Permanently deletes an object: calls DELETE /images/objects/{uuid}, then
+   * removes it locally on success. Mirrors duplicateObject's shape (busy
+   * flag, uuid lookup via objectsRef, imageIdRef guards around the await).
+   */
+  const deleteObject = useCallback(
+    async (objectId: number) => {
+      const currentImageId = imageIdRef.current;
+      const target = objectsRef.current.find((o) => o.objectId === objectId);
+      if (!currentImageId || !target?.uuid || isDeleting) {
+        return;
+      }
+
+      deletedObjectIdsRef.current.add(objectId);
+      setIsDeleting(true);
+      try {
+        await deleteObjectRequest(target.uuid);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+        setObjects((prev) => prev.filter((o) => o.objectId !== objectId));
+        setSelectedObjectId((current) => (current === objectId ? null : current));
+        onMutated?.();
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "generic");
+        }
+      } finally {
+        deletedObjectIdsRef.current.delete(objectId);
+        if (imageIdRef.current === currentImageId) {
+          setIsDeleting(false);
+        }
+      }
+    },
+    [isDeleting, onError, onMutated],
+  );
 
   const loadRestoredObjects = useCallback((restored: ObjectInfo[]) => {
     const loaded: CutoutObject[] = restored.map((info) => ({
@@ -110,7 +176,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       glbData: null,
       rotation: null,
       hidden: false,
-      offset: { x: 0, y: 0 },
+      offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
       sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
     }));
     setObjects(loaded);
@@ -200,7 +266,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           };
 
           // Newly created object auto-selects — the user just made it.
-          setObjects((prev) => [...prev, newObject]);
+          setObjects((prev) => upsertObject(prev, newObject));
           setSelectedObjectId(result.object_id);
 
           if (result.object_id > highestCommittedObjectIdRef.current) {
@@ -220,19 +286,23 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [onError, onMutated],
   );
 
-  const toggleHidden = useCallback((objectId: number) => {
-    setObjects((prev) => {
-      const target = prev.find((o) => o.objectId === objectId);
-      if (!target) {
-        return prev;
-      }
-      const willBeHidden = !target.hidden;
-      if (willBeHidden) {
-        setSelectedObjectId((current) => (current === objectId ? null : current));
-      }
-      return prev.map((o) => (o.objectId === objectId ? { ...o, hidden: willBeHidden } : o));
-    });
-  }, []);
+  const toggleHidden = useCallback(
+    (objectId: number) => {
+      setObjects((prev) => {
+        const target = prev.find((o) => o.objectId === objectId);
+        if (!target) {
+          return prev;
+        }
+        const willBeHidden = !target.hidden;
+        if (willBeHidden) {
+          setSelectedObjectId((current) => (current === objectId ? null : current));
+        }
+        return prev.map((o) => (o.objectId === objectId ? { ...o, hidden: willBeHidden } : o));
+      });
+      onMutated?.();
+    },
+    [onMutated],
+  );
 
   const updateOffset = useCallback((objectId: number, offset: ClickPosition) => {
     setObjects((prev) => prev.map((o) => (o.objectId === objectId ? { ...o, offset } : o)));
@@ -380,12 +450,14 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           glbData: source.glbData,
           rotation: null,
           hidden: false,
-          offset: { ...source.offset },
+          // Server-computed nudge (build_clone_metadata), not a raw copy of
+          // source.offset -- the clone lands beside its source, not on it.
+          offset: { x: info.offset_x ?? source.offset.x, y: info.offset_y ?? source.offset.y },
           sourceElevationDeg:
             info.source_elevation_deg ?? source.sourceElevationDeg ?? FALLBACK_SOURCE_ELEVATION_DEG,
         };
 
-        setObjects((prev) => [...prev, newObject]);
+        setObjects((prev) => upsertObject(prev, newObject));
         setSelectedObjectId(info.object_id);
         if (info.object_id > highestCommittedObjectIdRef.current) {
           highestCommittedObjectIdRef.current = info.object_id;
@@ -413,6 +485,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     hasPendingWork:
       pendingJobs.length > 0 ||
       isDuplicating ||
+      isDeleting ||
       objects.some((o) => o.rotation?.status === "pending"),
     segmentState,
     isSegmenting: segmentState.status === "loading",
@@ -429,6 +502,9 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     updateOffset,
     renameObject,
     duplicateObject,
+    deleteObject,
+    isDeleting,
+    isObjectDeleted,
     resetSession,
     loadRestoredObjects,
   };

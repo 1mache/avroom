@@ -16,6 +16,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
+from schemas.image import CutoutBounds
 from settings import get_image_storage_dir
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,14 @@ class ObjectMetadata(BaseModel):
                 "0 → '<label>-copy', 1 → '<label>-copy1', etc. None for non-clones."
             ),
         ),
+    ]
+    offset_x: Annotated[
+        float,
+        Field(default=0.0, description="Persisted drag offset X from center, natural-image pixels."),
+    ]
+    offset_y: Annotated[
+        float,
+        Field(default=0.0, description="Persisted drag offset Y from center, natural-image pixels."),
     ]
 
 
@@ -198,6 +207,24 @@ def set_object_name(base_dir: Path, object_uuid: str, name: str | None) -> Objec
     return updated
 
 
+def set_object_offset(base_dir: Path, object_uuid: str, offset_x: float, offset_y: float) -> ObjectMetadata:
+    """Update the persisted drag offset on an existing object metadata record."""
+    metadata = get_object_by_uuid(base_dir, object_uuid)
+    if metadata is None:
+        raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
+
+    updated = metadata.model_copy(update={"offset_x": offset_x, "offset_y": offset_y})
+    path = object_meta_path(base_dir, updated.session_id, updated.object_id)
+    path.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
+    logger.info(
+        "Updated object offset: uuid=%s offset_x=%.2f offset_y=%.2f",
+        object_uuid,
+        offset_x,
+        offset_y,
+    )
+    return updated
+
+
 def set_object_average_depth(base_dir: Path, object_uuid: str, average_depth: float) -> ObjectMetadata:
     """Update ``average_depth`` after a depth-based rescale placement."""
     metadata = get_object_by_uuid(base_dir, object_uuid)
@@ -257,6 +284,8 @@ def create_object_metadata(
     clone_root_uuid: str | None = None,
     clone_root_label: str | None = None,
     clone_index: int | None = None,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
 ) -> ObjectMetadata:
     """Build a new metadata record with a fresh UUID and timestamp."""
     return ObjectMetadata(
@@ -271,6 +300,8 @@ def create_object_metadata(
         clone_root_uuid=clone_root_uuid,
         clone_root_label=clone_root_label,
         clone_index=clone_index,
+        offset_x=offset_x,
+        offset_y=offset_y,
     )
 
 
@@ -351,15 +382,50 @@ def resolve_clone_lineage(
     return root_uuid, root_label, next_index
 
 
+def _nudge_clone_offset(source: ObjectMetadata, bounds: CutoutBounds | None) -> tuple[float, float]:
+    """Nudge a clone's X offset left of the source by ~15% of its own width.
+
+    Falls back to nudging right if there's no room on the left, and to the
+    source's exact offset if there's no room on either side (or bounds
+    couldn't be determined) -- a clone landing exactly on its source is a
+    rare degenerate case, never worth failing the duplicate over. Vertical
+    offset is always copied unchanged (horizontal nudge only).
+    """
+    if bounds is None:
+        return source.offset_x, source.offset_y
+
+    width = bounds.right - bounds.left
+    nudge = max(12.0, width * 0.15)
+    min_x = -bounds.left
+    max_x = bounds.natural_width - bounds.right
+
+    left_candidate = source.offset_x - nudge
+    if left_candidate >= min_x:
+        return left_candidate, source.offset_y
+
+    right_candidate = source.offset_x + nudge
+    if right_candidate <= max_x:
+        return right_candidate, source.offset_y
+
+    return source.offset_x, source.offset_y
+
+
 def build_clone_metadata(
     base_dir: Path,
     source: ObjectMetadata,
     new_object_id: int,
+    source_bounds: CutoutBounds | None = None,
 ) -> ObjectMetadata:
-    """Build metadata for a clone of *source* with a fresh UUID and nickname."""
+    """Build metadata for a clone of *source* with a fresh UUID and nickname.
+
+    *source_bounds* (the source cutout's alpha bounds, if the caller already
+    decoded it) drives a small leftward nudge on the clone's position so it
+    doesn't land exactly on top of the source -- see _nudge_clone_offset.
+    """
 
     root_uuid, root_label, clone_index = resolve_clone_lineage(base_dir, source)
     clone_name = format_clone_name(root_label, clone_index)
+    offset_x, offset_y = _nudge_clone_offset(source, source_bounds)
     return create_object_metadata(
         session_id=source.session_id,
         object_id=new_object_id,
@@ -370,6 +436,8 @@ def build_clone_metadata(
         clone_root_uuid=root_uuid,
         clone_root_label=root_label,
         clone_index=clone_index,
+        offset_x=offset_x,
+        offset_y=offset_y,
     )
 
 

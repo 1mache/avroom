@@ -17,9 +17,12 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `GET` | `/images/{uid}/background` | path `uid` | PNG file |
 | `GET` | `/images/{uid}/cutout` | path `uid` | latest object cutout PNG |
 | `GET` | `/images/{uid}/original` | path `uid` | original image file |
+| `GET` | `/images/{uid}/preview` | path `uid` | dashboard thumbnail JPEG (404 if none yet) |
+| `POST` | `/images/{uid}/preview` | `SessionPreviewRequest` | 204 No Content |
 | `GET` | `/images/objects/{object_uuid}` | path `object_uuid` | `ObjectMetadataResponse` |
-| `PATCH` | `/images/objects/{object_uuid}` | `SetObjectNameRequest` | `ObjectMetadataResponse` |
+| `PATCH` | `/images/objects/{object_uuid}` | `UpdateObjectRequest` | `ObjectMetadataResponse` |
 | `POST` | `/images/objects/{object_uuid}/duplicate` | path `object_uuid` | `DuplicateObjectResponse` |
+| `DELETE` | `/images/objects/{object_uuid}` | path `object_uuid` | 204 No Content |
 | `POST` | `/images/objects/{object_uuid}/rescale-by-depth` | `RescaleByDepthRequest` | `RescaleByDepthResponse` |
 | `POST` | `/images/novel-view` | `NovelViewRequest` | `NovelViewResponse` |
 | `POST` | `/3d/test-3d` | `{"uid":"...", "object_id": 0}` | GLB bytes |
@@ -93,13 +96,15 @@ Missing individual cutouts are skipped with a WARNING log — the response is st
 
 ## `GET /images/objects/{object_uuid}`
 
-Returns one object's persisted metadata (`ObjectMetadataResponse`): uuid, session id, object id, optional name, `average_depth`, `content_hash`, `created_at`, `has_3d`, and derived `cutout_bounds` from the on-disk cutout PNG.
+Returns one object's persisted metadata (`ObjectMetadataResponse`): uuid, session id, object id, optional name, `average_depth`, `content_hash`, `created_at`, `has_3d`, derived `cutout_bounds` from the on-disk cutout PNG, and persisted `offset_x`/`offset_y` (drag position, natural-image pixels; `(0, 0)` until the object is dragged and its offset persisted).
 
 Returns `404` when the UUID is absent from `object_index.json`.
 
 ## `PATCH /images/objects/{object_uuid}`
 
-Updates the optional human-readable name on one object. Body: `SetObjectNameRequest` (`name` string or `null` to clear). Returns updated `ObjectMetadataResponse`. Bumps the parent session's `last_changed` timestamp.
+Partial update for one object: name and/or drag offset. Body: `UpdateObjectRequest` — `name` (string or `null` to clear), `offset_x`/`offset_y` (floats, natural-image pixels). Returns updated `ObjectMetadataResponse`. Bumps the parent session's `last_changed` timestamp.
+
+Each field is independently optional, and the handler distinguishes "omitted from the request" from "explicitly sent" via `request.model_fields_set` rather than relying on Pydantic defaults — necessary because `name: null` means "clear the name" while an omitted `offset_x`/`offset_y` means "leave it alone." A drag-persist call sends only `{offset_x, offset_y}`; a rename call sends only `{name}`; neither can accidentally reset the other's field. The frontend's `finishDrag` (`WorkspaceScreen.tsx`) fires this after every drag; `renameObject`/`setObjectName` fires it after a rename.
 
 ## `POST /images/objects/{object_uuid}/duplicate`
 
@@ -111,16 +116,33 @@ Behavior:
 2. Resolve the source cutout (`{uid}_{object_id}_cutout.png`); **404** if missing.
 3. Acquire the session canvas writer (no region lease — clone has no mask). **409** on writer timeout.
 4. Allocate the next sequential `object_id`.
-5. Build clone metadata: fresh UUID/`created_at`, copied `average_depth` / `source_elevation_deg` / `content_hash`, plus sticky lineage fields (`clone_root_uuid`, `clone_root_label`, `clone_index`).
+5. Build clone metadata: fresh UUID/`created_at`, copied `average_depth` / `source_elevation_deg` / `content_hash`, plus sticky lineage fields (`clone_root_uuid`, `clone_root_label`, `clone_index`), plus a nudged `offset_x`/`offset_y` (see below).
 6. Nickname: first clone is `"<root>-copy"`; later clones are `"<root>-copy1"`, `"<root>-copy2"`, …. Unnamed roots use `"Object <object_id>"` as the root label. Cloning a clone (or a renamed copy) keeps the original root label/ordinal sequence.
 7. Copy per-object artifacts under the writer: cutout (required), optional GLB, and any novel-view / preview PNG caches (timestamps preserved via `copy2`).
 8. Persist clone metadata JSON and register the new UUID in `object_index.json`.
 9. `touch_session(uid)` so sync clients refresh.
 10. On failure after allocation, delete partial destination artifacts and prune any index entry; return **500**.
 
+**Position nudge:** the clone doesn't land exactly on its source. `duplicate_object` decodes the source cutout PNG (`extract_cutout_bounds_from_png_bytes`) to get the canvas size and the object's alpha bounds, then `build_clone_metadata` / `_nudge_clone_offset` (`core/object_metadata.py`) tries shifting the clone's `offset_x` left by `max(12, bbox_width * 0.15)` pixels; if that would push it past the canvas edge, it tries the same shift right instead; if neither fits, the clone keeps the source's exact offset. `offset_y` is always copied unchanged (horizontal nudge only). This is atomic with clone creation — no separate request, no window where the clone exists un-nudged.
+
 Does **not** rewrite `{uid}_background.png`, depth `.npy` caches, camera calib, the original upload, or temp segment masks. Depth is shared through the copied `content_hash`.
 
-Not wired in the React frontend today; session sync can discover the new object after `last_changed` advances.
+## `DELETE /images/objects/{object_uuid}`
+
+Permanently deletes one object and every per-object artifact: the numbered cutout, GLB, all novel-view/preview caches, the metadata JSON, and the `object_index.json` UUID entry. For a legacy `object_id == 0` it also removes the unnumbered `{uid}_cutout.png` / `{uid}.glb` pair, so the object doesn't reappear (`list_object_ids` counts a present legacy cutout as id 0).
+
+**Does not** touch anything session-scoped: the background canvas keeps the object's inpainted hole (deletion never restores original pixels), the depth cache, camera calibration, the original upload, and the dashboard preview thumbnail all survive untouched. The preview goes briefly stale — the frontend reposts it on its own debounce, and `touch_session` alone is enough to invalidate its cache-buster.
+
+Behavior:
+
+1. Resolve `object_uuid` via `get_object_by_uuid`; **404** if unknown. A second delete of the same uuid also 404s (idempotent-ish).
+2. Acquire the session's canvas writer lock (same sandwich as `duplicate_object`); **409** on timeout. Needed because deletion changes what `list_object_ids`/`next_object_id` see, and a concurrent inpaint or duplicate could otherwise race an id allocation.
+3. Delete artifacts, remove the index entry, `touch_session` — all inside the lock.
+4. **500** on unexpected failure.
+
+Plain `def`, not `async def` — it blocks on the writer lock; see `tests/test_concurrency.py`. Freeing an id makes it eligible for reuse by the next inpaint (ids are `max(existing)+1`); no id is ever reserved.
+
+Known cosmetic edge: deleting a clone root leaves any surviving clones pointing at a dead `clone_root_uuid`, and since clone-name counting only scans survivors, a later duplicate can reuse a freed `-copy` name. Not repaired — no lineage cleanup runs on delete.
 
 ## `POST /images/objects/{object_uuid}/rescale-by-depth`
 
@@ -211,6 +233,7 @@ Client-visible durable mutations bump `last_changed` through `touch_session` in 
 | `POST /images/{uid}/name` | `api/routes.py` |
 | `PATCH /images/objects/{object_uuid}` | `api/routes.py` |
 | `POST /images/objects/{object_uuid}/duplicate` | `api/routes.py` |
+| `DELETE /images/objects/{object_uuid}` | `api/routes.py` |
 | `POST /images/objects/{object_uuid}/rescale-by-depth` | `api/routes.py` |
 | `POST /3d/test-3d` | `api/model_3d.py` |
 | `POST /images/novel-view` (cache miss only — a cache hit changes nothing and skips the touch) | `api/novel_view.py` |
@@ -220,6 +243,21 @@ These do **not** bump session dirty state: `POST /images/segment` candidate cach
 ## `GET /images/sessions`
 
 Returns all registered UIDs enriched with human-readable names from `names.json` and each session's `last_changed` timestamp when recorded. Uids without a saved name have `name: null`.
+
+## `GET /images/{uid}/preview` and `POST /images/{uid}/preview`
+
+Dashboard thumbnail for one session — the room roughly as the user left it, so cards on the dashboard are recognizable rather than name-only.
+
+- **`GET`** serves `{uid}_preview.jpg`. Returns **404** when the file doesn't exist yet; the dashboard card falls back to a placeholder rather than treating this as an error. Callers add a `?t=<last_changed>` query param purely as a browser cache-buster — the server ignores it.
+- **`POST`** stores a client-composited thumbnail. Body: `SessionPreviewRequest` (`image_b64`, base64 JPEG, no `data:` prefix).
+  1. **404** if `uid` isn't registered in `sessions.json`.
+  2. **422** if `image_b64` isn't valid base64, or if the decoded bytes don't open as an image (`PIL.Image.verify()`).
+  3. Written atomically (temp file + `os.replace`) to `{uid}_preview.jpg`.
+  4. **Does not** call `touch_session` — the frontend fires this 500ms after the mutation that already bumped `last_changed` (`PREVIEW_DEBOUNCE_MS` in `WorkspaceScreen.tsx`'s debounced capture), so the cache-buster the dashboard reads is already correct.
+
+**`POST /images/upload`** also writes an initial thumbnail — a downscaled copy of the original upload via `core/session_preview.py::write_upload_preview` — so a session has a preview from the moment it's created, before any edit. Failure here is logged and swallowed (non-fatal, same shape as camera calibration), never fails the upload.
+
+`DELETE /images/{uid}` removes `{uid}_preview.jpg` along with the rest of the session's artifacts.
 
 ## `GET /images/{uid}/cache`
 

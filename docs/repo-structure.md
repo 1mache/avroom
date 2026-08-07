@@ -60,23 +60,38 @@ react-front/
 ├── index.html
 ├── package.json
 ├── tsconfig.json
-├── public/             - favicon, icons
+├── public/             - favicon, icons, tab logo
 └── src/
     ├── main.tsx        - React root
-    ├── App.tsx         - composition root -> MainPage
+    ├── App.tsx         - route switch: dashboard / upload / workspace (no router lib)
     ├── style.css       - single global stylesheet
+    ├── assets/         - logo image
     ├── api/images.ts   - fetch wrappers for the backend
-    ├── types/api.ts    - mirror of backend Pydantic models
-    ├── components/
-    │   ├── layout/MainPage.tsx
-    │   └── widgets/
-    │       ├── UploadFrame.tsx
-    │       ├── MaskPickerModal.tsx
-    │       ├── SessionPicker.tsx
-    │       ├── Model3DFrame.tsx
-    │       └── ObjectPanel.tsx
-    ├── assets/         - images
-    └── counter.ts      - leftover Vite scaffold, unused
+    ├── types/
+    │   ├── api.ts      - mirror of backend Pydantic models
+    │   └── session.ts  - client-only view models (CutoutObject, rotation, etc.)
+    ├── hooks/
+    │   ├── useSessionJobs.ts    - objects, selection, segment/inpaint/duplicate/delete/rotate
+    │   ├── useSessionSync.ts    - poll + focus/visibility reconcile against server truth
+    │   └── useConflictNotices.ts
+    ├── utils/
+    │   ├── stageGeometry.ts     - contain-fit / natural-pixel / hit-test math
+    │   ├── preview.ts           - dashboard thumbnail compositing
+    │   └── time.ts
+    └── components/
+        ├── layout/
+        │   ├── DashboardScreen.tsx
+        │   ├── UploadScreen.tsx
+        │   └── WorkspaceScreen.tsx
+        ├── workspace/
+        │   ├── Toolbar.tsx
+        │   └── ObjectRail.tsx
+        ├── dashboard/SessionCard.tsx
+        ├── widgets/
+        │   ├── ConfirmDialog.tsx
+        │   ├── MaskPickerModal.tsx
+        │   └── Model3DFrame.tsx
+        └── icons.tsx
 ```
 
 See [frontend/README.md](frontend/README.md) for details.

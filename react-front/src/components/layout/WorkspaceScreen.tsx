@@ -68,7 +68,7 @@ const errorMessage = (error: unknown, fallback: string): string =>
 // How long to wait after the last edit before storing a fresh dashboard
 // thumbnail — several mutations often land together (an inpaint plus its sync
 // reconcile), and only the settled result is worth compositing.
-const PREVIEW_DEBOUNCE_MS = 1500;
+const PREVIEW_DEBOUNCE_MS = 500;
 
 export interface WorkspaceScreenProps {
   /** Session to edit. The workspace never picks one itself. */
@@ -269,8 +269,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
         const composed = await composeSessionPreview(backgroundSrc, layers, size);
         if (composed) {
-          await saveSessionPreview(uid, composed).catch(() => {
-            // Best-effort: the card just keeps its previous thumbnail.
+          await saveSessionPreview(uid, composed).catch((err: unknown) => {
+            // Best-effort: the card just keeps its previous thumbnail. Still
+            // logged so a broken preview pipeline doesn't fail silently.
+            console.warn("saveSessionPreview failed; dashboard thumbnail not updated.", err);
           });
         }
       }, PREVIEW_DEBOUNCE_MS);

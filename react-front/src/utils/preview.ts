@@ -14,22 +14,44 @@ export interface PreviewLayer {
   offset: ClickPosition;
 }
 
-// Cutouts are data: URLs, but the background is usually served from the API on
-// a different origin — without crossOrigin the canvas taints and toDataURL
-// throws instead of returning pixels.
-const loadForCanvas = (src: string): Promise<HTMLImageElement> =>
-  new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`Failed to load ${src}`));
-    img.src = src;
-  });
+// Cutouts are data: URLs, but the background is served from the API on a
+// different origin. The stage's own <img src={photoSrc}> (no crossOrigin)
+// loads that *exact same, cache-busted* URL moments before this runs --
+// useSessionSync appends a fresh `?t=<lastChanged>` right after the mutation
+// that also triggers this capture. Chrome's HTTP cache is keyed by URL, not
+// by request mode, so a plain 'cors' fetch of that identical URL can reuse
+// the opaque (no-cors) cache entry the <img> just created -- an opaque
+// response carries no CORS headers, so this fetch then fails CORS even
+// though the server's real response has them (verified independently).
+// `cache: "reload"` forces a fresh network round-trip, bypassing that
+// cached entry entirely. Confirmed via browser devtools: this is the actual
+// cause of "delete/duplicate/drag never update the dashboard thumbnail".
+const loadForCanvas = async (src: string): Promise<HTMLImageElement> => {
+  const response = await fetch(src, { mode: "cors", cache: "reload" });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch ${src}: ${response.status}`);
+  }
+  const blob = await response.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    return await new Promise<HTMLImageElement>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error(`Failed to decode ${src}`));
+      img.src = objectUrl;
+    });
+  } finally {
+    // Safe once the Image has decoded -- drawImage below reads the already
+    // rasterized bitmap, not the URL.
+    URL.revokeObjectURL(objectUrl);
+  }
+};
 
 /**
  * Returns base64 JPEG (no data: prefix, matching the API's `*_b64` fields), or
  * null when the canvas can't be read — a missing thumbnail is never worth
- * interrupting an edit for.
+ * interrupting an edit for. Failures are logged (not thrown) so a silently
+ * broken preview pipeline is at least visible in devtools.
  */
 export async function composeSessionPreview(
   backgroundSrc: string,
@@ -64,7 +86,8 @@ export async function composeSessionPreview(
     }
 
     return canvas.toDataURL("image/jpeg", PREVIEW_QUALITY).split(",")[1] ?? null;
-  } catch {
+  } catch (err) {
+    console.warn("composeSessionPreview failed; dashboard thumbnail not updated.", err);
     return null;
   }
 }

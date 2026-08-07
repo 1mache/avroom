@@ -176,7 +176,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       glbData: null,
       rotation: null,
       hidden: false,
-      offset: { x: 0, y: 0 },
+      offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
       sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
     }));
     setObjects(loaded);
@@ -450,7 +450,9 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           glbData: source.glbData,
           rotation: null,
           hidden: false,
-          offset: { ...source.offset },
+          // Server-computed nudge (build_clone_metadata), not a raw copy of
+          // source.offset -- the clone lands beside its source, not on it.
+          offset: { x: info.offset_x ?? source.offset.x, y: info.offset_y ?? source.offset.y },
           sourceElevationDeg:
             info.source_elevation_deg ?? source.sourceElevationDeg ?? FALLBACK_SOURCE_ELEVATION_DEG,
         };

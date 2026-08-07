@@ -63,7 +63,9 @@ Response is `InpaintMaskResponse`, which extends `ClickResultResponse` and adds 
 
 `saveSessionPreview(uid, imageB64)` posts `{ image_b64 }` to `POST /images/{uid}/preview`, best-effort (caller swallows failures). `PREVIEW_API_READY` in `api/images.ts` gates both — currently `true`.
 
-`WorkspaceScreen` composites the thumbnail client-side (`utils/preview.ts::composeSessionPreview` — background plus every visible cutout at its current offset, drawn onto an offscreen canvas, downscaled to 640px, JPEG q0.82) and calls `saveSessionPreview` debounced ~1.5s after any mutation settles: inpaint, novel-view result, rename, duplicate, drag-end, delete, and hide/show toggles. The backend also writes an initial thumbnail at upload time (a downscaled copy of the original), so a session never shows an empty placeholder once uploaded.
+`WorkspaceScreen` composites the thumbnail client-side (`utils/preview.ts::composeSessionPreview` — background plus every visible cutout at its current offset, drawn onto an offscreen canvas, downscaled to 640px, JPEG q0.82) and calls `saveSessionPreview` debounced 500ms (`PREVIEW_DEBOUNCE_MS`) after any mutation settles: inpaint, novel-view result, rename, duplicate, drag-end, delete, and hide/show toggles. The backend also writes an initial thumbnail at upload time (a downscaled copy of the original), so a session never shows an empty placeholder once uploaded.
+
+`preview.ts::loadForCanvas` fetches images with `cache: "reload"` rather than the more obvious `<img crossOrigin="anonymous">` approach — the stage's own plain `<img src={photoSrc}>` (no `crossOrigin`) loads that same, cache-busted background URL moments before every capture (via `useSessionSync`'s `?t=<lastChanged>` reconcile), and the browser's HTTP cache can hand a `cors`-mode fetch the opaque no-cors response from that `<img>` load, which then fails CORS even though the server's real response carries proper headers. Forcing a fresh network round-trip sidesteps the collision. Confirmed via browser devtools; without this the client-composited preview silently never updates after the first upload-time thumbnail.
 
 ## Objects
 
@@ -72,6 +74,10 @@ Response is `InpaintMaskResponse`, which extends `ClickResultResponse` and adds 
 `getObjectByUuid(objectUuid)` fetches `GET /images/objects/${objectUuid}` and returns `ObjectMetadataResponse`.
 
 `setObjectName(objectUuid, name)` sends `PATCH /images/objects/${objectUuid}` with `{ name }`.
+
+`setObjectOffset(objectUuid, x, y)` sends `PATCH /images/objects/${objectUuid}` with `{ offset_x, offset_y }` — note it never includes `name`, so the backend's partial-update handling leaves the object's name untouched (see `UpdateObjectRequest` in [schemas.md](../backend/schemas.md)). `WorkspaceScreen`'s `finishDrag` fires this once per drag (not per pointermove) so the position survives a session close/reopen; `loadRestoredObjects` (`useSessionJobs.ts`) reads `offset_x`/`offset_y` back off `ObjectInfo` on restore instead of resetting to `(0, 0)`. Failure is `console.warn`-logged, not surfaced to the user — a missed save on one drag just gets overwritten by the next.
+
+Duplicating an object no longer copies the source's exact `offset` client-side; the clone's nudged position is computed server-side (`build_clone_metadata`, atomic with clone creation — see [api-endpoints.md](../backend/api-endpoints.md#post-imagesobjectsobject_uuidduplicate)) and arrives via the `getSessionObjects` fetch `duplicateObject` already performs after cloning.
 
 `POST /images/objects/{uuid}/rescale-by-depth` exists on the backend but has no frontend wrapper or UI wiring yet.
 

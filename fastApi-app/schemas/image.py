@@ -266,12 +266,29 @@ class InpaintMaskResponse(ClickResultResponse):
     ]
 
 
-class SetObjectNameRequest(BaseModel):
-    """Request payload for renaming one object by UUID."""
+class UpdateObjectRequest(BaseModel):
+    """Partial update for one object by UUID: name and/or drag offset.
+
+    Each field is independently optional so a caller can send just a rename
+    or just a position update. ``name``'s ``None`` means "clear the name"
+    (existing behavior). ``offset_x``/``offset_y``'s ``None`` means "not
+    included in this request" -- the handler distinguishes an omitted field
+    from an explicit ``null`` via ``model_fields_set``, so a drag-persist
+    call (which never mentions ``name``) can never accidentally clear it,
+    and vice versa.
+    """
 
     name: Annotated[
         str | None,
-        Field(default=None, description="New object name, or null to clear."),
+        Field(default=None, description="New object name, or null to clear. Omit to leave unchanged."),
+    ]
+    offset_x: Annotated[
+        float | None,
+        Field(default=None, description="New drag offset X, natural-image pixels. Omit to leave unchanged."),
+    ]
+    offset_y: Annotated[
+        float | None,
+        Field(default=None, description="New drag offset Y, natural-image pixels. Omit to leave unchanged."),
     ]
 
 
@@ -360,6 +377,14 @@ class ObjectMetadataResponse(BaseModel):
         CutoutBounds | None,
         Field(default=None, description="Tight visible-object bounds inside the cutout PNG."),
     ]
+    offset_x: Annotated[
+        float,
+        Field(default=0.0, description="Persisted drag offset X, natural-image pixels."),
+    ]
+    offset_y: Annotated[
+        float,
+        Field(default=0.0, description="Persisted drag offset Y, natural-image pixels."),
+    ]
 
 
 class ObjectInfo(BaseModel):
@@ -400,6 +425,14 @@ class ObjectInfo(BaseModel):
     has_3d: Annotated[
         bool,
         Field(description="Whether a GLB 3D model has been generated for this object."),
+    ]
+    offset_x: Annotated[
+        float,
+        Field(default=0.0, description="Persisted drag offset X, natural-image pixels."),
+    ]
+    offset_y: Annotated[
+        float,
+        Field(default=0.0, description="Persisted drag offset Y, natural-image pixels."),
     ]
 
 

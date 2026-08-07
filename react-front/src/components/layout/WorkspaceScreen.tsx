@@ -8,6 +8,7 @@ import {
   getSessionObjects,
   getUidCacheStatus,
   saveSessionPreview,
+  setObjectOffset,
   setSessionName as saveSessionName,
 } from "../../api/images";
 import { useConflictNotices, type ConflictContext } from "../../hooks/useConflictNotices";
@@ -784,6 +785,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       if (dragStateRef.current?.pointerId !== pointerId) {
         return;
       }
+      const draggedObjectId = dragStateRef.current.objectId;
       dragStateRef.current = null;
       setIsDragging(false);
       document.body.classList.remove("is-dragging-object");
@@ -791,6 +793,21 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       // mutation onMutated doesn't cover — capture the dashboard thumbnail
       // directly once the object settles.
       capturePreviewRef.current();
+
+      // Persist the final position so it survives a session close/reopen.
+      // previewInputsRef, not this effect's stale jobs.objects closure
+      // (it only re-subscribes on isDragging, not on every object update),
+      // always reflects the latest render's object state.
+      const dragged = previewInputsRef.current.objects.find(
+        (o) => o.objectId === draggedObjectId,
+      );
+      if (dragged?.uuid) {
+        void setObjectOffset(dragged.uuid, dragged.offset.x, dragged.offset.y).catch(
+          (err: unknown) => {
+            console.warn("setObjectOffset failed; position won't survive reload.", err);
+          },
+        );
+      }
     };
 
     const handlePointerUp = (event: PointerEvent) => finishDrag(event.pointerId);

@@ -86,7 +86,7 @@ All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.
 
 ## Object Metadata
 
-`ObjectMetadataResponse` is returned by `GET /images/objects/{object_uuid}`, `PATCH /images/objects/{object_uuid}`, and `setObjectName` on the frontend.
+`ObjectMetadataResponse` is returned by `GET /images/objects/{object_uuid}`, `PATCH /images/objects/{object_uuid}`, and `setObjectName`/`setObjectOffset` on the frontend.
 
 | Field | Type | Description |
 |---|---|---|
@@ -99,12 +99,18 @@ All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.
 | `created_at` | `str` | ISO-8601 UTC timestamp. |
 | `has_3d` | `bool` | Whether a GLB exists for this object. |
 | `cutout_bounds` | `CutoutBounds \| null` | Derived from on-disk cutout PNG alpha. |
+| `offset_x` | `float` | Persisted drag offset X, natural-image pixels. `0.0` until dragged. |
+| `offset_y` | `float` | Persisted drag offset Y, natural-image pixels. `0.0` until dragged. |
 
-`SetObjectNameRequest` is the body of `PATCH /images/objects/{object_uuid}`.
+`UpdateObjectRequest` is the body of `PATCH /images/objects/{object_uuid}` — a partial update, every field independently optional.
 
 | Field | Type | Description |
 |---|---|---|
-| `name` | `str \| null` | New label, or `null` to clear. |
+| `name` | `str \| null` | New label, or `null` to clear. Omit the field to leave it unchanged. |
+| `offset_x` | `float \| null` | New drag offset X. Omit to leave unchanged. |
+| `offset_y` | `float \| null` | New drag offset Y. Omit to leave unchanged. |
+
+The handler reads `request.model_fields_set` (which keys were actually present in the JSON body) rather than trusting `None` defaults, since `name`'s `None` means "clear" while `offset_x`/`offset_y`'s `None` means "not sent" — two different meanings on the same request model.
 
 `DuplicateObjectResponse` is returned by `POST /images/objects/{object_uuid}/duplicate`.
 
@@ -149,6 +155,8 @@ All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.
 | `format` | `str` | Currently `png`. |
 | `cutout_bounds` | `CutoutBounds \| null` | Tight visible-object bounds inside the cutout PNG. |
 | `has_3d` | `bool` | Whether a GLB 3D model has been generated for this object. |
+| `offset_x` | `float` | Persisted drag offset X, natural-image pixels. |
+| `offset_y` | `float` | Persisted drag offset Y, natural-image pixels. |
 
 `ObjectListResponse` is returned by `GET /images/{uid}/objects`.
 

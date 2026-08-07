@@ -337,3 +337,91 @@ def test_background_untouched(storage_sandbox: Path, glb_dir: Path) -> None:
 
     assert response.status_code == 200
     assert bg.read_bytes() == b"background-bytes"
+
+
+def _seed_object_with_canvas(
+    images_dir: Path,
+    glb_dir: Path,
+    *,
+    canvas_size: int = 100,
+    box: tuple[int, int, int, int] = (40, 40, 60, 60),
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
+    uid: str = "sess-1",
+    object_id: int = 0,
+) -> str:
+    """Seed an object whose cutout has room around its alpha bounds to nudge into.
+
+    *box* is (left, top, right, bottom) of the opaque region within a
+    *canvas_size* x *canvas_size* transparent canvas.
+    """
+    left, top, right, bottom = box
+    image = np.zeros((canvas_size, canvas_size, 4), dtype=np.uint8)
+    image[top:bottom, left:right] = (10, 20, 30, 255)
+    success, encoded = cv2.imencode(".png", image)
+    assert success
+    object_cutout_path(images_dir, uid, object_id).write_bytes(encoded.tobytes())
+
+    meta = create_object_metadata(
+        session_id=uid,
+        object_id=object_id,
+        average_depth=100.0,
+        content_hash="hash",
+        source_elevation_deg=15.0,
+        name="Chair",
+        offset_x=offset_x,
+        offset_y=offset_y,
+    )
+    save_object_metadata(images_dir, meta)
+    return meta.uuid
+
+
+def test_duplicate_nudges_clone_left_when_room(storage_sandbox: Path, glb_dir: Path) -> None:
+    # bounds: left=40, right=60, width=20 -> nudge = max(12, 20*0.15) = 12.
+    # min_x = -40, max_x = 100-60 = 40. Source at offset_x=0 has room on the left.
+    source_uuid = _seed_object_with_canvas(storage_sandbox, glb_dir, offset_x=0.0, offset_y=0.0)
+
+    with _build_client() as client:
+        response = client.post(f"/images/objects/{source_uuid}/duplicate")
+
+    assert response.status_code == 200
+    clone = get_object_by_uuid(storage_sandbox, response.json()["object_uuid"])
+    assert clone is not None
+    assert clone.offset_x == -12.0
+    assert clone.offset_y == 0.0
+
+
+def test_duplicate_nudges_clone_right_when_no_room_on_left(
+    storage_sandbox: Path, glb_dir: Path
+) -> None:
+    # Source sits flush against the left bound (min_x = -40, offset_x = -40),
+    # so a left nudge (-52) would go out of bounds -- must fall back to right.
+    source_uuid = _seed_object_with_canvas(storage_sandbox, glb_dir, offset_x=-40.0, offset_y=5.0)
+
+    with _build_client() as client:
+        response = client.post(f"/images/objects/{source_uuid}/duplicate")
+
+    assert response.status_code == 200
+    clone = get_object_by_uuid(storage_sandbox, response.json()["object_uuid"])
+    assert clone is not None
+    assert clone.offset_x == -28.0
+    assert clone.offset_y == 5.0
+
+
+def test_duplicate_keeps_source_offset_when_no_room_either_side(
+    storage_sandbox: Path, glb_dir: Path
+) -> None:
+    # Cutout fills the entire canvas (box == full extent): min_x == max_x == 0,
+    # no nudge fits in either direction.
+    source_uuid = _seed_object_with_canvas(
+        storage_sandbox, glb_dir, canvas_size=10, box=(0, 0, 10, 10), offset_x=3.0, offset_y=-2.0
+    )
+
+    with _build_client() as client:
+        response = client.post(f"/images/objects/{source_uuid}/duplicate")
+
+    assert response.status_code == 200
+    clone = get_object_by_uuid(storage_sandbox, response.json()["object_uuid"])
+    assert clone is not None
+    assert clone.offset_x == 3.0
+    assert clone.offset_y == -2.0

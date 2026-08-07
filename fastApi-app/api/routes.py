@@ -45,6 +45,7 @@ from core.object_metadata import (
     remove_object_index_entry,
     save_object_metadata,
     set_object_name,
+    set_object_offset,
     delete_session_metadata,
 )
 from schemas.image import (
@@ -66,7 +67,7 @@ from schemas.image import (
     SessionSyncCheckRequest,
     SessionSyncCheckResponse,
     SetNameRequest,
-    SetObjectNameRequest,
+    UpdateObjectRequest,
     RescaleByDepthRequest,
     RescaleByDepthResponse,
     UidCacheStatusResponse,
@@ -612,6 +613,8 @@ def _metadata_to_response(
         created_at=metadata.created_at,
         has_3d=has_3d,
         cutout_bounds=cutout_bounds,
+        offset_x=metadata.offset_x,
+        offset_y=metadata.offset_y,
     )
 
 
@@ -635,18 +638,38 @@ async def get_object_by_uuid_endpoint(object_uuid: str) -> ObjectMetadataRespons
 
 
 @router.patch("/objects/{object_uuid}", response_model=ObjectMetadataResponse)
-async def rename_object(object_uuid: str, request: SetObjectNameRequest) -> ObjectMetadataResponse:
-    """Update the optional name on one object identified by UUID."""
-    logger.info("Object rename requested: uuid=%s name=%r", object_uuid, request.name)
+async def update_object(object_uuid: str, request: UpdateObjectRequest) -> ObjectMetadataResponse:
+    """Partially update one object identified by UUID: name and/or drag offset.
+
+    Only fields actually present in the request body are touched --
+    ``request.model_fields_set`` distinguishes an omitted field from an
+    explicit ``null``, so a drag-persist call (offset only) can never
+    accidentally clear the name, and a rename call (name only) can never
+    accidentally reset the offset back to (0, 0).
+    """
+    logger.info(
+        "Object update requested: uuid=%s fields=%s",
+        object_uuid,
+        sorted(request.model_fields_set),
+    )
     storage_dir = get_image_storage_dir()
-    try:
+
+    metadata = get_object_by_uuid(storage_dir, object_uuid)
+    if metadata is None:
+        logger.warning("Object update failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
+
+    fields = request.model_fields_set
+    if "name" in fields:
         metadata = set_object_name(storage_dir, object_uuid, request.name)
-    except FileNotFoundError as exc:
-        logger.warning("Object rename failed — not found: uuid=%s", object_uuid)
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if "offset_x" in fields or "offset_y" in fields:
+        next_offset_x = request.offset_x if request.offset_x is not None else metadata.offset_x
+        next_offset_y = request.offset_y if request.offset_y is not None else metadata.offset_y
+        metadata = set_object_offset(storage_dir, object_uuid, next_offset_x, next_offset_y)
+
     touch_session(metadata.session_id)
     response = _metadata_to_response(metadata, storage_dir, get_3d_storage_dir())
-    logger.info("Object renamed: uuid=%s name=%r", object_uuid, request.name)
+    logger.info("Object updated: uuid=%s fields=%s", object_uuid, sorted(fields))
     return response
 
 
@@ -689,6 +712,12 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
             ),
         )
 
+    # Drives a small leftward nudge on the clone's position (build_clone_metadata)
+    # so it doesn't land exactly on top of its source. None (undecodable cutout)
+    # falls back to copying the source's offset unchanged -- never worth failing
+    # the duplicate over.
+    source_bounds = extract_cutout_bounds_from_png_bytes(source_cutout.read_bytes())
+
     new_object_id: int | None = None
     clone_metadata: ObjectMetadata | None = None
     try:
@@ -703,7 +732,7 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
 
         try:
             new_object_id = next_object_id(storage_dir, source.session_id)
-            clone_metadata = build_clone_metadata(storage_dir, source, new_object_id)
+            clone_metadata = build_clone_metadata(storage_dir, source, new_object_id, source_bounds)
             copy_object_artifacts(
                 base_dir=storage_dir,
                 glb_dir=three_d_dir,
@@ -923,6 +952,8 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
                     format="png",
                     cutout_bounds=cutout_bounds,
                     has_3d=has_3d,
+                    offset_x=meta.offset_x if meta is not None else 0.0,
+                    offset_y=meta.offset_y if meta is not None else 0.0,
                 )
             )
         except FileNotFoundError as exc:

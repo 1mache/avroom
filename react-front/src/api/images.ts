@@ -14,8 +14,8 @@ import type {
   SegmentResponse,
   SessionInfo,
   SessionSyncCheckResponse,
-  SetObjectNameRequest,
   UidCacheStatusResponse,
+  UpdateObjectRequest,
 } from "../types/api";
 
 export const API_BASE_URL =
@@ -232,7 +232,31 @@ export async function setObjectName(
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ name } satisfies SetObjectNameRequest),
+    body: JSON.stringify({ name } satisfies UpdateObjectRequest),
+  });
+
+  return handleJsonResponse<ObjectMetadataResponse>(response);
+}
+
+/**
+ * Persists an object's drag offset. Fires from drag-end so the position
+ * survives a session close/reopen -- omits `name` entirely (not `name:
+ * null`) so the backend's partial-update semantics leave it untouched.
+ */
+export async function setObjectOffset(
+  objectUuid: string,
+  offsetX: number,
+  offsetY: number,
+): Promise<ObjectMetadataResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      offset_x: offsetX,
+      offset_y: offsetY,
+    } satisfies UpdateObjectRequest),
   });
 
   return handleJsonResponse<ObjectMetadataResponse>(response);

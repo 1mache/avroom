@@ -79,10 +79,17 @@ export interface ObjectMetadataResponse {
   created_at: string;
   has_3d: boolean;
   cutout_bounds?: CutoutBounds | null;
+  offset_x: number;
+  offset_y: number;
 }
 
-export interface SetObjectNameRequest {
-  name: string | null;
+// Every field optional: a caller sends only what it's actually changing
+// (a drag-persist call never includes `name`, a rename call never includes
+// the offset fields) so the backend's partial-update semantics apply.
+export interface UpdateObjectRequest {
+  name?: string | null;
+  offset_x?: number;
+  offset_y?: number;
 }
 
 export interface DuplicateObjectResponse {
@@ -119,6 +126,8 @@ export interface ObjectInfo {
   format: string;
   cutout_bounds?: CutoutBounds | null;
   has_3d: boolean;
+  offset_x: number;
+  offset_y: number;
 }
 
 export interface ObjectListResponse {

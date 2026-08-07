@@ -20,7 +20,7 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `GET` | `/images/{uid}/preview` | path `uid` | dashboard thumbnail JPEG (404 if none yet) |
 | `POST` | `/images/{uid}/preview` | `SessionPreviewRequest` | 204 No Content |
 | `GET` | `/images/objects/{object_uuid}` | path `object_uuid` | `ObjectMetadataResponse` |
-| `PATCH` | `/images/objects/{object_uuid}` | `SetObjectNameRequest` | `ObjectMetadataResponse` |
+| `PATCH` | `/images/objects/{object_uuid}` | `UpdateObjectRequest` | `ObjectMetadataResponse` |
 | `POST` | `/images/objects/{object_uuid}/duplicate` | path `object_uuid` | `DuplicateObjectResponse` |
 | `DELETE` | `/images/objects/{object_uuid}` | path `object_uuid` | 204 No Content |
 | `POST` | `/images/objects/{object_uuid}/rescale-by-depth` | `RescaleByDepthRequest` | `RescaleByDepthResponse` |
@@ -96,13 +96,15 @@ Missing individual cutouts are skipped with a WARNING log — the response is st
 
 ## `GET /images/objects/{object_uuid}`
 
-Returns one object's persisted metadata (`ObjectMetadataResponse`): uuid, session id, object id, optional name, `average_depth`, `content_hash`, `created_at`, `has_3d`, and derived `cutout_bounds` from the on-disk cutout PNG.
+Returns one object's persisted metadata (`ObjectMetadataResponse`): uuid, session id, object id, optional name, `average_depth`, `content_hash`, `created_at`, `has_3d`, derived `cutout_bounds` from the on-disk cutout PNG, and persisted `offset_x`/`offset_y` (drag position, natural-image pixels; `(0, 0)` until the object is dragged and its offset persisted).
 
 Returns `404` when the UUID is absent from `object_index.json`.
 
 ## `PATCH /images/objects/{object_uuid}`
 
-Updates the optional human-readable name on one object. Body: `SetObjectNameRequest` (`name` string or `null` to clear). Returns updated `ObjectMetadataResponse`. Bumps the parent session's `last_changed` timestamp.
+Partial update for one object: name and/or drag offset. Body: `UpdateObjectRequest` — `name` (string or `null` to clear), `offset_x`/`offset_y` (floats, natural-image pixels). Returns updated `ObjectMetadataResponse`. Bumps the parent session's `last_changed` timestamp.
+
+Each field is independently optional, and the handler distinguishes "omitted from the request" from "explicitly sent" via `request.model_fields_set` rather than relying on Pydantic defaults — necessary because `name: null` means "clear the name" while an omitted `offset_x`/`offset_y` means "leave it alone." A drag-persist call sends only `{offset_x, offset_y}`; a rename call sends only `{name}`; neither can accidentally reset the other's field. The frontend's `finishDrag` (`WorkspaceScreen.tsx`) fires this after every drag; `renameObject`/`setObjectName` fires it after a rename.
 
 ## `POST /images/objects/{object_uuid}/duplicate`
 
@@ -114,16 +116,16 @@ Behavior:
 2. Resolve the source cutout (`{uid}_{object_id}_cutout.png`); **404** if missing.
 3. Acquire the session canvas writer (no region lease — clone has no mask). **409** on writer timeout.
 4. Allocate the next sequential `object_id`.
-5. Build clone metadata: fresh UUID/`created_at`, copied `average_depth` / `source_elevation_deg` / `content_hash`, plus sticky lineage fields (`clone_root_uuid`, `clone_root_label`, `clone_index`).
+5. Build clone metadata: fresh UUID/`created_at`, copied `average_depth` / `source_elevation_deg` / `content_hash`, plus sticky lineage fields (`clone_root_uuid`, `clone_root_label`, `clone_index`), plus a nudged `offset_x`/`offset_y` (see below).
 6. Nickname: first clone is `"<root>-copy"`; later clones are `"<root>-copy1"`, `"<root>-copy2"`, …. Unnamed roots use `"Object <object_id>"` as the root label. Cloning a clone (or a renamed copy) keeps the original root label/ordinal sequence.
 7. Copy per-object artifacts under the writer: cutout (required), optional GLB, and any novel-view / preview PNG caches (timestamps preserved via `copy2`).
 8. Persist clone metadata JSON and register the new UUID in `object_index.json`.
 9. `touch_session(uid)` so sync clients refresh.
 10. On failure after allocation, delete partial destination artifacts and prune any index entry; return **500**.
 
-Does **not** rewrite `{uid}_background.png`, depth `.npy` caches, camera calib, the original upload, or temp segment masks. Depth is shared through the copied `content_hash`.
+**Position nudge:** the clone doesn't land exactly on its source. `duplicate_object` decodes the source cutout PNG (`extract_cutout_bounds_from_png_bytes`) to get the canvas size and the object's alpha bounds, then `build_clone_metadata` / `_nudge_clone_offset` (`core/object_metadata.py`) tries shifting the clone's `offset_x` left by `max(12, bbox_width * 0.15)` pixels; if that would push it past the canvas edge, it tries the same shift right instead; if neither fits, the clone keeps the source's exact offset. `offset_y` is always copied unchanged (horizontal nudge only). This is atomic with clone creation — no separate request, no window where the clone exists un-nudged.
 
-Not wired in the React frontend today; session sync can discover the new object after `last_changed` advances.
+Does **not** rewrite `{uid}_background.png`, depth `.npy` caches, camera calib, the original upload, or temp segment masks. Depth is shared through the copied `content_hash`.
 
 ## `DELETE /images/objects/{object_uuid}`
 

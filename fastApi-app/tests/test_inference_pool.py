@@ -35,10 +35,12 @@ def test_job_request_pickle_round_trip() -> None:
         x=10,
         y=20,
         exclude_mask_ids=("pinned",),
+        verify="auto",
     )
     restored = pickle.loads(pickle.dumps(job))
     assert restored == job
     assert restored.exclude_mask_ids == ("pinned",)
+    assert restored.verify == "auto"
 
 
 def test_job_result_pickle_round_trip() -> None:

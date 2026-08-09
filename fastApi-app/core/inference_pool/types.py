@@ -40,6 +40,7 @@ class JobRequest:
     options: dict[str, Any] | None = None
     exclude_mask_ids: tuple[str, ...] | None = None
     image_bytes: bytes | None = None
+    verify: str | None = None
 
 
 @dataclass

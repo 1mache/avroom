@@ -41,15 +41,18 @@ sequenceDiagram
     participant Cache as "core/mask_cache.py"
     participant AI as "ObjectSegmentor"
 
-    Client->>Router: POST /images/segment {image_id,x,y}
+    Client->>Router: POST /images/segment {image_id,x,y,verify}
     Router->>Router: assert_segment_click_allowed (409 if click in lease)
-    Router->>Core: segment_candidates_on_image(..., exclude_mask_ids=pinned)
+    Router->>Core: segment_candidates_on_image(..., exclude_mask_ids=pinned, verify)
     Core->>Core: load_canvas_bytes + validate natural click
     Core->>Depth: get_or_compute_depth(canvas)
     Core->>Cache: delete stale candidates (skip pinned mask ids)
     Core->>AI: get_mask_for_object_at_position(..., depth_map)
     AI-->>Core: (refined_mask, cutout_bgra)[]
     Core->>Cache: save .npy masks + PNG cutouts (skip pinned ids)
+    alt verifyAuto
+        Core->>Core: select_best_cutout via CLIP
+    end
     Router-->>Client: SegmentResponse(masks[])
 ```
 

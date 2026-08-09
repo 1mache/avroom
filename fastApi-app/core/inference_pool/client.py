@@ -57,6 +57,7 @@ class InferenceClient:
         y: int,
         options: ImageProcessingOptions | None = None,
         exclude_mask_ids: frozenset[str] | None = None,
+        verify: str | None = None,
     ) -> list[tuple[str, bytes]]:
         job = JobRequest(
             job_id=str(uuid.uuid4()),
@@ -67,6 +68,7 @@ class InferenceClient:
             y=y,
             options=options.model_dump() if options is not None else None,
             exclude_mask_ids=tuple(sorted(exclude_mask_ids or frozenset())),
+            verify=verify,
         )
         result = self._run(job)
         self._raise_if_failed(result)

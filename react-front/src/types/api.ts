@@ -23,6 +23,8 @@ export interface ClickRequestOptions {
   grayscale?: boolean;
 }
 
+export type VerifyMode = "manual" | "auto";
+
 export interface ClickRequest {
   image_id: string;
   x: number;
@@ -30,7 +32,9 @@ export interface ClickRequest {
   options?: ClickRequestOptions;
 }
 
-export type SegmentRequest = ClickRequest;
+export interface SegmentRequest extends ClickRequest {
+  verify?: VerifyMode;
+}
 
 export interface ClickResultResponse {
   image_id: string;
@@ -56,6 +60,7 @@ export interface SegmentResponse {
 export interface InpaintMaskRequest {
   image_id: string;
   mask_id: string;
+  verify?: VerifyMode;
 }
 
 export interface InpaintMaskResponse extends ClickResultResponse {

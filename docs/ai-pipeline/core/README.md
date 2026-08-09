@@ -7,6 +7,7 @@
 | `ObjectRemover` | End-to-end orchestrator. Runs all 7 stages and returns `(background_bgr, cutout_bgra)`. Used by FastAPI. |
 | `ObjectSegmentor` | Stages 1–3 + 5–7 (no inpainting). Returns every SAM candidate as `(refined_mask, cutout_bgra)` pairs. |
 | `BackgroundInpainter` | Stage 4 only. Inpaints with `refined_mask`, then pastes back using the tighter cutout alpha (optional padding via `COMPOSE_MASK_PADDING_RADIUS`). |
+| `select_best_cutout` | Optional auto mask pick. Ranks SAM cutouts with CLIP `binary_prob`. Used when `/images/segment` has `verify=auto`. |
 
 **When it runs:** `ObjectSegmentor` runs on `/images/segment`, then `BackgroundInpainter` runs on `/images/inpaint` after user mask choice. `ObjectRemover` remains for legacy `/images/click` and manual test scripts.
 

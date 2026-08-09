@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import Annotated
 
 from pydantic import BaseModel, Field
@@ -126,6 +127,13 @@ class ImageUploadResponse(BaseModel):
     ]
 
 
+class VerifyMode(str, Enum):
+    """Whether the client or CLIP selects among SAM cutout candidates."""
+
+    MANUAL = "manual"
+    AUTO = "auto"
+
+
 class ClickRequest(BaseModel):
     """Request payload for a user's click on an image.
 
@@ -153,6 +161,16 @@ class ClickRequest(BaseModel):
 
 class SegmentRequest(ClickRequest):
     """Request payload for segmentation-only candidate generation."""
+
+    verify: Annotated[
+        VerifyMode,
+        Field(
+            description=(
+                "manual returns all SAM candidates for the picker; "
+                "auto returns one CLIP-selected mask or 422 if none is viable."
+            ),
+        ),
+    ] = VerifyMode.MANUAL
 
 
 class CutoutBounds(BaseModel):
@@ -240,6 +258,12 @@ class InpaintMaskRequest(BaseModel):
         str,
         Field(min_length=1, pattern=r"^\d+$", description="Identifier of the selected cached mask candidate."),
     ]
+    verify: Annotated[
+        VerifyMode,
+        Field(
+            description="Accepted for API symmetry with segment; auto inpaint retry is not implemented yet.",
+        ),
+    ] = VerifyMode.MANUAL
 
 
 class InpaintMaskResponse(ClickResultResponse):

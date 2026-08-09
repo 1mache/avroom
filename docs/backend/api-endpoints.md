@@ -46,7 +46,7 @@ Thresholds for technical checks are env-configurable — see [`settings.py`](../
 
 ## `POST /images/segment`
 
-Runs segmentation only and returns every candidate mask as a visible BGRA cutout preview.
+Runs segmentation only and returns candidate masks as visible BGRA cutout previews. Request field `verify` defaults to `manual` (all candidates). `verify=auto` still caches all six, then CLIP-picks one via `select_best_cutout`; no viable mask → **422**.
 
 Behavior:
 
@@ -58,7 +58,8 @@ Behavior:
 6. Run `ObjectSegmentor.get_mask_for_object_at_position(...)` with depth map.
 7. Cache each `refined_mask` as `{uid}_mask_{mask_id}_refined.npy` (mask ids skip pinned slots).
 8. Cache each cutout preview as `{uid}_mask_{mask_id}_cutout.png`.
-9. Return candidate ids plus base64 cutout previews and `cutout_bounds`.
+9. If `verify=auto`, run `select_best_cutout` and return only the winner (or **422** `no viable mask`).
+10. Return candidate ids plus base64 cutout previews and `cutout_bounds`.
 
 Segment may run while an inpaint is in flight on a non-overlapping region. See [concurrency.md](concurrency.md).
 
@@ -66,7 +67,7 @@ The raw refined mask is not sent to frontend. It is model input for inpainting, 
 
 ## `POST /images/inpaint`
 
-Runs inpainting for the one mask selected by user.
+Runs inpainting for the one mask selected by user. Request field `verify` is accepted (`manual` default) and ignored this slice.
 
 Behavior:
 

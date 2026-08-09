@@ -18,12 +18,13 @@ Source: [`TestModules/src/ai_engines/content_validation/`](../../../../TestModul
 
 | Strategy | Role |
 |----------|------|
-| `ClipZeroShotContentValidationStrategy` | CLIP zero-shot labels for scene/person/product/screenshot/obstruction/NSFW/stylization |
+| `ClipZeroShotContentValidationStrategy` | CLIP zero-shot labels for scene/person/product/screenshot/obstruction/NSFW/stylization. Also exposes `score_labels` / `binary_prob`. |
 | `CompositeContentValidationStrategy` | Merges multiple strategies; `is_valid = all(checks)` |
 
 ## Core orchestrator
 
 - **`ContentImageValidator`** ([`TestModules/src/core/content_image_validator.py`](../../../../TestModules/src/core/content_image_validator.py)) — decodes bytes/path to BGR and delegates to the facade. Standalone pre-pipeline gate.
+- **`select_best_cutout`** ([`TestModules/src/core/cutout_selector.py`](../../../../TestModules/src/core/cutout_selector.py)) — ranks SAM BGRA cutouts for a click using CLIP `binary_prob`. Not a new engine; core logic on top of the CLIP strategy.
 
 ## FastAPI bridge
 

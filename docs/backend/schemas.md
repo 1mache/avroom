@@ -50,14 +50,14 @@ All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.
 
 ## Segmentation
 
-`SegmentRequest` extends `ClickRequest`: `image_id`, natural-image `x/y`, optional `options`.
+`SegmentRequest` extends `ClickRequest`: `image_id`, natural-image `x/y`, optional `options`, and `verify` (`manual` default, or `auto`).
 
 `SegmentResponse` returns:
 
 | Field | Type | Description |
 |---|---|---|
 | `image_id` | `str` | Segmented image id. |
-| `masks` | `list[SegmentMaskOption]` | User-selectable candidates in SAM return order. |
+| `masks` | `list[SegmentMaskOption]` | User-selectable candidates in SAM return order. `verify=auto` returns one winner. |
 
 `SegmentMaskOption`:
 
@@ -76,6 +76,7 @@ All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.
 |---|---|---|
 | `image_id` | `str` | Uploaded image id. |
 | `mask_id` | `str` | Selected candidate id from segmentation response. |
+| `verify` | `manual` \| `auto` | Accepted for symmetry with segment; auto inpaint retry is not implemented yet. Default `manual`. |
 
 `InpaintMaskResponse` extends `ClickResultResponse` (`image_id`, `background_b64`, `cutout_b64`, `format`, `cutout_bounds`) and adds:
 

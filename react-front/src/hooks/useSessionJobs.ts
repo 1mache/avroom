@@ -10,7 +10,7 @@ import {
   setObjectName,
   synthesizeNovelView,
 } from "../api/images";
-import type { CutoutBounds, ObjectInfo, SegmentRequest } from "../types/api";
+import type { CutoutBounds, ObjectInfo, SegmentRequest, VerifyMode } from "../types/api";
 import type {
   ClickPosition,
   CutoutAlphaBounds,
@@ -186,38 +186,6 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     );
   }, []);
 
-  const runSegment = useCallback(
-    async (x: number, y: number) => {
-      const currentImageId = imageIdRef.current;
-      if (!currentImageId) {
-        return;
-      }
-
-      setSegmentState({ status: "loading" });
-
-      const payload: SegmentRequest = { image_id: currentImageId, x, y };
-
-      try {
-        const result = await segmentImage(payload);
-        // The user may have switched to a different session while this was
-        // in flight — don't let a stale result populate the wrong picker.
-        if (imageIdRef.current !== currentImageId) {
-          return;
-        }
-        if (result.masks.length === 0) {
-          throw new Error("No mask candidates returned.");
-        }
-        setSegmentState({ status: "choosing", maskOptions: result.masks });
-      } catch (err) {
-        if (imageIdRef.current === currentImageId) {
-          setSegmentState({ status: "idle" });
-        }
-        onError(err, "segment");
-      }
-    },
-    [onError],
-  );
-
   const closeMaskPicker = useCallback(() => {
     setSegmentState({ status: "idle" });
   }, []);
@@ -227,7 +195,11 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   // caller is immediately free to click a new point and start another
   // segment/inpaint elsewhere while this one is still running.
   const selectMask = useCallback(
-    (maskId: string, normalizedClickPos: ClickPosition | null) => {
+    (
+      maskId: string,
+      normalizedClickPos: ClickPosition | null,
+      verify: VerifyMode = "manual",
+    ) => {
       const currentImageId = imageIdRef.current;
       setSegmentState({ status: "idle" });
       if (!currentImageId) {
@@ -240,7 +212,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         { jobId, maskId, normalizedClickPos, startedAt: Date.now() },
       ]);
 
-      inpaintMask({ image_id: currentImageId, mask_id: maskId })
+      inpaintMask({ image_id: currentImageId, mask_id: maskId, verify })
         .then((result) => {
           setPendingJobs((prev) => prev.filter((j) => j.jobId !== jobId));
 
@@ -284,6 +256,50 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         });
     },
     [onError, onMutated],
+  );
+
+  const runSegment = useCallback(
+    async (
+      x: number,
+      y: number,
+      verify: VerifyMode = "manual",
+      normalizedClickPos: ClickPosition | null = null,
+    ) => {
+      const currentImageId = imageIdRef.current;
+      if (!currentImageId) {
+        return;
+      }
+
+      setSegmentState({ status: "loading" });
+
+      const payload: SegmentRequest = { image_id: currentImageId, x, y, verify };
+
+      try {
+        const result = await segmentImage(payload);
+        // The user may have switched to a different session while this was
+        // in flight — don't let a stale result populate the wrong picker.
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+        if (verify === "auto") {
+          if (result.masks.length !== 1) {
+            throw new Error("No viable mask");
+          }
+          selectMask(result.masks[0].mask_id, normalizedClickPos, verify);
+          return;
+        }
+        if (result.masks.length === 0) {
+          throw new Error("No mask candidates returned.");
+        }
+        setSegmentState({ status: "choosing", maskOptions: result.masks });
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          setSegmentState({ status: "idle" });
+        }
+        onError(err, "segment");
+      }
+    },
+    [onError, selectMask],
   );
 
   const toggleHidden = useCallback(

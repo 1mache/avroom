@@ -19,6 +19,8 @@ Written via `DebugImageSaver` under `TestModules/outputs/` (names without extens
 
 See also engine-level debug files under segmentation and inpainting partials.
 
+Auto mask pick (`verify=auto`) dumps to `TestModules/outputs/auto_mask_pick/` — see [content-validation operations](../ai-engines/content-validation/operations.md).
+
 ## Failure boundaries
 
 - Invalid image bytes or out-of-range clicks surface from the FastAPI bridge before or inside pipeline decode.

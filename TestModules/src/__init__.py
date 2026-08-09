@@ -53,7 +53,14 @@ from .ai_engines import (
     StableZero123NovelViewStrategy,
     TrellisReconstructionStrategy,
 )
-from .core import BackgroundInpainter, ContentImageValidator, ObjectRemover, ObjectSegmentor
+from .core import (
+    BackgroundInpainter,
+    ContentImageValidator,
+    CutoutSelectionResult,
+    ObjectRemover,
+    ObjectSegmentor,
+    select_best_cutout,
+)
 from .routing import (
     BoundaryVarianceRoutingStrategy,
     CenterOfMassRoutingStrategy,
@@ -69,6 +76,7 @@ __all__ = [
     "ClipZeroShotContentValidationStrategy",
     "CompositeContentValidationStrategy",
     "ContentImageValidator",
+    "CutoutSelectionResult",
     "ContentValidationFacade",
     "ContentValidationResult",
     "ContentValidationStrategy",
@@ -97,6 +105,7 @@ __all__ = [
     "Reconstruction3DStrategy",
     "ReconstructionQuality",
     "SamImageAdapter",
+    "select_best_cutout",
     "SamSegmentationStrategy",
     "SegmentationRoutingStrategy",
     "StableDiffusionInpaintingStrategy",

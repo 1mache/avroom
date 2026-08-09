@@ -33,8 +33,10 @@ class ClipZeroShotContentValidationStrategy(ContentValidationStrategy):
     """Zero-shot CLIP classifier for upload content suitability.
 
     Each gate runs a 2-label softmax (concept vs concrete room/space).
-    Uses ``openai/clip-vit-base-patch32`` (lazy-loaded on first ``validate``).
-    Thresholds are configurable at construction for testing.
+    Uses ``openai/clip-vit-base-patch32`` (lazy-loaded on first ``score_labels``
+    / ``validate``). ``score_labels`` and ``binary_prob`` are the public scoring
+    API reused by core cutout selection. Thresholds are configurable at
+    construction for testing.
     """
 
     DEFAULT_MODEL_ID = "openai/clip-vit-base-patch32"
@@ -72,7 +74,8 @@ class ClipZeroShotContentValidationStrategy(ContentValidationStrategy):
         getattr(self._model, "eval")()
         return self._model, self._processor
 
-    def _score_labels(self, pil_image: Image.Image, labels: tuple[str, ...]) -> dict[str, float]:
+    def score_labels(self, pil_image: Image.Image, labels: tuple[str, ...]) -> dict[str, float]:
+        """Return a softmax distribution over ``labels`` for ``pil_image``."""
         if self._score_fn is not None:
             return self._score_fn(pil_image, labels)
 
@@ -95,9 +98,9 @@ class ClipZeroShotContentValidationStrategy(ContentValidationStrategy):
 
         return {label: float(probs[index].item()) for index, label in enumerate(labels)}
 
-    def _binary_prob(self, pil_image: Image.Image, positive: str, negative: str) -> float:
+    def binary_prob(self, pil_image: Image.Image, positive: str, negative: str) -> float:
         """Return P(positive) from a 2-label softmax over positive vs negative."""
-        scores = self._score_labels(pil_image, (positive, negative))
+        scores = self.score_labels(pil_image, (positive, negative))
         return scores[positive]
 
     def validate(self, image: np.ndarray) -> ContentValidationResult:
@@ -107,13 +110,13 @@ class ClipZeroShotContentValidationStrategy(ContentValidationStrategy):
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(rgb)
 
-        scene_p = self._binary_prob(pil_image, _SCENE_LABEL, _SCENE_ALTERNATIVE_LABEL)
-        person_p = self._binary_prob(pil_image, _PERSON_LABEL, _PERSON_ALTERNATIVE_LABEL)
-        product_p = self._binary_prob(pil_image, _PRODUCT_LABEL, _PRODUCT_ALTERNATIVE_LABEL)
-        screenshot_p = self._binary_prob(pil_image, _SCREENSHOT_LABEL, _SCREENSHOT_ALTERNATIVE_LABEL)
-        obstruction_p = self._binary_prob(pil_image, _OBSTRUCTION_LABEL, _OBSTRUCTION_ALTERNATIVE_LABEL)
-        nsfw_p = self._binary_prob(pil_image, _NSFW_LABEL, _NSFW_ALTERNATIVE_LABEL)
-        stylized_p = self._binary_prob(pil_image, _STYLIZED_LABEL, _STYLIZED_ALTERNATIVE_LABEL)
+        scene_p = self.binary_prob(pil_image, _SCENE_LABEL, _SCENE_ALTERNATIVE_LABEL)
+        person_p = self.binary_prob(pil_image, _PERSON_LABEL, _PERSON_ALTERNATIVE_LABEL)
+        product_p = self.binary_prob(pil_image, _PRODUCT_LABEL, _PRODUCT_ALTERNATIVE_LABEL)
+        screenshot_p = self.binary_prob(pil_image, _SCREENSHOT_LABEL, _SCREENSHOT_ALTERNATIVE_LABEL)
+        obstruction_p = self.binary_prob(pil_image, _OBSTRUCTION_LABEL, _OBSTRUCTION_ALTERNATIVE_LABEL)
+        nsfw_p = self.binary_prob(pil_image, _NSFW_LABEL, _NSFW_ALTERNATIVE_LABEL)
+        stylized_p = self.binary_prob(pil_image, _STYLIZED_LABEL, _STYLIZED_ALTERNATIVE_LABEL)
 
         scene_pass = scene_p >= self._positive_threshold
         person_pass = person_p < self._negative_threshold

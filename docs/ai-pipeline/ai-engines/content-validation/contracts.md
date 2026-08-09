@@ -38,6 +38,17 @@ Each check is a 2-label softmax: concept vs a concrete room/space alternative.
 - Any failed check → `POST /images/upload` returns **422** with joined `messages`.
 - Success response shape unchanged (`ImageUploadResponse`).
 
+## Public CLIP scoring API
+
+`ClipZeroShotContentValidationStrategy` also exposes:
+
+| Method | Returns |
+|--------|---------|
+| `score_labels(pil_image, labels)` | softmax `dict[str, float]` over the given labels |
+| `binary_prob(pil_image, positive, negative)` | `P(positive)` from a 2-label softmax |
+
+Upload `validate()` uses those methods. Core [`select_best_cutout`](../../../../TestModules/src/core/cutout_selector.py) uses `binary_prob` to rank SAM cutouts when segment `verify=auto`.
+
 ## Technical checks (FastAPI only)
 
 Handled by [`fastApi-app/core/image_validation/`](../../../../fastApi-app/core/image_validation/) before content validation runs. See backend [data-flow.md](../../../backend/data-flow.md).

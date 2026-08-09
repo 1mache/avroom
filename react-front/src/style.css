@@ -205,6 +205,33 @@ input {
   color: var(--cyan-bright);
 }
 
+.tool-radios {
+  display: inline-flex;
+  align-items: stretch;
+  height: 30px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--chrome-sunk);
+}
+
+.tool-radio {
+  height: 100%;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--ink-faint);
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.tool-radio[aria-checked="true"] {
+  background: var(--cyan-wash);
+  color: var(--cyan-bright);
+}
+
 .tool-btn.is-danger:not(:disabled) {
   color: var(--danger);
 }

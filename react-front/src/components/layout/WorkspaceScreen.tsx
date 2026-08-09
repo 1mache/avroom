@@ -14,6 +14,7 @@ import {
 import { useConflictNotices, type ConflictContext } from "../../hooks/useConflictNotices";
 import { useSessionJobs, type JobErrorContext } from "../../hooks/useSessionJobs";
 import { useSessionSync } from "../../hooks/useSessionSync";
+import type { VerifyMode } from "../../types/api";
 import {
   effectiveCutoutBounds,
   effectiveCutoutSrc,
@@ -104,6 +105,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // mask picker is open so the user can see what they aimed at.
   const [cutMode, setCutMode] = useState(false);
   const [pickPoint, setPickPoint] = useState<ClickPosition | null>(null);
+  const [verifyMode, setVerifyMode] = useState<VerifyMode>("manual");
 
   // rotateMode: the 3D angle picker replaces the selected object's cutout.
   // isPreparing3D: blocking wait while its GLB is fetched or generated.
@@ -446,10 +448,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         pickPoint && naturalSize
           ? { x: pickPoint.x / naturalSize.width, y: pickPoint.y / naturalSize.height }
           : null;
-      jobs.selectMask(maskId, normalized);
+      jobs.selectMask(maskId, normalized, verifyMode);
       setPickPoint(null);
     },
-    [jobs.selectMask, pickPoint, naturalSize],
+    [jobs.selectMask, pickPoint, naturalSize, verifyMode],
   );
 
   const handleMaskPickerClosed = useCallback(() => {
@@ -684,7 +686,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         event.preventDefault();
         setPickPoint(natural);
         setCutMode(false);
-        void jobs.runSegment(Math.round(natural.x), Math.round(natural.y));
+        void jobs.runSegment(
+          Math.round(natural.x),
+          Math.round(natural.y),
+          verifyMode,
+          { x: natural.x / naturalSize.width, y: natural.y / naturalSize.height },
+        );
         return;
       }
 
@@ -733,6 +740,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       naturalSize,
       renderedRect,
       cutMode,
+      verifyMode,
       jobs.runSegment,
       jobs.objects,
       jobs.selectedObjectId,
@@ -908,6 +916,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         hasSelection={jobs.selectedObjectId !== null}
         cutMode={cutMode}
         onCut={handleCut}
+        verifyMode={verifyMode}
+        onVerifyModeChange={setVerifyMode}
         rotateMode={rotateMode}
         isPreparing3D={isPreparing3D}
         onRotate={handleRotate}

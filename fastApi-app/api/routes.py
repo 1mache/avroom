@@ -23,7 +23,7 @@ from core.image_processing import (
     get_image_path,
 )
 from core.image_validation import ImageValidationError, ImageValidator
-from core.inference_pool.client import get_inference_client
+from core.inference_pool.client import InferenceJobError, get_inference_client
 from core.inference_pool.session_runtime import (
     SessionConflictError,
     acquire_canvas_writer,
@@ -309,10 +309,11 @@ def segment_image(request: SegmentRequest) -> SegmentResponse:
     """Return all mask candidates for a click without running inpainting."""
 
     logger.info(
-        "Segmentation requested: image_id=%s x=%d y=%d",
+        "Segmentation requested: image_id=%s x=%d y=%d verify=%s",
         request.image_id,
         request.x,
         request.y,
+        request.verify.value,
     )
 
     storage_dir: Path = get_image_storage_dir()
@@ -326,6 +327,7 @@ def segment_image(request: SegmentRequest) -> SegmentResponse:
             y=request.y,
             options=request.options,
             exclude_mask_ids=frozenset(pinned_mask_ids(request.image_id)),
+            verify=request.verify.value,
         )
     except SessionConflictError as exc:
         logger.warning("Segmentation rejected due to session conflict: %s", exc)
@@ -333,6 +335,15 @@ def segment_image(request: SegmentRequest) -> SegmentResponse:
     except ValueError as exc:
         logger.exception("Segmentation failed due to invalid input")
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except InferenceJobError as exc:
+        if str(exc) == "no viable mask":
+            logger.warning(
+                "Auto mask pick found no viable candidate: image_id=%s",
+                request.image_id,
+            )
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        logger.exception("Segmentation failed")
+        raise HTTPException(status_code=500, detail=f"Segmentation failed: {exc}") from exc
     except FileNotFoundError as exc:
         logger.exception("Segmentation failed due to missing file")
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -354,9 +365,10 @@ def segment_image(request: SegmentRequest) -> SegmentResponse:
         )
 
     logger.info(
-        "Segmentation complete: image_id=%s candidates=%d",
+        "Segmentation complete: image_id=%s candidates=%d verify=%s",
         request.image_id,
         len(masks),
+        request.verify.value,
     )
     return SegmentResponse(image_id=request.image_id, masks=masks)
 
@@ -366,9 +378,10 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
     """Inpaint background using one user-selected cached mask candidate."""
 
     logger.info(
-        "Inpainting requested: image_id=%s mask_id=%s",
+        "Inpainting requested: image_id=%s mask_id=%s verify=%s",
         request.image_id,
         request.mask_id,
+        request.verify.value,
     )
 
     storage_dir: Path = get_image_storage_dir()

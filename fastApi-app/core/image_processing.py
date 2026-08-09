@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import hashlib
 import io
 import logging
@@ -12,7 +13,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, UnidentifiedImageError
 
-from schemas.image import ImageProcessingOptions
+from schemas.image import ImageProcessingOptions, VerifyMode
 from core.mask_cache import delete_candidates, load_cutout_bytes, load_refined_mask, save_candidate
 from core.inference_pool.session_runtime import mask_id_for_candidate_slot
 from core.object_storage import current_background_path, object_cutout_path, resolve_object_cutout_path
@@ -57,6 +58,21 @@ def _get_object_segmentor_class():
         raise
 
     return ObjectSegmentor
+
+
+@functools.lru_cache(maxsize=1)
+def _get_cutout_clip_scorer():
+    """Lazy singleton CLIP scorer for auto mask pick (same model as upload validation)."""
+    try:
+        from avroom_object_removal import ClipZeroShotContentValidationStrategy
+    except ModuleNotFoundError as exc:
+        if exc.name == "avroom_object_removal":
+            logger.error("avroom_object_removal package not importable")
+            raise RuntimeError(
+                "Missing local package `avroom_object_removal`. Install repo dependencies or run `pip install -e ./TestModules`."
+            ) from exc
+        raise
+    return ClipZeroShotContentValidationStrategy()
 
 
 def _get_background_inpainter_class():
@@ -323,12 +339,16 @@ def segment_candidates_on_image(
     y: int,
     options: ImageProcessingOptions | None = None,
     exclude_mask_ids: frozenset[str] | None = None,
+    verify: str | VerifyMode | None = None,
 ) -> list[tuple[str, bytes]]:
     """Run segmentation only and cache every candidate mask.
 
     The returned bytes are BGRA cutout previews for the frontend. The matching
     refined masks stay on disk as `.npy` files because JSON/base64 is wasteful
     and inpainting needs exact pixel arrays, not visualized masks.
+
+    When ``verify`` is ``auto``, all candidates are still cached, but only the
+    CLIP-selected winner is returned. Raises ``ValueError`` if none is viable.
     """
 
     del options  # TODO: parameter not used. legacy click options. remove it or use
@@ -361,11 +381,32 @@ def segment_candidates_on_image(
         logger.info("ObjectSegmentor finished: image_id=%s candidates=%d", image_id, len(candidate_pairs))
 
         results: list[tuple[str, bytes]] = []
+        cutouts_bgra: list[np.ndarray] = []
         for index, (refined_mask, cutout_bgra) in enumerate(candidate_pairs):
             mask_id = mask_id_for_candidate_slot(index, pinned)
             cutout_bytes = _encode_png(cutout_bgra, f"candidate cutout {mask_id}")
             save_candidate(base_dir, image_id, mask_id, refined_mask, cutout_bytes)
             results.append((mask_id, cutout_bytes))
+            cutouts_bgra.append(cutout_bgra)
+
+        verify_mode = VerifyMode(verify) if verify else VerifyMode.MANUAL
+        if verify_mode is VerifyMode.AUTO:
+            from avroom_object_removal import select_best_cutout
+
+            selection = select_best_cutout(
+                cutouts_bgra,
+                click_xy=(x, y),
+                scorer=_get_cutout_clip_scorer(),
+            )
+            logger.info(
+                "Auto mask pick: image_id=%s winner=%s scores=%s",
+                image_id,
+                selection.winner_index,
+                selection.scores,
+            )
+            if selection.winner_index is None:
+                raise ValueError("no viable mask")
+            return [results[selection.winner_index]]
 
     return results
 

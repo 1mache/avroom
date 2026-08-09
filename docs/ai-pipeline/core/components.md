@@ -8,6 +8,7 @@ Source: [`TestModules/src/core/`](../../../TestModules/src/core/).
 - **`ObjectSegmentor`** — Segmentation-only facade for `get_mask_for_object_at_position`. Runs stages 1–3 and 5–7 (omits inpainting). Returns all SAM candidates as `(refined_mask, cutout_bgra)` pairs.
 - **`BackgroundInpainter`** — Inpainting-only facade for `cut_mask_from_image`. Runs stage 4 only. Accepts a BGR image and a mask; returns the inpainted BGR scene.
 - **`ContentImageValidator`** — Pre-pipeline upload content gate. Decodes image bytes and delegates to `ContentValidationFacade`. Not part of segment/inpaint/removal flows.
+- **`select_best_cutout`** — Ranks BGRA cutouts for a click (area/click pre-filter + CLIP `binary_prob`). Called from FastAPI `segment_candidates_on_image` when `verify=auto`.
 
 ## Shared helpers
 
@@ -31,7 +32,7 @@ Constructor dependency injection supplies defaults for each orchestrator:
 
 - **Upstream callers:** [`fastApi-app/core/image_processing.py`](../../../fastApi-app/core/image_processing.py):
   - `segment_at_click` → `ObjectRemover` (legacy `POST /images/click` one-step flow)
-  - `segment_candidates_on_image` → `ObjectSegmentor` (modern `POST /images/segment`)
+  - `segment_candidates_on_image` → `ObjectSegmentor` (modern `POST /images/segment`); `select_best_cutout` when `verify=auto`
   - `inpaint_selected_mask_on_image` → `BackgroundInpainter` (modern `POST /images/inpaint`)
 - Manual scripts under [`TestModules/tests/`](../../../TestModules/tests/).
 - **Downstream:** all pipeline domains listed on [README](README.md).

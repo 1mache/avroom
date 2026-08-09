@@ -39,6 +39,19 @@ Typically 3 pairs (SAM's three multimask candidates). Inpainting is not performe
 
 ---
 
+## `select_best_cutout`
+
+**Signature:** `select_best_cutout(cutouts_bgra, *, click_xy, scorer, threshold=0.6)`
+
+- **`cutouts_bgra`** — Sequence of full-image BGRA cutouts (SAM candidates).
+- **`click_xy`** — Natural-image click `(x, y)`.
+- **`scorer`** — Object with `binary_prob(pil_image, positive, negative)` (CLIP strategy).
+- **`threshold`** — Minimum `P(good)` to accept a winner (default `0.6`).
+
+**Returns** `CutoutSelectionResult(winner_index: int | None, scores: tuple[float, ...])`. Pre-filtered candidates score `0.0`. `winner_index` is `None` when every candidate fails the click/area gate or stays below threshold.
+
+---
+
 ## `BackgroundInpainter.cut_mask_from_image`
 
 **Signature:** `cut_mask_from_image(original_image, mask, compose_mask=None)`

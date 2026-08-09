@@ -1,5 +1,6 @@
 import React from "react";
 
+import type { VerifyMode } from "../../types/api";
 import {
   BackIcon,
   CheckIcon,
@@ -19,6 +20,9 @@ export interface ToolbarProps {
   /** Scissors is armed: the next click on the photo starts a cutout. */
   cutMode: boolean;
   onCut: () => void;
+  /** CLIP vs picker for the next cutout. */
+  verifyMode: VerifyMode;
+  onVerifyModeChange: (mode: VerifyMode) => void;
   /** The 3D angle picker is open; pressing rotate again applies the angle. */
   rotateMode: boolean;
   isPreparing3D: boolean;
@@ -46,6 +50,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   hasSelection,
   cutMode,
   onCut,
+  verifyMode,
+  onVerifyModeChange,
   rotateMode,
   isPreparing3D,
   onRotate,
@@ -96,6 +102,32 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       >
         <ScissorsIcon />
       </button>
+
+      <div
+        className="tool-radios"
+        role="radiogroup"
+        aria-label="Cutout verification"
+        data-tip={verifyMode === "auto" ? "CLIP picks the mask" : "Pick a mask"}
+      >
+        <button
+          type="button"
+          role="radio"
+          className="tool-radio"
+          aria-checked={verifyMode === "manual"}
+          onClick={() => onVerifyModeChange("manual")}
+        >
+          Manual
+        </button>
+        <button
+          type="button"
+          role="radio"
+          className="tool-radio"
+          aria-checked={verifyMode === "auto"}
+          onClick={() => onVerifyModeChange("auto")}
+        >
+          Auto
+        </button>
+      </div>
 
       <button
         type="button"

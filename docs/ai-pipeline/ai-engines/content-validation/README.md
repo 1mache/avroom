@@ -2,11 +2,11 @@
 
 **What this is:** ML-based upload content validation for room/landscape suitability. The facade picks a concrete `ContentValidationStrategy`. Default backend is CLIP zero-shot classification.
 
-**When it runs:** On `POST /images/upload` after FastAPI technical validation passes, via `ContentImageValidator` and the inference pool `VALIDATE_CONTENT` job.
+**When it runs:** On `POST /images/upload` after FastAPI technical validation passes, via `ContentImageValidator` and the inference pool `VALIDATE_CONTENT` job. The same CLIP strategy's `score_labels` / `binary_prob` API is reused by core `select_best_cutout` when `POST /images/segment` is called with `verify=auto`.
 
 **Not wired into:** `ObjectRemover`, `ObjectSegmentor`, or `BackgroundInpainter`.
 
-**In one line:** BGR room photo in → active strategy → `ContentValidationResult` (pass/fail + checks + messages).
+**In one line:** BGR room photo in → active strategy → `ContentValidationResult` (pass/fail + checks + messages). Public CLIP scoring is also the tool behind auto mask pick.
 
 Code: [`TestModules/src/ai_engines/content_validation/`](../../../../TestModules/src/ai_engines/content_validation/).
 

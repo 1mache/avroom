@@ -4,7 +4,7 @@ import logging
 from collections.abc import Sequence
 
 from .checks import FileSizeCheck, FormatMimeCheck, TechnicalCheck, build_validation_context, default_technical_checks
-from .types import ImageValidationContext, ImageValidationError, TechnicalCheckResult
+from .types import ImageValidationError, TechnicalCheckResult
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +54,11 @@ class ImageValidator:
             results.append(decode_result)
             raise ImageValidationError(results) from exc
 
+        # Both already ran above, on raw bytes, before the decode that the
+        # remaining checks need.
+        already_run = {FileSizeCheck.name, FormatMimeCheck.name}
         for check in self._checks:
-            if check.name in {"file_size", "format_mime"}:
+            if check.name in already_run:
                 continue
             result = check.run(ctx)
             results.append(result)

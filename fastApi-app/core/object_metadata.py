@@ -10,13 +10,15 @@ globally by UUID for O(1) lookup.
 import json
 import logging
 import uuid
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
-from schemas.image import CutoutBounds
+from core.object_storage import list_object_ids, object_meta_path
+from schemas.image import CutoutBounds, DEFAULT_SOURCE_ELEVATION_DEG
 from settings import get_image_storage_dir
 
 logger = logging.getLogger(__name__)
@@ -48,7 +50,7 @@ class ObjectMetadata(BaseModel):
     source_elevation_deg: Annotated[
         float,
         Field(
-            default=15.0,
+            default=DEFAULT_SOURCE_ELEVATION_DEG,
             description="Estimated Zero123 source elevation for this object (degrees).",
         ),
     ]
@@ -111,11 +113,6 @@ class ObjectIndexEntry(BaseModel):
 def get_object_index_file() -> Path:
     """Return path to the global UUID index (sibling of sessions.json)."""
     return get_image_storage_dir().parent / "object_index.json"
-
-
-def object_meta_path(base_dir: Path, session_id: str, object_id: int) -> Path:
-    """Return canonical path for one object's metadata JSON file."""
-    return base_dir / f"{session_id}_{object_id}_meta.json"
 
 
 def _load_object_index() -> dict[str, ObjectIndexEntry]:
@@ -184,38 +181,43 @@ def get_object_by_uuid(base_dir: Path, object_uuid: str) -> ObjectMetadata | Non
     return load_object_metadata(base_dir, entry.session_id, entry.object_id)
 
 
-def list_session_metadata(base_dir: Path, session_id: str, object_ids: list[int]) -> list[ObjectMetadata]:
-    """Return metadata records for the given object ids (skips missing files)."""
-    records: list[ObjectMetadata] = []
-    for object_id in object_ids:
-        meta = load_object_metadata(base_dir, session_id, object_id)
-        if meta is not None:
-            records.append(meta)
-    return records
+def _update_object_fields(
+    base_dir: Path,
+    object_uuid: str,
+    updates: dict[str, Any],
+) -> ObjectMetadata:
+    """Rewrite one object's metadata JSON with *updates* applied.
 
+    The UUID index is left alone on purpose: only ``session_id`` /
+    ``object_id`` are indexed and neither is updatable here.
 
-def set_object_name(base_dir: Path, object_uuid: str, name: str | None) -> ObjectMetadata:
-    """Update the optional name on an existing object metadata record."""
+    Raises:
+        FileNotFoundError: When no metadata record exists for *object_uuid*.
+    """
     metadata = get_object_by_uuid(base_dir, object_uuid)
     if metadata is None:
         raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
 
-    updated = metadata.model_copy(update={"name": name})
+    updated = metadata.model_copy(update=updates)
     path = object_meta_path(base_dir, updated.session_id, updated.object_id)
     path.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
+    return updated
+
+
+def set_object_name(base_dir: Path, object_uuid: str, name: str | None) -> ObjectMetadata:
+    """Update the optional name on an existing object metadata record."""
+    updated = _update_object_fields(base_dir, object_uuid, {"name": name})
     logger.info("Updated object name: uuid=%s name=%r", object_uuid, name)
     return updated
 
 
 def set_object_offset(base_dir: Path, object_uuid: str, offset_x: float, offset_y: float) -> ObjectMetadata:
     """Update the persisted drag offset on an existing object metadata record."""
-    metadata = get_object_by_uuid(base_dir, object_uuid)
-    if metadata is None:
-        raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
-
-    updated = metadata.model_copy(update={"offset_x": offset_x, "offset_y": offset_y})
-    path = object_meta_path(base_dir, updated.session_id, updated.object_id)
-    path.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
+    updated = _update_object_fields(
+        base_dir,
+        object_uuid,
+        {"offset_x": offset_x, "offset_y": offset_y},
+    )
     logger.info(
         "Updated object offset: uuid=%s offset_x=%.2f offset_y=%.2f",
         object_uuid,
@@ -227,13 +229,7 @@ def set_object_offset(base_dir: Path, object_uuid: str, offset_x: float, offset_
 
 def set_object_average_depth(base_dir: Path, object_uuid: str, average_depth: float) -> ObjectMetadata:
     """Update ``average_depth`` after a depth-based rescale placement."""
-    metadata = get_object_by_uuid(base_dir, object_uuid)
-    if metadata is None:
-        raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
-
-    updated = metadata.model_copy(update={"average_depth": average_depth})
-    path = object_meta_path(base_dir, updated.session_id, updated.object_id)
-    path.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
+    updated = _update_object_fields(base_dir, object_uuid, {"average_depth": average_depth})
     logger.info(
         "Updated object average_depth: uuid=%s average_depth=%.2f",
         object_uuid,
@@ -279,7 +275,7 @@ def create_object_metadata(
     object_id: int,
     average_depth: float,
     content_hash: str,
-    source_elevation_deg: float = 15.0,
+    source_elevation_deg: float = DEFAULT_SOURCE_ELEVATION_DEG,
     name: str | None = None,
     clone_root_uuid: str | None = None,
     clone_root_label: str | None = None,
@@ -327,6 +323,15 @@ def format_clone_name(root_label: str, clone_index: int) -> str:
     return f"{root_label}-copy{clone_index}"
 
 
+def _iter_clones_of_root(base_dir: Path, session_id: str, root_uuid: str) -> Iterator[ObjectMetadata]:
+    """Yield metadata for every finalized object in the session cloned from *root_uuid*."""
+
+    for object_id in list_object_ids(base_dir, session_id):
+        meta = load_object_metadata(base_dir, session_id, object_id)
+        if meta is not None and meta.clone_root_uuid == root_uuid:
+            yield meta
+
+
 def _existing_clone_label(
     base_dir: Path,
     session_id: str,
@@ -334,15 +339,8 @@ def _existing_clone_label(
 ) -> str | None:
     """Return the clone_root_label already used by clones of *root_uuid*, if any."""
 
-    from core.object_storage import list_object_ids
-
-    for object_id in list_object_ids(base_dir, session_id):
-        meta = load_object_metadata(base_dir, session_id, object_id)
-        if (
-            meta is not None
-            and meta.clone_root_uuid == root_uuid
-            and meta.clone_root_label is not None
-        ):
+    for meta in _iter_clones_of_root(base_dir, session_id, root_uuid):
+        if meta.clone_root_label is not None:
             return meta.clone_root_label
     return None
 
@@ -350,14 +348,7 @@ def _existing_clone_label(
 def count_clones_of_root(base_dir: Path, session_id: str, root_uuid: str) -> int:
     """Return how many finalized objects in the session are clones of *root_uuid*."""
 
-    from core.object_storage import list_object_ids
-
-    count = 0
-    for object_id in list_object_ids(base_dir, session_id):
-        meta = load_object_metadata(base_dir, session_id, object_id)
-        if meta is not None and meta.clone_root_uuid == root_uuid:
-            count += 1
-    return count
+    return sum(1 for _ in _iter_clones_of_root(base_dir, session_id, root_uuid))
 
 
 def resolve_clone_lineage(

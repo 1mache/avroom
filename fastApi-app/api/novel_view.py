@@ -5,13 +5,12 @@ import binascii
 import logging
 from pathlib import Path
 
-import cv2
-import numpy as np
 from fastapi import APIRouter, HTTPException, Response
 
 from avroom_object_removal.ai_engines.novel_view import NovelViewRotationAdapter
 
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
+from core.image_codec import encode_png, to_base64_ascii
 from core.inference_pool.client import get_inference_client
 from core.object_storage import (
     object_glb_path,
@@ -21,13 +20,16 @@ from core.object_storage import (
     resolve_object_glb_path,
 )
 from core.object_metadata import load_object_metadata
-from schemas.image import NovelViewPreviewCacheRequest, NovelViewRequest, NovelViewResponse
+from schemas.image import (
+    DEFAULT_SOURCE_ELEVATION_DEG,
+    NovelViewPreviewCacheRequest,
+    NovelViewRequest,
+    NovelViewResponse,
+)
 from settings import get_3d_storage_dir, get_image_storage_dir, touch_session
 
 router = APIRouter(prefix="/images", tags=["images"])
 logger = logging.getLogger(__name__)
-
-DEFAULT_SOURCE_ELEVATION_DEG = 15.0
 
 # Angular granularity the HTTP layer quantizes poses to before touching the
 # disk cache or the model. Synthesis is cached per (azimuth, relative
@@ -36,6 +38,10 @@ DEFAULT_SOURCE_ELEVATION_DEG = 15.0
 # inference runs. This is an HTTP-layer concern only -- the adapter and the
 # direct Python API keep accepting exact angles.
 ROTATION_STEP_DEG = 10.0
+
+# Below this the requested and stored elevations are the same angle, just
+# rounded differently on the way through JSON — not worth a log line.
+_ELEVATION_MATCH_TOLERANCE_DEG = 1e-3
 
 
 def _ensure_object_glb(*, uid: str, object_id: int, cutout_path: Path) -> Path:
@@ -94,23 +100,16 @@ def _ensure_object_glb(*, uid: str, object_id: int, cutout_path: Path) -> Path:
     return out_path
 
 
-def _bgra_to_png_bytes(bgra: np.ndarray) -> bytes:
-    """Encode a BGRA uint8 array as PNG bytes."""
+def _without_negative_zero(value: float) -> float:
+    """Return ``0.0`` in place of ``-0.0`` so cache filenames never differ by sign."""
 
-    success, encoded = cv2.imencode(".png", bgra)
-    if not success:
-        raise RuntimeError("Failed to encode novel-view PNG")
-    return encoded.tobytes()
+    return value + 0.0
 
 
 def _snap_to_step(value: float, step: float) -> float:
-    """Round ``value`` onto the nearest multiple of ``step``.
+    """Round ``value`` onto the nearest multiple of ``step``."""
 
-    Returns ``0.0`` rather than ``-0.0`` so snapped values compare and format
-    identically regardless of which side of zero they came from.
-    """
-
-    return round(value / step) * step + 0.0
+    return _without_negative_zero(round(value / step) * step)
 
 
 def _normalize_azimuth_deg(azimuth_deg: float) -> float:
@@ -123,7 +122,7 @@ def _normalize_azimuth_deg(azimuth_deg: float) -> float:
     wrapped = (azimuth_deg + 180.0) % 360.0 - 180.0
     if wrapped == -180.0:
         wrapped = 180.0
-    return wrapped + 0.0
+    return _without_negative_zero(wrapped)
 
 
 @router.post("/novel-view")
@@ -154,7 +153,7 @@ def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
         if object_meta is not None
         else DEFAULT_SOURCE_ELEVATION_DEG
     )
-    if object_meta is not None and abs(request.elevation_deg - source_elevation_deg) > 1e-3:
+    if object_meta is not None and abs(request.elevation_deg - source_elevation_deg) > _ELEVATION_MATCH_TOLERANCE_DEG:
         logger.info(
             "novel-view overriding request elevation %.1f with stored source elevation %.1f",
             request.elevation_deg,
@@ -257,7 +256,7 @@ def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
                 detail=f"Novel view synthesis failed: {exc}",
             ) from exc
 
-        png_bytes = _bgra_to_png_bytes(result_bgra)
+        png_bytes = encode_png(result_bgra, "novel-view")
         cache_path.write_bytes(png_bytes)
         touch_session(request.uid)
 
@@ -290,7 +289,7 @@ def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
     return NovelViewResponse(
         uid=request.uid,
         object_id=request.object_id,
-        image_b64=base64.b64encode(png_bytes).decode("ascii"),
+        image_b64=to_base64_ascii(png_bytes),
         format="png",
         cutout_bounds=cutout_bounds,
         elevation_deg=source_elevation_deg,

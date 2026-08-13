@@ -142,33 +142,33 @@ def _execute_impl(job: JobRequest) -> JobResult:
         from core.content_validation import validate_upload_content
 
         assert job.image_bytes is not None
-        outcome = validate_upload_content(job.image_bytes)
+        content = validate_upload_content(job.image_bytes)
         return JobResult(
             job_id=job.job_id,
             ok=True,
-            validation_ok=outcome.is_valid,
-            validation_checks=outcome.checks,
-            validation_scores=outcome.scores,
-            validation_messages=outcome.messages,
+            validation_ok=content.is_valid,
+            validation_checks=content.checks,
+            validation_scores=content.scores,
+            validation_messages=content.messages,
         )
 
     if job.kind == JobKind.CALIBRATE_CAMERA:
         from core.camera_calibration import calibrate_upload_image
 
         assert job.image_bytes is not None
-        outcome = calibrate_upload_image(job.image_bytes)
+        calibration = calibrate_upload_image(job.image_bytes)
         return JobResult(
             job_id=job.job_id,
             ok=True,
-            camera_calib_gravity=outcome.gravity,
-            camera_calib_roll_deg=outcome.roll_deg,
-            camera_calib_pitch_deg=outcome.pitch_deg,
-            camera_calib_fx=outcome.fx,
-            camera_calib_fy=outcome.fy,
-            camera_calib_cx=outcome.cx,
-            camera_calib_cy=outcome.cy,
-            camera_calib_confidence=outcome.confidence,
-            camera_calib_camera_model=outcome.camera_model,
+            camera_calib_gravity=calibration.gravity,
+            camera_calib_roll_deg=calibration.roll_deg,
+            camera_calib_pitch_deg=calibration.pitch_deg,
+            camera_calib_fx=calibration.fx,
+            camera_calib_fy=calibration.fy,
+            camera_calib_cx=calibration.cx,
+            camera_calib_cy=calibration.cy,
+            camera_calib_confidence=calibration.confidence,
+            camera_calib_camera_model=calibration.camera_model,
         )
 
     raise ValueError(f"Unsupported job kind: {job.kind}")

@@ -10,6 +10,11 @@ from avroom_object_removal.ai_engines.novel_view import (
     ZoomDirection,
 )
 
+# Fallback source elevation used whenever an object predates elevation
+# estimation or its metadata could not be read. Kept here so the schemas, the
+# stored metadata model and the novel-view endpoint cannot drift apart.
+DEFAULT_SOURCE_ELEVATION_DEG = 15.0
+
 
 class SessionInfo(BaseModel):
     """Lightweight session descriptor returned by the sessions list endpoint."""
@@ -88,12 +93,12 @@ class ImageProcessingOptions(BaseModel):
 
     output_format: Annotated[
         str,
-        Field(description="Desired output image format (e.g. 'png', 'jpeg')."),
-    ] = "png"
+        Field(default="png", description="Desired output image format (e.g. 'png', 'jpeg')."),
+    ]
     grayscale: Annotated[
         bool,
-        Field(description="Whether to convert the image to grayscale."),
-    ] = False
+        Field(default=False, description="Whether to convert the image to grayscale."),
+    ]
 
 
 class ImageUploadResponse(BaseModel):
@@ -147,8 +152,8 @@ class ClickRequest(BaseModel):
     ]
     options: Annotated[
         ImageProcessingOptions | None,
-        Field(description="Optional processing options associated with the click action."),
-    ] = None
+        Field(default=None, description="Optional processing options associated with the click action."),
+    ]
 
 
 class SegmentRequest(ClickRequest):
@@ -260,7 +265,7 @@ class InpaintMaskResponse(ClickResultResponse):
     source_elevation_deg: Annotated[
         float,
         Field(
-            default=15.0,
+            default=DEFAULT_SOURCE_ELEVATION_DEG,
             description="Estimated Zero123 source elevation for this object (degrees).",
         ),
     ]
@@ -360,7 +365,7 @@ class ObjectMetadataResponse(BaseModel):
     source_elevation_deg: Annotated[
         float,
         Field(
-            default=15.0,
+            default=DEFAULT_SOURCE_ELEVATION_DEG,
             description="Estimated Zero123 source elevation for this object (degrees).",
         ),
     ]
@@ -499,7 +504,7 @@ class NovelViewRequest(BaseModel):
                 "C_CLOCKWISE -> negative (viewed from above)."
             ),
         ),
-    ] = None
+    ]
     relative_elevation_deg: Annotated[
         float,
         Field(
@@ -509,14 +514,14 @@ class NovelViewRequest(BaseModel):
                 "elevation_direction is set; otherwise an unsigned magnitude."
             ),
         ),
-    ] = 0.0
+    ]
     elevation_direction: Annotated[
         ElevationDirection | None,
         Field(
             default=None,
             description="Optional tilt hint. UP -> positive delta, DOWN -> negative.",
         ),
-    ] = None
+    ]
     radius: Annotated[
         float,
         Field(
@@ -526,7 +531,7 @@ class NovelViewRequest(BaseModel):
                 "is set; otherwise an unsigned magnitude (0 = model default)."
             ),
         ),
-    ] = 0.0
+    ]
     zoom_direction: Annotated[
         ZoomDirection | None,
         Field(
@@ -536,7 +541,7 @@ class NovelViewRequest(BaseModel):
                 "ZOOM_OUT -> farther (positive radius)."
             ),
         ),
-    ] = None
+    ]
 
 
 class NovelViewResponse(BaseModel):
@@ -558,7 +563,7 @@ class NovelViewResponse(BaseModel):
     azimuth_direction: Annotated[
         AzimuthDirection | None,
         Field(default=None, description="Echo of azimuth_direction when supplied."),
-    ] = None
+    ]
     relative_elevation_deg: Annotated[
         float,
         Field(description="Resolved signed relative elevation passed to the model."),
@@ -566,12 +571,12 @@ class NovelViewResponse(BaseModel):
     elevation_direction: Annotated[
         ElevationDirection | None,
         Field(default=None, description="Echo of elevation_direction when supplied."),
-    ] = None
+    ]
     radius: Annotated[float, Field(description="Resolved signed radius passed to the model.")]
     zoom_direction: Annotated[
         ZoomDirection | None,
         Field(default=None, description="Echo of zoom_direction when supplied."),
-    ] = None
+    ]
 
 
 class NovelViewPreviewCacheRequest(BaseModel):
@@ -593,6 +598,6 @@ class NovelViewPreviewCacheRequest(BaseModel):
     relative_elevation_deg: Annotated[
         float,
         Field(default=0.0, description="Signed relative elevation this preview approximates."),
-    ] = 0.0
+    ]
     image_b64: Annotated[str, Field(description="Base64-encoded preview PNG.")]
 

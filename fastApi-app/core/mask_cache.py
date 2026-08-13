@@ -9,6 +9,8 @@ from typing import AbstractSet
 
 import numpy as np
 
+from core.object_storage import remove_file
+
 logger = logging.getLogger(__name__)
 
 
@@ -93,21 +95,32 @@ def _mask_id_from_candidate_path(path: Path, pattern: re.Pattern[str]) -> str | 
 def delete_candidate(base_dir: Path, image_id: str, mask_id: str) -> None:
     """Delete one temporary candidate pair for the given mask id."""
 
-    refined = refined_mask_path(base_dir, image_id, mask_id)
-    cutout = cutout_path(base_dir, image_id, mask_id)
-    removed = 0
-    if refined.exists():
-        refined.unlink(missing_ok=True)
-        removed += 1
-    if cutout.exists():
-        cutout.unlink(missing_ok=True)
-        removed += 1
+    removed = remove_file(refined_mask_path(base_dir, image_id, mask_id))
+    removed += remove_file(cutout_path(base_dir, image_id, mask_id))
     logger.debug(
         "Deleted mask candidate: image_id=%s mask_id=%s removed=%d",
         image_id,
         mask_id,
         removed,
     )
+
+
+def _delete_unpinned(
+    base_dir: Path,
+    glob_pattern: str,
+    name_pattern: re.Pattern[str],
+    excluded: AbstractSet[str],
+) -> int:
+    """Delete candidate files matching *glob_pattern* unless their mask id is pinned."""
+
+    removed = 0
+    for path in base_dir.glob(glob_pattern):
+        mask_id = _mask_id_from_candidate_path(path, name_pattern)
+        if mask_id is not None and mask_id in excluded:
+            continue
+        path.unlink(missing_ok=True)
+        removed += 1
+    return removed
 
 
 def delete_candidates(
@@ -123,19 +136,8 @@ def delete_candidates(
     """
 
     excluded = exclude_mask_ids or set()
-    removed = 0
-    for path in base_dir.glob(f"{image_id}_mask_*_refined.npy"):
-        mask_id = _mask_id_from_candidate_path(path, _REFINED_MASK_PATTERN)
-        if mask_id is not None and mask_id in excluded:
-            continue
-        path.unlink(missing_ok=True)
-        removed += 1
-    for path in base_dir.glob(f"{image_id}_mask_*_cutout.png"):
-        mask_id = _mask_id_from_candidate_path(path, _CUTOUT_MASK_PATTERN)
-        if mask_id is not None and mask_id in excluded:
-            continue
-        path.unlink(missing_ok=True)
-        removed += 1
+    removed = _delete_unpinned(base_dir, f"{image_id}_mask_*_refined.npy", _REFINED_MASK_PATTERN, excluded)
+    removed += _delete_unpinned(base_dir, f"{image_id}_mask_*_cutout.png", _CUTOUT_MASK_PATTERN, excluded)
     logger.debug(
         "Deleted mask candidates: image_id=%s removed=%d excluded=%s",
         image_id,

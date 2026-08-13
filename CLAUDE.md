@@ -88,6 +88,16 @@ Central config lives in `fastApi-app/logging_config.py`. Call `setup_logging()` 
 
 Use `logger = logging.getLogger(__name__)` at module level. No `print()`. Level controlled via `LOG_LEVEL` env var (default `INFO`). Output goes to stdout and `fastApi-app/logs/app.log` (gitignored, rotates at 5 MB).
 
+## Shared FastAPI Helpers
+
+Reuse these instead of re-implementing them per module:
+
+- `core/image_codec.py` — `encode_png(array, label)` and `to_base64_ascii(bytes)`. Never hand-roll `cv2.imencode` / `base64.b64encode(...).decode("ascii")` in a route or pipeline function.
+- `core/avroom_package.py` — `load_avroom_attr(attr, module=...)` for every deferred `avroom_object_removal` import; it converts a missing install into one `RuntimeError` with the `pip install -e ./TestModules` hint.
+- `core/object_storage.py` — all `{uid}_{object_id}_…` path construction, plus `legacy_object_cutout_path` / `legacy_object_glb_path` for pre-numbering names and `remove_file(path) -> int` for "delete if present, count it" loops.
+- `core/depth_cache.py` — `memory_image_key(bytes)` builds the `memory://<sha256>` key the AI pipeline caches model state under.
+- `settings.py` — `_read_json` / `_write_json` / `load_session_uids` back every JSON sidecar (sessions, names, timestamps); `_env_int` / `_env_float` / `_env_bool` back every env-var getter.
+
 ## Python Code Style
 
 - **Python 3.11**, type-checked with **mypy**.

@@ -20,7 +20,7 @@ _DEBUG_MODEL_PATH = Path(__file__).resolve().parent.parent / "res" / "test" / "d
 
 
 class Test3DRequest(BaseModel):
-    """JSON body for POST /objects/test-3d."""
+    """JSON body for POST /3d/test-3d."""
 
     uid: Annotated[
         str,
@@ -36,8 +36,8 @@ class Test3DRequest(BaseModel):
 def generate_test_3d(request: Test3DRequest) -> Response:
     """Generate a GLB 3D model from the stored cutout for the given uid.
 
-    In non-debug mode the cutout is read from the image storage directory as
-    ``{uid}_cutout.png`` (same layout as the image click endpoint).
+    The cutout is read from the image storage directory using the standard
+    per-object naming (``{uid}_{object_id}_cutout.png``).
 
     Returns raw GLB bytes (model/gltf-binary). Intended for Three.js consumption
     via GLTFLoader.load() or GLTFLoader.parse().

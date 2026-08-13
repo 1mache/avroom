@@ -26,6 +26,13 @@ from settings import (
 )
 from .types import ImageValidationContext, TechnicalCheckResult
 
+# Luminance values at or beyond these bounds are treated as blown-out /
+# crushed pixels when measuring how much of the frame is clipped.
+_CLIP_BLACK_LEVEL = 5
+_CLIP_WHITE_LEVEL = 250
+_OPAQUE_ALPHA_LEVEL = 127
+_MEGAPIXEL = 1_000_000.0
+
 
 class TechnicalCheck(Protocol):
     """Protocol for one deterministic upload validation check."""
@@ -53,9 +60,12 @@ def build_validation_context(
     rgba = np.array(pil_image)
     rgb_array = rgba[:, :, :3]
     bgr_array = cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
+    # Three of the checks below work on luminance; convert once here rather
+    # than repeating the conversion per check.
+    gray_array = cv2.cvtColor(bgr_array, cv2.COLOR_BGR2GRAY)
 
     alpha = rgba[:, :, 3]
-    alpha_opaque_ratio = float(np.mean(alpha > 127))
+    alpha_opaque_ratio = float(np.mean(alpha > _OPAQUE_ALPHA_LEVEL))
 
     return ImageValidationContext(
         file_bytes=file_bytes,
@@ -64,6 +74,7 @@ def build_validation_context(
         pil_image=pil_image,
         rgb_array=rgb_array,
         bgr_array=bgr_array,
+        gray_array=gray_array,
         width=width,
         height=height,
         alpha_opaque_ratio=alpha_opaque_ratio,
@@ -71,6 +82,8 @@ def build_validation_context(
 
 
 class FileSizeCheck:
+    """Reject uploads outside the configured byte-size window."""
+
     name = "file_size"
 
     def run_bytes(self, file_bytes: bytes) -> TechnicalCheckResult:
@@ -98,6 +111,8 @@ class FileSizeCheck:
 
 
 class FormatMimeCheck:
+    """Reject formats outside the allow-list, sniffing magic bytes over the declared type."""
+
     name = "format_mime"
 
     @staticmethod
@@ -139,6 +154,8 @@ class FormatMimeCheck:
 
 
 class AnimatedFrameCheck:
+    """Reject multi-frame images; the pipeline only ever processes one frame."""
+
     name = "animated_frames"
 
     def run(self, ctx: ImageValidationContext) -> TechnicalCheckResult:
@@ -162,6 +179,8 @@ class AnimatedFrameCheck:
 
 
 class ResolutionCheck:
+    """Reject images too small to segment, or too large / distorted to process."""
+
     name = "resolution"
 
     def run(self, ctx: ImageValidationContext) -> TechnicalCheckResult:
@@ -187,7 +206,7 @@ class ResolutionCheck:
                 message=f"Resolution too high ({ctx.width}x{ctx.height}; maximum {max_w}x{max_h}).",
             )
 
-        megapixels = (ctx.width * ctx.height) / 1_000_000.0
+        megapixels = (ctx.width * ctx.height) / _MEGAPIXEL
         if megapixels > max_mp:
             return TechnicalCheckResult(
                 name=self.name,
@@ -208,6 +227,8 @@ class ResolutionCheck:
 
 
 class AlphaEmptyCheck:
+    """Reject near-fully-transparent uploads, which carry no room to edit."""
+
     name = "alpha_empty"
 
     def run(self, ctx: ImageValidationContext) -> TechnicalCheckResult:
@@ -226,11 +247,12 @@ class AlphaEmptyCheck:
 
 
 class BlurCheck:
+    """Reject out-of-focus photos via Laplacian variance."""
+
     name = "blur"
 
     def run(self, ctx: ImageValidationContext) -> TechnicalCheckResult:
-        gray = cv2.cvtColor(ctx.bgr_array, cv2.COLOR_BGR2GRAY)
-        variance = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        variance = float(cv2.Laplacian(ctx.gray_array, cv2.CV_64F).var())
         threshold = get_upload_blur_min_variance()
         if variance < threshold:
             return TechnicalCheckResult(
@@ -243,12 +265,16 @@ class BlurCheck:
 
 
 class ExposureCheck:
+    """Reject under/over-exposed photos and frames that are mostly clipped."""
+
     name = "exposure"
 
     def run(self, ctx: ImageValidationContext) -> TechnicalCheckResult:
-        gray = cv2.cvtColor(ctx.bgr_array, cv2.COLOR_BGR2GRAY)
+        gray = ctx.gray_array
         mean_luminance = float(np.mean(gray))
-        clip_fraction = float(np.mean((gray <= 5) | (gray >= 250)))
+        clip_fraction = float(
+            np.mean((gray <= _CLIP_BLACK_LEVEL) | (gray >= _CLIP_WHITE_LEVEL))
+        )
         clip_max = get_upload_clip_fraction_max()
         mean_min = get_upload_exposure_mean_min()
         mean_max = get_upload_exposure_mean_max()
@@ -278,11 +304,12 @@ class ExposureCheck:
 
 
 class UniformSceneCheck:
+    """Reject flat images (blank walls, solid fills) that hold no scene to edit."""
+
     name = "uniform_scene"
 
     def run(self, ctx: ImageValidationContext) -> TechnicalCheckResult:
-        gray = cv2.cvtColor(ctx.bgr_array, cv2.COLOR_BGR2GRAY)
-        spatial_variance = float(np.var(gray))
+        spatial_variance = float(np.var(ctx.gray_array))
         threshold = get_upload_min_spatial_variance()
         if spatial_variance < threshold:
             return TechnicalCheckResult(

@@ -16,6 +16,39 @@ IMAGE_STORAGE_DIR = ""
 DEFAULT_IMAGE_STORAGE_SUBDIR = "tmp/images"
 DEFAULT_3D_STORAGE_SUBDIR = "tmp/3d"
 
+# One worker holds a full model stack in VRAM, so the ceiling is a guard
+# against a typo in INFERENCE_WORKERS exhausting the GPU.
+MAX_INFERENCE_WORKERS = 8
+DEFAULT_INFERENCE_JOB_TIMEOUT_SEC = 600
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, str(default)).strip()
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    return default
+
 
 def _project_root() -> Path:
     """Return project root by locating the closest parent with pyproject.toml."""
@@ -67,24 +100,49 @@ def get_session_timestamps_file() -> Path:
     return get_image_storage_dir().parent / "session_timestamps.json"
 
 
+def _read_json(path: Path) -> object | None:
+    """Read one JSON sidecar file, returning ``None`` when absent or malformed.
+
+    Every sidecar here is regenerable state, so a corrupted file is treated as
+    "no data" rather than an error the caller has to handle.
+    """
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def _write_json(path: Path, payload: object) -> None:
+    """Write one JSON sidecar file, creating its parent directory if needed."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _read_str_mapping(path: Path) -> dict[str, str]:
+    """Read a JSON sidecar known to hold a flat ``str -> str`` mapping."""
+    data = _read_json(path)
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): str(value) for key, value in data.items()}
+
+
+def load_session_uids() -> list[str]:
+    """Load all registered session uids from sessions.json, newest last."""
+    data = _read_json(get_sessions_file())
+    if not isinstance(data, list):
+        return []
+    return data
+
+
 def load_names() -> dict[str, str]:
     """Load the uid->name mapping from names.json.
 
     Returns an empty dict if the file is absent or malformed so callers never
     have to handle missing-names specially.
     """
-    import json
-
-    names_file = get_names_file()
-    if not names_file.exists():
-        return {}
-    try:
-        data = json.loads(names_file.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return {str(k): str(v) for k, v in data.items()}
-        return {}
-    except (json.JSONDecodeError, ValueError):
-        return {}
+    return _read_str_mapping(get_names_file())
 
 
 def set_session_name(uid: str, name: str) -> None:
@@ -94,8 +152,6 @@ def set_session_name(uid: str, name: str) -> None:
     *different* uid, raises ValueError so the caller can surface a 409 to the
     client without knowing the storage details.
     """
-    import json
-
     names = load_names()
 
     existing_uid = next((k for k, v in names.items() if v == name), None)
@@ -103,64 +159,36 @@ def set_session_name(uid: str, name: str) -> None:
         raise ValueError(f"Name '{name}' is already used by another session.")
 
     names[uid] = name
-
-    names_file = get_names_file()
-    names_file.parent.mkdir(parents=True, exist_ok=True)
-    names_file.write_text(json.dumps(names, indent=2), encoding="utf-8")
+    _write_json(get_names_file(), names)
 
 
 def deregister_uid(uid: str) -> None:
     """Remove uid from sessions.json. No-op if uid is not present."""
-    import json
-
-    sessions_file = get_sessions_file()
-    if not sessions_file.exists():
-        return
-
-    try:
-        uids: list[str] = json.loads(sessions_file.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, ValueError):
-        return
-
+    uids = load_session_uids()
     filtered = [u for u in uids if u != uid]
     if len(filtered) == len(uids):
         return
 
-    sessions_file.write_text(json.dumps(filtered, indent=2), encoding="utf-8")
+    _write_json(get_sessions_file(), filtered)
 
 
 def remove_session_name(uid: str) -> None:
     """Remove uid's name entry from names.json. No-op if uid has no name."""
-    import json
-
     names = load_names()
     if names.pop(uid, None) is None:
         return
 
-    names_file = get_names_file()
-    names_file.parent.mkdir(parents=True, exist_ok=True)
-    names_file.write_text(json.dumps(names, indent=2), encoding="utf-8")
+    _write_json(get_names_file(), names)
 
 
 def _load_session_timestamps() -> dict[str, str]:
     """Load uid->last_changed ISO timestamps from session_timestamps.json."""
-    timestamps_file = get_session_timestamps_file()
-    if not timestamps_file.exists():
-        return {}
-    try:
-        data = json.loads(timestamps_file.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return {str(k): str(v) for k, v in data.items()}
-        return {}
-    except (json.JSONDecodeError, ValueError):
-        return {}
+    return _read_str_mapping(get_session_timestamps_file())
 
 
 def _save_session_timestamps(timestamps: dict[str, str]) -> None:
     """Persist the uid->last_changed mapping to session_timestamps.json."""
-    timestamps_file = get_session_timestamps_file()
-    timestamps_file.parent.mkdir(parents=True, exist_ok=True)
-    timestamps_file.write_text(json.dumps(timestamps, indent=2), encoding="utf-8")
+    _write_json(get_session_timestamps_file(), timestamps)
 
 
 def touch_session(uid: str) -> str:
@@ -187,14 +215,7 @@ def clear_session_last_changed(uid: str) -> None:
 
 def is_session_registered(uid: str) -> bool:
     """Return whether ``uid`` appears in sessions.json."""
-    sessions_file = get_sessions_file()
-    if not sessions_file.exists():
-        return False
-    try:
-        uids: list[str] = json.loads(sessions_file.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, ValueError):
-        return False
-    return uid in uids
+    return uid in load_session_uids()
 
 
 class SessionNotFoundError(LookupError):
@@ -218,20 +239,11 @@ def evaluate_session_sync(uid: str, client_last_changed: str | None) -> tuple[st
 def register_uid(uid: str) -> None:
     """Append uid to sessions.json, creating the file if absent."""
 
-    sessions_file = get_sessions_file()
-    sessions_file.parent.mkdir(parents=True, exist_ok=True)
-
-    uids: list[str] = []
-    if sessions_file.exists():
-        try:
-            uids = json.loads(sessions_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, ValueError):
-            uids = []
-
+    uids = load_session_uids()
     if uid not in uids:
         uids.append(uid)
 
-    sessions_file.write_text(json.dumps(uids, indent=2), encoding="utf-8")
+    _write_json(get_sessions_file(), uids)
 
 
 def get_inference_worker_count() -> int:
@@ -241,50 +253,12 @@ def get_inference_worker_count() -> int:
     process-wide inference lock. Values above zero spawn that many GPU worker
     subprocesses (~one full model stack per worker in VRAM).
     """
-    raw = os.environ.get("INFERENCE_WORKERS", "0").strip()
-    try:
-        count = int(raw)
-    except ValueError:
-        count = 0
-    return max(0, min(count, 8))
+    return max(0, min(_env_int("INFERENCE_WORKERS", 0), MAX_INFERENCE_WORKERS))
 
 
 def get_inference_job_timeout_sec() -> int:
     """Maximum seconds the API waits for one inference worker job to finish."""
-    raw = os.environ.get("INFERENCE_JOB_TIMEOUT_SEC", "600").strip()
-    try:
-        timeout = int(raw)
-    except ValueError:
-        timeout = 600
-    return max(1, timeout)
-
-
-def _env_int(name: str, default: int) -> int:
-    raw = os.environ.get(name, str(default)).strip()
-    try:
-        return int(raw)
-    except ValueError:
-        return default
-
-
-def _env_float(name: str, default: float) -> float:
-    raw = os.environ.get(name, str(default)).strip()
-    try:
-        return float(raw)
-    except ValueError:
-        return default
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    normalized = raw.strip().lower()
-    if normalized in {"1", "true", "yes", "on"}:
-        return True
-    if normalized in {"0", "false", "no", "off"}:
-        return False
-    return default
+    return max(1, _env_int("INFERENCE_JOB_TIMEOUT_SEC", DEFAULT_INFERENCE_JOB_TIMEOUT_SEC))
 
 
 def get_upload_validation_enabled() -> bool:

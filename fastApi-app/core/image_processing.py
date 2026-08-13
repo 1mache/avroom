@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import io
 import logging
 from dataclasses import dataclass
@@ -13,6 +12,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw, UnidentifiedImageError
 
 from schemas.image import ImageProcessingOptions
+from core.avroom_package import load_avroom_attr
+from core.image_codec import encode_png
 from core.mask_cache import delete_candidates, load_cutout_bytes, load_refined_mask, save_candidate
 from core.inference_pool.session_runtime import mask_id_for_candidate_slot
 from core.object_storage import current_background_path, object_cutout_path, resolve_object_cutout_path
@@ -20,6 +21,7 @@ from core.depth_cache import (
     compute_average_depth_over_mask,
     compute_depth_scale_factor,
     get_or_compute_depth,
+    memory_image_key,
     sample_depth_at_point,
 )
 from core.camera_calib_cache import load_camera_calib
@@ -30,67 +32,44 @@ from core.inference_lock import inference_session
 
 logger = logging.getLogger(__name__)
 
-
-def _get_object_remover_class():
-    try:
-        from avroom_object_removal import ObjectRemover
-    except ModuleNotFoundError as exc:
-        if exc.name == "avroom_object_removal":
-            logger.error("avroom_object_removal package not importable")
-            raise RuntimeError(
-                "Missing local package `avroom_object_removal`. Install repo dependencies or run `pip install -e ./TestModules`."
-            ) from exc
-        raise
-
-    return ObjectRemover
+# Debug click overlays live in their own subdirectory so they are never picked
+# up by the session artifact globs that scan the storage dir itself.
+DEBUG_DIR_SUBPATH = "point"
+_DEBUG_MARKER_RADIUS_PX = 6
+_DEBUG_MARKER_OUTLINE_PX = 2
 
 
-def _get_object_segmentor_class():
-    try:
-        from avroom_object_removal import ObjectSegmentor
-    except ModuleNotFoundError as exc:
-        if exc.name == "avroom_object_removal":
-            logger.error("avroom_object_removal package not importable")
-            raise RuntimeError(
-                "Missing local package `avroom_object_removal`. Install repo dependencies or run `pip install -e ./TestModules`."
-            ) from exc
-        raise
+def debug_click_image_path(base_dir: Path, image_id: str) -> Path:
+    """Return the canonical path of a session's debug click overlay."""
 
-    return ObjectSegmentor
+    return base_dir / DEBUG_DIR_SUBPATH / f"{image_id}_debug.png"
 
 
-def _get_background_inpainter_class():
-    try:
-        from avroom_object_removal import BackgroundInpainter
-    except ModuleNotFoundError as exc:
-        if exc.name == "avroom_object_removal":
-            logger.error("avroom_object_removal package not importable")
-            raise RuntimeError(
-                "Missing local package `avroom_object_removal`. Install repo dependencies or run `pip install -e ./TestModules`."
-            ) from exc
-        raise
-
-    return BackgroundInpainter
-
-
-def _create_debug_click_image(source_image: Image.Image, x: int, y: int, base_dir: Path, image_id: str):
+def _create_debug_click_image(
+    source_image: Image.Image,
+    x: int,
+    y: int,
+    base_dir: Path,
+    image_id: str,
+) -> None:
     """Create RGB debug image with a marker drawn at click coordinates."""
-
-    RADIUS = 6
-    DEBUG_DIR_SUBPATH = "point"
 
     debug_image: Image.Image = source_image.convert("RGB")
     draw = ImageDraw.Draw(debug_image)
     draw.ellipse(
-        (x - RADIUS, y - RADIUS, x + RADIUS, y + RADIUS),
+        (
+            x - _DEBUG_MARKER_RADIUS_PX,
+            y - _DEBUG_MARKER_RADIUS_PX,
+            x + _DEBUG_MARKER_RADIUS_PX,
+            y + _DEBUG_MARKER_RADIUS_PX,
+        ),
         fill="red",
         outline="white",
-        width=2,
+        width=_DEBUG_MARKER_OUTLINE_PX,
     )
 
-    tmp_dir = base_dir / DEBUG_DIR_SUBPATH
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    debug_image_path = tmp_dir / f"{image_id}_debug.png"
+    debug_image_path = debug_click_image_path(base_dir, image_id)
+    debug_image_path.parent.mkdir(parents=True, exist_ok=True)
     debug_image.save(debug_image_path)
 
 
@@ -211,16 +190,6 @@ def _decode_cutout_alpha(cutout_bytes: bytes, image_id: str, mask_id: str) -> np
     return decoded[:, :, 3]
 
 
-def _encode_png(image: np.ndarray, label: str) -> bytes:
-    """Encode OpenCV image array as PNG bytes."""
-
-    ok, buffer = cv2.imencode(".png", image)
-    if not ok or buffer is None:
-        logger.error("Failed to encode %s image to PNG", label)
-        raise RuntimeError(f"Failed to encode {label} image to PNG.")
-    return buffer.tobytes()
-
-
 def segment_at_click(
     image_bytes: bytes,
     x: int,
@@ -240,8 +209,8 @@ def segment_at_click(
         logger.warning("segment_at_click called with empty bytes — returning empty result")
         return b"", b"", "png"
 
-    remover = _get_object_remover_class()()
-    image_key = f"memory://{hashlib.sha256(image_bytes).hexdigest()}"
+    remover = load_avroom_attr("ObjectRemover")()
+    image_key = memory_image_key(image_bytes)
 
     depth_map = None
     if session_id is not None and base_dir is not None:
@@ -266,17 +235,8 @@ def segment_at_click(
         cutout_bgra.shape,
     )
 
-    ok_bg, bg_buf = cv2.imencode(".png", background_bgr)
-    ok_co, co_buf = cv2.imencode(".png", cutout_bgra)
-    if not ok_bg or bg_buf is None:
-        logger.error("Failed to encode background image to PNG")
-        raise RuntimeError("Failed to encode background image to PNG.")
-    if not ok_co or co_buf is None:
-        logger.error("Failed to encode cutout image to PNG")
-        raise RuntimeError("Failed to encode cutout image to PNG.")
-
-    background_bytes = bg_buf.tobytes()
-    cutout_bytes = co_buf.tobytes()
+    background_bytes = encode_png(background_bgr, "background")
+    cutout_bytes = encode_png(cutout_bgra, "cutout")
     logger.debug(
         "Encoded result: bg_bytes=%d cutout_bytes=%d",
         len(background_bytes),
@@ -340,16 +300,14 @@ def segment_candidates_on_image(
         # New segmentation invalidates older unchosen candidates except pinned masks.
         delete_candidates(base_dir, image_id, exclude_mask_ids=pinned)
 
-        segmentor = _get_object_segmentor_class()()
+        segmentor = load_avroom_attr("ObjectSegmentor")()
         depth_map, _ = get_or_compute_depth(
             base_dir,
             image_id,
             image_bytes,
             segmentor.depth.map_depth,
         )
-        # Hash image bytes → build cache key. memory:// prefix tells the AI pipeline
-        # "don't read disk, use this hash to find cached model state."
-        image_key = f"memory://{hashlib.sha256(image_bytes).hexdigest()}"
+        image_key = memory_image_key(image_bytes)
         logger.info("Running ObjectSegmentor: image_key=%s click=(%d,%d)", image_key, x, y)
         candidate_pairs = segmentor.get_mask_for_object_at_position(
             image_path=image_key,
@@ -363,7 +321,7 @@ def segment_candidates_on_image(
         results: list[tuple[str, bytes]] = []
         for index, (refined_mask, cutout_bgra) in enumerate(candidate_pairs):
             mask_id = mask_id_for_candidate_slot(index, pinned)
-            cutout_bytes = _encode_png(cutout_bgra, f"candidate cutout {mask_id}")
+            cutout_bytes = encode_png(cutout_bgra, f"candidate cutout {mask_id}")
             save_candidate(base_dir, image_id, mask_id, refined_mask, cutout_bytes)
             results.append((mask_id, cutout_bytes))
 
@@ -384,7 +342,7 @@ def inpaint_selected_mask_on_image(
     compose_mask = _decode_cutout_alpha(cutout_bytes, image_id, mask_id)
 
     with inference_session():
-        inpainter = _get_background_inpainter_class()()
+        inpainter = load_avroom_attr("BackgroundInpainter")()
         logger.info(
             "Running BackgroundInpainter: image_id=%s mask_id=%s image_shape=%s mask_shape=%s compose_shape=%s",
             image_id,
@@ -400,7 +358,7 @@ def inpaint_selected_mask_on_image(
         )
         logger.info("BackgroundInpainter finished: image_id=%s mask_id=%s bg_shape=%s", image_id, mask_id, background_bgr.shape)
 
-    background_bytes = _encode_png(background_bgr, "background")
+    background_bytes = encode_png(background_bgr, "background")
     return background_bytes, cutout_bytes, "png"
 
 
@@ -417,7 +375,7 @@ def build_object_metadata_for_inpaint(
     """
     image_bytes = load_canvas_bytes(image_id=image_id, base_dir=base_dir)
     with inference_session():
-        segmentor = _get_object_segmentor_class()()
+        segmentor = load_avroom_attr("ObjectSegmentor")()
         depth_map, content_hash = get_or_compute_depth(
             base_dir,
             image_id,
@@ -432,9 +390,11 @@ def build_object_metadata_for_inpaint(
             cache_dict_to_calibration_result(calib_payload) if calib_payload is not None else None
         )
 
-        from avroom_object_removal.ai_engines.elevation_estimation import ElevationEstimationFacade
-
-        elevation_result = ElevationEstimationFacade().estimate(
+        elevation_facade = load_avroom_attr(
+            "ElevationEstimationFacade",
+            "avroom_object_removal.ai_engines.elevation_estimation",
+        )()
+        elevation_result = elevation_facade.estimate(
             depth_map,
             refined_mask,
             calibration=calibration,
@@ -547,7 +507,7 @@ def rescale_cutout_by_depth(
     image_bytes = load_canvas_bytes(image_id=metadata.session_id, base_dir=base_dir)
 
     with inference_session():
-        segmentor = _get_object_segmentor_class()()
+        segmentor = load_avroom_attr("ObjectSegmentor")()
         depth_map, _ = get_or_compute_depth(
             base_dir,
             metadata.session_id,
@@ -573,7 +533,7 @@ def rescale_cutout_by_depth(
         raise ValueError(f"Could not decode cutout PNG for uuid='{object_uuid}'.")
 
     scaled_cutout = _scale_cutout_bgra_about_alpha_center(cutout_bgra, scale_factor)
-    cutout_bytes = _encode_png(scaled_cutout, "rescaled cutout")
+    cutout_bytes = encode_png(scaled_cutout, "rescaled cutout")
 
     write_path = object_cutout_path(base_dir, metadata.session_id, metadata.object_id)
     write_path.write_bytes(cutout_bytes)

@@ -251,6 +251,49 @@ class InferenceClient:
         )
 
 
+    def run_debug_depth_map(
+        self, *, image_bytes: bytes, model_name: str, colormap: str
+    ) -> bytes:
+        job = JobRequest(
+            job_id=_new_job_id(),
+            kind=JobKind.DEBUG_DEPTH_MAP,
+            storage_dir=str(Path.cwd()),
+            image_bytes=image_bytes,
+            options={"model_name": model_name, "colormap": colormap},
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.debug_png_bytes is not None
+        return result.debug_png_bytes
+
+    def run_debug_sam_everything(
+        self,
+        *,
+        image_bytes: bytes,
+        source: str,
+        depth_model_name: str,
+        points_per_side: int,
+        alpha: float,
+    ) -> tuple[bytes, int]:
+        job = JobRequest(
+            job_id=_new_job_id(),
+            kind=JobKind.DEBUG_SAM_EVERYTHING,
+            storage_dir=str(Path.cwd()),
+            image_bytes=image_bytes,
+            options={
+                "source": source,
+                "depth_model_name": depth_model_name,
+                "points_per_side": points_per_side,
+                "alpha": alpha,
+            },
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.debug_png_bytes is not None
+        assert result.debug_mask_count is not None
+        return result.debug_png_bytes, result.debug_mask_count
+
+
 def init_inference_client(pool: InferencePool | None = None) -> None:
     """Initialize the process-wide inference client."""
     global _pool, _client

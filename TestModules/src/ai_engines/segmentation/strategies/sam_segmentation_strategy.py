@@ -78,6 +78,25 @@ def _load_sam_predictor(checkpoint_path: str, model_type: str, device: str) -> A
     return SamPredictor(sam)
 
 
+@functools.lru_cache(maxsize=4)
+def _load_sam_mask_generator(
+    checkpoint_path: str, model_type: str, device: str, points_per_side: int
+) -> Any:
+    """Load and cache a ``SamAutomaticMaskGenerator`` per (checkpoint, points_per_side).
+
+    Reuses the already-loaded ``SamPredictor``'s model (via ``_load_sam_predictor``)
+    so the ~370 MB weights are never loaded twice for the same checkpoint.
+    """
+    from segment_anything import SamAutomaticMaskGenerator
+
+    predictor = _load_sam_predictor(checkpoint_path, model_type, device)
+    logger.info(
+        f"Loading SAM automatic mask generator (points_per_side={points_per_side}) "
+        f"on {device}"
+    )
+    return SamAutomaticMaskGenerator(predictor.model, points_per_side=points_per_side)
+
+
 class SamSegmentationStrategy(ImageSegmentationStrategy):
     """Segment Anything (Meta) point-prompted segmentation strategy.
 
@@ -214,3 +233,35 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
             candidate_pairs.append((expanded_mask, original_mask))
 
         return tuple(candidate_pairs)
+
+    def predict_everything(
+        self,
+        image: np.ndarray,
+        *,
+        points_per_side: int = 16,
+    ) -> tuple[np.ndarray, ...]:
+        """Return every mask SAM finds without a point prompt, largest area first.
+
+        Runs ``SamAutomaticMaskGenerator`` (a ``points_per_side x points_per_side``
+        grid of foreground-point probes) rather than a single-point predict. Used
+        by debug/visualization tooling, not the production point-click pipeline.
+
+        Args:
+            image: Input image array — same channel-layout contract as
+                :meth:`predict_mask` (SAM expects RGB-shaped input; production
+                callers pass the adapted depth map).
+            points_per_side: Density of the probe grid. Runtime scales with the
+                square of this value.
+
+        Returns:
+            A tuple of boolean 2-D masks, sorted by area descending.
+        """
+        generator = _load_sam_mask_generator(
+            self._checkpoint_path, self._model_type, self._device, points_per_side
+        )
+        logger.info(f"Running SAM automatic mask generation (points_per_side={points_per_side})")
+        annotations = generator.generate(image)
+        annotations.sort(key=lambda ann: ann["area"], reverse=True)
+        masks = tuple(ann["segmentation"] for ann in annotations)
+        logger.info(f"SAM automatic mask generation found {len(masks)} masks")
+        return masks

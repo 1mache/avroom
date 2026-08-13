@@ -141,6 +141,15 @@ Set `VALIDATE=false` before starting the server to skip both stages (default: `V
 
 Not wired into segment/inpaint/removal pipelines.
 
+### Debug vision endpoints
+
+`POST /debug/depth-map` and `POST /debug/sam-everything` (`fastApi-app/api/debug_vision.py`) are test/inspection tools, not production flow — no session, no disk writes. Both accept a multipart `file` upload and return raw `image/png` bytes (viewable directly in `/docs` or a browser tab), gated by `DEBUG_ENDPOINTS` (`settings.get_debug_endpoints_enabled`, default enabled; `false` → both 404).
+
+- `/debug/depth-map?model=...&colormap=none|inferno|magma|turbo|jet` runs `DepthAnythingMappingStrategy.map_depth` and renders it via `avroom_object_removal.utils.colorize_depth`.
+- `/debug/sam-everything?source=depth|rgb&points_per_side=16&alpha=0.45` runs `SamSegmentationStrategy.predict_everything` (new: wraps `SamAutomaticMaskGenerator`, reusing the already-loaded `SamPredictor` weights via a second `functools.lru_cache`'d loader) and renders the masks via `avroom_object_removal.utils.overlay_masks` (deterministic per-mask color, translucent fill + outline) composited onto the original photo. `source=depth` (default) feeds SAM the same `SamImageAdapter`-adapted depth map production uses; `source=rgb` feeds the raw photo instead, to visually demonstrate why the depth-map rule exists (visibly more/noisier masks from fabric creases and shadows).
+- Both dispatch through the inference pool (`JobKind.DEBUG_DEPTH_MAP` / `DEBUG_SAM_EVERYTHING`, in `_FACADE_JOB_KINDS` so inline mode takes the GPU lock) — same concurrency model as every other model call, see `core/inference_pool/`.
+- `predict_everything` is on `ImageSegmentationStrategy` as a non-abstract method (default raises `NotImplementedError`) since prompt-free segmentation is SAM-specific, not a general strategy capability. `ImageSegmentationFacade.get_all_masks_for_image` exposes it at the facade level, alongside the existing point-prompted `get_mask_at_point` / `get_all_masks_for_position`.
+
 ## Trellis 2 3D Generation
 
 `TrellisModule/` (package `avroom_trellis`) wraps Microsoft's Trellis 2 image-to-3D model **via the public Hugging Face Space** (`microsoft/TRELLIS.2`) using `gradio_client`. Local install is not supported on this machine (Linux + 24 GB VRAM only).

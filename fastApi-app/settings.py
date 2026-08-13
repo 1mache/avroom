@@ -271,6 +271,11 @@ def get_camera_calibration_enabled() -> bool:
     return _env_bool("CAMERA_CALIB", True)
 
 
+def get_debug_endpoints_enabled() -> bool:
+    """Return whether the ``/debug`` visualization endpoints are exposed (default: enabled)."""
+    return _env_bool("DEBUG_ENDPOINTS", True)
+
+
 def get_upload_min_bytes() -> int:
     return max(1, _env_int("UPLOAD_MIN_BYTES", 1024))
 

@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from api.routes import router as images_router
 from api.model_3d import router as model_3d_router
 from api.novel_view import router as novel_view_router
+from api.debug_vision import router as debug_vision_router
 from core.inference_pool.client import init_inference_client, shutdown_inference_client
 from core.inference_pool.pool import InferencePool
 from logging_config import setup_logging
@@ -68,4 +69,5 @@ async def read_root() -> dict[str, str]:
 app.include_router(images_router)
 app.include_router(model_3d_router)
 app.include_router(novel_view_router)
+app.include_router(debug_vision_router)
 logger.info("FastAPI app initialized")

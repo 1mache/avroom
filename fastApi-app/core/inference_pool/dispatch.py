@@ -16,6 +16,8 @@ _FACADE_JOB_KINDS = frozenset({
     JobKind.NOVEL_VIEW,
     JobKind.VALIDATE_CONTENT,
     JobKind.CALIBRATE_CAMERA,
+    JobKind.DEBUG_DEPTH_MAP,
+    JobKind.DEBUG_SAM_EVERYTHING,
 })
 
 
@@ -169,6 +171,34 @@ def _execute_impl(job: JobRequest) -> JobResult:
             camera_calib_cy=calibration.cy,
             camera_calib_confidence=calibration.confidence,
             camera_calib_camera_model=calibration.camera_model,
+        )
+
+    if job.kind == JobKind.DEBUG_DEPTH_MAP:
+        from core.debug_vision import render_depth_map_png
+
+        assert job.image_bytes is not None
+        debug_options = job.options or {}
+        png_bytes = render_depth_map_png(
+            job.image_bytes,
+            model_name=debug_options["model_name"],
+            colormap=debug_options["colormap"],
+        )
+        return JobResult(job_id=job.job_id, ok=True, debug_png_bytes=png_bytes)
+
+    if job.kind == JobKind.DEBUG_SAM_EVERYTHING:
+        from core.debug_vision import render_sam_everything_png
+
+        assert job.image_bytes is not None
+        debug_options = job.options or {}
+        png_bytes, mask_count = render_sam_everything_png(
+            job.image_bytes,
+            source=debug_options["source"],
+            depth_model_name=debug_options["depth_model_name"],
+            points_per_side=debug_options["points_per_side"],
+            alpha=debug_options["alpha"],
+        )
+        return JobResult(
+            job_id=job.job_id, ok=True, debug_png_bytes=png_bytes, debug_mask_count=mask_count
         )
 
     raise ValueError(f"Unsupported job kind: {job.kind}")

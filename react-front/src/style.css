@@ -1770,6 +1770,25 @@ input {
   right: 20px;
 }
 
+/* 3D viewer panel */
+
+.debug-model-viewport {
+  height: 320px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  background-color: var(--chrome-sunk);
+  background-image:
+    repeating-linear-gradient(0deg, transparent, transparent 39px, rgba(69, 224, 229, 0.07) 40px),
+    repeating-linear-gradient(90deg, transparent, transparent 39px, rgba(69, 224, 229, 0.07) 40px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* .model-3d-frame/.model-3d-viewport already stretch to 100% of this
+     wrapper (see the 3D angle picker section above), so no nested override
+     is needed here. */
+  overflow: hidden;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

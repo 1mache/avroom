@@ -182,6 +182,7 @@ def _execute_impl(job: JobRequest) -> JobResult:
             job.image_bytes,
             model_name=debug_options["model_name"],
             colormap=debug_options["colormap"],
+            strategy=debug_options.get("strategy", "anything"),
         )
         return JobResult(job_id=job.job_id, ok=True, debug_png_bytes=png_bytes)
 
@@ -196,6 +197,10 @@ def _execute_impl(job: JobRequest) -> JobResult:
             depth_model_name=debug_options["depth_model_name"],
             points_per_side=debug_options["points_per_side"],
             alpha=debug_options["alpha"],
+            depth_strategy=debug_options.get("depth_strategy", "anything"),
+            pred_iou_thresh=debug_options.get("pred_iou_thresh", 0.88),
+            stability_score_thresh=debug_options.get("stability_score_thresh", 0.95),
+            min_mask_region_area=debug_options.get("min_mask_region_area", 0),
         )
         return JobResult(
             job_id=job.job_id, ok=True, debug_png_bytes=png_bytes, debug_mask_count=mask_count

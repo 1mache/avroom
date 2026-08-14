@@ -56,6 +56,11 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    # allow_headers only covers request headers; response headers beyond the
+    # CORS-safelisted set (Content-Type etc.) need explicit exposure or
+    # browser JS reads them as null. Both custom headers set by
+    # api/debug_vision.py need this.
+    expose_headers=["X-Mask-Count", "X-Elapsed-Ms"],
 )
 
 

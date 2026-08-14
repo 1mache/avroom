@@ -4,7 +4,7 @@ The frontend uses **plain global CSS** — no Tailwind, no CSS modules, no style
 
 ## Single stylesheet
 
-[`react-front/src/style.css`](../../react-front/src/style.css) (~1535 lines) is imported once in [`react-front/src/main.tsx`](../../react-front/src/main.tsx) and applies globally. The app is **dark-only** — `index.html` sets `<meta name="color-scheme" content="dark">` and there is no light-theme variant.
+[`react-front/src/style.css`](../../react-front/src/style.css) (~1780 lines) is imported once in [`react-front/src/main.tsx`](../../react-front/src/main.tsx) and applies globally. The app is **dark-only** — `index.html` sets `<meta name="color-scheme" content="dark">` and there is no light-theme variant.
 
 ## Design tokens
 
@@ -61,6 +61,7 @@ The file is organized into comment-delimited sections (`/* ── Name ── */
 | Dashboard | `DashboardScreen`, `SessionCard` — `.dashboard`, `.dash-header`/`.dash-logo`/`.dash-wordmark`, `.session-grid`/`.session-card`/`.session-card-frame` (same hairline+shadow treatment as the stage canvas), `.session-card-delete` (hover-reveal), `.session-skeleton` loading shimmer |
 | Upload | `UploadScreen` — `.dropzone` (`.is-over`/`.has-file`), `.dropzone-preview`, `.upload-status`, `.upload-rejection`, `.upload-rules` |
 | Buttons & confirm dialog | `ConfirmDialog` — `.btn` (`.is-primary`/`.is-danger`), `.modal.is-confirm`, `.confirm-title`/`.confirm-body`/`.confirm-actions` |
+| Pipeline debug | `DebugScreen` — `.dash-header-end` (right-aligned header slot), `.debug-scroll`/`.debug-source`/`.debug-dropzone` (reuses `.dropzone*`), `.debug-panel`/`.debug-panel-head`/`.debug-verdict` (`.is-pass`/`.is-fail`), `.debug-check-row`/`.debug-check-dot`/`.debug-check-group` (validation scoreboard), `.debug-knobs`/`.debug-knob` (per-panel controls), `.debug-image-frame` (checkerboard-backed rendered PNG, `cursor: zoom-in`), `.debug-lightbox-backdrop`/`.debug-lightbox-img` (full-screen viewer, reuses `.modal-backdrop`) |
 | Narrow screens | `@media (max-width: 720px)` — shrinks `--rail-w`, dashboard/grid paddings, forces `.session-card-delete` always visible (no hover on touch), hides `.toolbar-status` |
 | Reduced motion | `@media (prefers-reduced-motion: reduce)` — collapses all animation/transition durations to 0.01ms |
 

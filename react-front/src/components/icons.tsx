@@ -114,3 +114,12 @@ export const PhotoIcon: React.FC<IconProps> = (props) => (
     <path d="M3.4 16.2l4.8-4.1 4 3.3 3.2-2.6 5.2 4.3" />
   </Svg>
 );
+
+/** Marks the entry point to the pipeline debug screen — a lab flask. */
+export const FlaskIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <path d="M9.5 3.5h5" />
+    <path d="M10.3 3.5v5.6l-5 9a1.6 1.6 0 001.4 2.4h10.6a1.6 1.6 0 001.4-2.4l-5-9V3.5" />
+    <path d="M7.8 15h8.4" />
+  </Svg>
+);

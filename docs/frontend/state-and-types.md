@@ -118,3 +118,11 @@ export interface CutoutObject {
 [`react-front/src/types/api.ts`](../../react-front/src/types/api.ts)
 
 Mirrors the backend's Pydantic models in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.py) field-for-field — see [backend/schemas.md](../backend/schemas.md) for the authoritative field tables (`ObjectInfo`, `ObjectMetadataResponse`, `UpdateObjectRequest`, `DuplicateObjectResponse`, `NovelViewRequest`/`Response`, `SessionSyncCheckResponse`, `SessionInfo`, etc.). No codegen exists — a backend schema change requires a manual edit here. `SegmentRequest` is a type alias for `ClickRequest` (`{ image_id, x, y, options? }`); `InpaintMaskResponse` and `ObjectMetadataResponse`/`ObjectInfo` extend the shared `cutout_bounds`/offset fields documented in `backend/schemas.md`.
+
+## `types/debug.ts`
+
+[`react-front/src/types/debug.ts`](../../react-front/src/types/debug.ts)
+
+Mirrors [`fastApi-app/schemas/debug.py`](../../fastApi-app/schemas/debug.py) (`DebugCheckResult`, `DebugValidationResponse` — see [backend/schemas.md](../backend/schemas.md#debug)) plus the query-param shapes for the two PNG endpoints: `DepthMapOptions { strategy, model, colormap }`, `SamEverythingOptions { source, depthStrategy, depthModel, pointsPerSide, predIouThresh, stabilityScoreThresh, minMaskRegionArea, alpha }`, and the local-only `DebugImageResult { objectUrl, elapsedMs, maskCount }` returned by `api/debug.ts`. Kept separate from `types/api.ts`, which mirrors `schemas/image.py`.
+
+`DebugScreen`'s own panel state is a small discriminated union defined inline (not in this file): `PanelState<T> = {status:"idle"} | {status:"running"} | {status:"done", data:T} | {status:"error", message:string}`, one instance per panel (validation, depth, SAM).

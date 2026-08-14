@@ -85,6 +85,9 @@ class ImageSegmentationStrategy(ABC):
         image: np.ndarray,
         *,
         points_per_side: int = 16,
+        pred_iou_thresh: float = 0.88,
+        stability_score_thresh: float = 0.95,
+        min_mask_region_area: int = 0,
     ) -> tuple[np.ndarray, ...]:
         """Predict every object mask in ``image`` without a foreground point.
 
@@ -97,6 +100,12 @@ class ImageSegmentationStrategy(ABC):
             points_per_side: Density of the probe grid, for strategies that
                 use a grid-based prompt-free approach (e.g. SAM's
                 ``SamAutomaticMaskGenerator``).
+            pred_iou_thresh: Minimum predicted mask-quality IoU to keep a
+                candidate, for strategies that support it.
+            stability_score_thresh: Minimum stability score to keep a
+                candidate, for strategies that support it.
+            min_mask_region_area: Discard connected components smaller than
+                this many pixels, for strategies that support it.
 
         Returns:
             A tuple of boolean 2-D masks, one per detected object.

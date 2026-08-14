@@ -79,6 +79,44 @@ Pressing **Rotate** with an object selected either opens the 3D angle picker imm
 
 On opening a session, `WorkspaceScreen` calls `getUidCacheStatus(uid)` for the background/name, then `getSessionObjects(uid)` for the full object list if a cutout exists — restored objects get `hidden = false` and no `rotation`/`glbData` (those are local-only and lost across a restore). From then on, `useSessionSync` polls `POST /images/{uid}/sync-check` every 2 seconds **only while there's pending work** (an in-flight segment/inpaint/duplicate/etc.), plus once on window focus and tab-visibility change regardless of pending work. A stale-timestamp response triggers a merge (not a full replace) of server truth into local state, so local-only fields like `offset`, `hidden`, and `glbData` survive a reconcile untouched.
 
+## Pipeline debug screen
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant Dash as DashboardScreen
+    participant Debug as DebugScreen
+    participant API as "api/debug.ts"
+    participant Backend as "FastAPI /debug"
+
+    User->>Dash: click flask icon
+    Dash->>Debug: App switches route to debug
+    User->>Debug: drag/drop or choose a photo
+    User->>Debug: click "Run all"
+
+    Debug->>API: validateImageDebug(file)
+    API->>Backend: POST /debug/validate
+    Backend-->>Debug: DebugValidationResponse (always 200)
+    Debug-->>User: technical + content check rows render, PASS/FAIL badge
+
+    Debug->>API: debugDepthMap(file, options)
+    API->>Backend: POST /debug/depth-map
+    Backend-->>Debug: PNG bytes + X-Elapsed-Ms
+    Debug-->>User: depth-map panel renders, regardless of the validation verdict above
+
+    Debug->>API: debugSamEverything(file, options)
+    API->>Backend: POST /debug/sam-everything
+    Backend-->>Debug: PNG bytes + X-Mask-Count + X-Elapsed-Ms
+    Debug-->>User: SAM panel renders
+
+    User->>Debug: click a rendered PNG
+    Debug-->>User: DebugLightbox full-screen viewer (Esc/backdrop closes)
+```
+
+A separate screen reached from the dashboard header (`App.tsx`'s `{screen:"debug"}` route), not part of the session workspace — no `uid`, no session created, nothing written to disk. See [components.md](components.md#debugscreen) for the panel/state breakdown and [backend/api-endpoints.md](../backend/api-endpoints.md#debug-endpoints) for the three endpoints it drives.
+
+Each of the three panels (Validation, Depth map, SAM segment-everything) can also be re-run individually with its own knobs, independent of `Run all` — a panel's knob changes only take effect on its next `Re-run`, not live. Depth and SAM stages always run whether or not the validation stage passed; that's the point of the screen. `Run all` runs the three sequentially rather than in parallel, since SAM shares the process-wide GPU lock with everything else in inline mode (`docs/backend/concurrency.md`) — firing all three at once would just serialize behind the lock anyway.
+
 ## Dashboard preview thumbnails
 
 Every mutation that changes what a session looks like (inpaint, rotation, rename, duplicate, delete, hide/show, and drag-end) triggers a debounced (500ms) client-side composite of the background plus every visible cutout (`composeSessionPreview`), posted to `POST /images/{uid}/preview`. The dashboard's `SessionCard` reads it back via a cache-busted `GET /images/{uid}/preview` URL, falling back to a placeholder icon if the request 404s (no preview yet — `POST /images/upload` writes an initial one server-side, so this should only happen transiently).

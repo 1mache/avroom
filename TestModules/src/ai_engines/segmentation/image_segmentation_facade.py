@@ -78,6 +78,9 @@ class ImageSegmentationFacade:
         self,
         image: np.ndarray,
         points_per_side: int = 16,
+        pred_iou_thresh: float = 0.88,
+        stability_score_thresh: float = 0.95,
+        min_mask_region_area: int = 0,
     ) -> tuple[np.ndarray, ...]:
         """Predict every object mask in ``image`` via the active strategy.
 
@@ -85,4 +88,10 @@ class ImageSegmentationFacade:
         (prompt-free "segment everything" mode). Raises ``NotImplementedError``
         if the active strategy doesn't support it.
         """
-        return self._strategy.predict_everything(image, points_per_side=points_per_side)
+        return self._strategy.predict_everything(
+            image,
+            points_per_side=points_per_side,
+            pred_iou_thresh=pred_iou_thresh,
+            stability_score_thresh=stability_score_thresh,
+            min_mask_region_area=min_mask_region_area,
+        )

@@ -1,0 +1,616 @@
+import React, { useCallback, useEffect, useRef, useState } from "react";
+
+import { debugDepthMap, debugSamEverything, validateImageDebug } from "../../api/debug";
+import { ApiError } from "../../api/images";
+import { BackIcon, PhotoIcon } from "../icons";
+import type {
+  DebugImageResult,
+  DebugValidationResponse,
+  DepthColormap,
+  DepthStrategy,
+  SamSource,
+} from "../../types/debug";
+
+export interface DebugScreenProps {
+  onExit: () => void;
+}
+
+// One HF checkpoint dropdown shared by the depth panel and the SAM panel's
+// "source=depth" knobs. Values match the strategies actually wired up in
+// TestModules/src/ai_engines/depth/strategies — see DebugScreen's model
+// picker for how free text stays available alongside these.
+const KNOWN_DEPTH_MODELS = [
+  "LiheYoung/depth-anything-small-hf",
+  "LiheYoung/depth-anything-base-hf",
+  "LiheYoung/depth-anything-large-hf",
+  "depth-anything/Depth-Anything-V2-Small-hf",
+  "depth-anything/Depth-Anything-V2-Base-hf",
+];
+
+const DEPTH_STRATEGIES: { value: DepthStrategy; label: string }[] = [
+  { value: "anything", label: "anything (single checkpoint)" },
+  { value: "blended", label: "blended (near+far, production default input)" },
+  { value: "enhanced_edge", label: "enhanced_edge (blended + CLAHE, true production default)" },
+];
+
+const COLORMAPS: DepthColormap[] = ["none", "inferno", "magma", "turbo", "jet"];
+
+type PanelState<T> =
+  | { status: "idle" }
+  | { status: "running" }
+  | { status: "done"; data: T }
+  | { status: "error"; message: string };
+
+function errorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 404) {
+      return "Debug endpoints are disabled on the server (DEBUG_ENDPOINTS=false).";
+    }
+    return err.detail || err.message;
+  }
+  return err instanceof Error ? err.message : "Request failed.";
+}
+
+const formatMs = (ms: number | null): string => (ms === null ? "—" : `${ms.toFixed(0)} ms`);
+
+/** One row of a validation check group: dot, name, score, message. */
+const CheckRow: React.FC<{ name: string; passed: boolean; score: number | null; message: string }> = ({
+  name,
+  passed,
+  score,
+  message,
+}) => (
+  <div className={`debug-check-row${passed ? "" : " is-failed"}`}>
+    <span className="debug-check-dot" aria-hidden="true" />
+    <span className="debug-check-name">{name}</span>
+    <span className="debug-check-score">{score === null ? "—" : score.toFixed(3)}</span>
+    <span className="debug-check-message">{message}</span>
+  </div>
+);
+
+/** Fixed-position full-screen image viewer for a rendered debug PNG. */
+const DebugLightbox: React.FC<{ src: string; alt: string; onClose: () => void }> = ({
+  src,
+  alt,
+  onClose,
+}) => {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div className="modal-backdrop debug-lightbox-backdrop" role="presentation" onClick={onClose}>
+      <img src={src} alt={alt} className="debug-lightbox-img" onClick={(e) => e.stopPropagation()} />
+      <button type="button" className="modal-close debug-lightbox-close" onClick={onClose}>
+        Close
+      </button>
+    </div>
+  );
+};
+
+/**
+ * Reachable from the dashboard header. Upload a photo, watch the full
+ * validation scoreboard plus the depth-map and SAM segment-everything debug
+ * endpoints run on it — regardless of whether validation passed — with every
+ * knob exposed for comparing configurations. Nothing here creates a session
+ * or writes to disk.
+ */
+export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [lightboxSrc, setLightboxSrc] = useState<{ src: string; alt: string } | null>(null);
+
+  const [validation, setValidation] = useState<PanelState<DebugValidationResponse>>({
+    status: "idle",
+  });
+  const [depth, setDepth] = useState<PanelState<DebugImageResult>>({ status: "idle" });
+  const [sam, setSam] = useState<PanelState<DebugImageResult>>({ status: "idle" });
+
+  const [depthStrategy, setDepthStrategy] = useState<DepthStrategy>("anything");
+  const [depthModel, setDepthModel] = useState(KNOWN_DEPTH_MODELS[0]);
+  const [colormap, setColormap] = useState<DepthColormap>("none");
+
+  const [samSource, setSamSource] = useState<SamSource>("depth");
+  const [samDepthStrategy, setSamDepthStrategy] = useState<DepthStrategy>("anything");
+  const [samDepthModel, setSamDepthModel] = useState(KNOWN_DEPTH_MODELS[0]);
+  const [pointsPerSide, setPointsPerSide] = useState(16);
+  const [predIouThresh, setPredIouThresh] = useState(0.88);
+  const [stabilityScoreThresh, setStabilityScoreThresh] = useState(0.95);
+  const [minMaskRegionArea, setMinMaskRegionArea] = useState(0);
+  const [alpha, setAlpha] = useState(0.45);
+
+  // Bumped on every new file pick; each async run checks its own captured
+  // token before committing state, so a slow response for a discarded photo
+  // can never overwrite a fresher run's result.
+  const runTokenRef = useRef(0);
+  // Every blob object URL this screen has ever handed out, so unmount can
+  // revoke them all regardless of which panel produced them. Mirrors
+  // previewUrl too (via a ref, since the unmount effect's closure would
+  // otherwise only ever see the value from the initial render).
+  const heldUrlsRef = useRef<Set<string>>(new Set());
+  const previewUrlRef = useRef<string | null>(null);
+  previewUrlRef.current = previewUrl;
+
+  useEffect(() => {
+    const heldUrls = heldUrlsRef.current;
+    return () => {
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+      }
+      heldUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
+
+  const acceptFile = useCallback((next: File) => {
+    runTokenRef.current += 1;
+    setFile(next);
+    setPreviewUrl((prev) => {
+      if (prev) {
+        URL.revokeObjectURL(prev);
+      }
+      return URL.createObjectURL(next);
+    });
+    setValidation({ status: "idle" });
+    setDepth({ status: "idle" });
+    setSam({ status: "idle" });
+  }, []);
+
+  const handleInputChange: React.ChangeEventHandler<HTMLInputElement> = useCallback(
+    (event) => {
+      const picked = event.target.files?.[0];
+      if (picked) {
+        acceptFile(picked);
+      }
+      event.target.value = "";
+    },
+    [acceptFile],
+  );
+
+  const handleDrop: React.DragEventHandler<HTMLDivElement> = useCallback(
+    (event) => {
+      event.preventDefault();
+      setIsDragOver(false);
+      const dropped = event.dataTransfer.files?.[0];
+      if (dropped) {
+        acceptFile(dropped);
+      }
+    },
+    [acceptFile],
+  );
+
+  const runValidation = useCallback(async () => {
+    if (!file) return;
+    const token = runTokenRef.current;
+    setValidation({ status: "running" });
+    try {
+      const data = await validateImageDebug(file);
+      if (runTokenRef.current === token) setValidation({ status: "done", data });
+    } catch (err) {
+      if (runTokenRef.current === token) setValidation({ status: "error", message: errorMessage(err) });
+    }
+  }, [file]);
+
+  const runDepth = useCallback(async () => {
+    if (!file) return;
+    const token = runTokenRef.current;
+    setDepth({ status: "running" });
+    try {
+      const data = await debugDepthMap(file, { strategy: depthStrategy, model: depthModel, colormap });
+      if (runTokenRef.current !== token) {
+        URL.revokeObjectURL(data.objectUrl);
+        return;
+      }
+      heldUrlsRef.current.add(data.objectUrl);
+      setDepth((prev) => {
+        if (prev.status === "done") {
+          URL.revokeObjectURL(prev.data.objectUrl);
+          heldUrlsRef.current.delete(prev.data.objectUrl);
+        }
+        return { status: "done", data };
+      });
+    } catch (err) {
+      if (runTokenRef.current === token) setDepth({ status: "error", message: errorMessage(err) });
+    }
+  }, [file, depthStrategy, depthModel, colormap]);
+
+  const runSam = useCallback(async () => {
+    if (!file) return;
+    const token = runTokenRef.current;
+    setSam({ status: "running" });
+    try {
+      const data = await debugSamEverything(file, {
+        source: samSource,
+        depthStrategy: samDepthStrategy,
+        depthModel: samDepthModel,
+        pointsPerSide,
+        predIouThresh,
+        stabilityScoreThresh,
+        minMaskRegionArea,
+        alpha,
+      });
+      if (runTokenRef.current !== token) {
+        URL.revokeObjectURL(data.objectUrl);
+        return;
+      }
+      heldUrlsRef.current.add(data.objectUrl);
+      setSam((prev) => {
+        if (prev.status === "done") {
+          URL.revokeObjectURL(prev.data.objectUrl);
+          heldUrlsRef.current.delete(prev.data.objectUrl);
+        }
+        return { status: "done", data };
+      });
+    } catch (err) {
+      if (runTokenRef.current === token) setSam({ status: "error", message: errorMessage(err) });
+    }
+  }, [
+    file,
+    samSource,
+    samDepthStrategy,
+    samDepthModel,
+    pointsPerSide,
+    predIouThresh,
+    stabilityScoreThresh,
+    minMaskRegionArea,
+    alpha,
+  ]);
+
+  // Sequential on purpose: SAM shares the process-wide GPU lock with
+  // everything else in inline mode, so firing all three at once would just
+  // queue behind each other anyway. Each stage runs regardless of whether
+  // the previous one failed — that's the whole point of the screen.
+  const runAll = useCallback(async () => {
+    await runValidation();
+    await runDepth();
+    await runSam();
+  }, [runValidation, runDepth, runSam]);
+
+  const busy = validation.status === "running" || depth.status === "running" || sam.status === "running";
+
+  return (
+    <div className="dashboard">
+      <header className="dash-header">
+        <button
+          type="button"
+          className="tool-btn"
+          onClick={onExit}
+          aria-label="Back to dashboard"
+          data-tip="Back to dashboard"
+        >
+          <BackIcon />
+        </button>
+        <span className="dash-wordmark">Pipeline debug</span>
+      </header>
+
+      <main className="dash-main">
+        <div className="session-scroll debug-scroll">
+          <div className="debug-source">
+            <input
+              ref={inputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              className="file-input"
+              onChange={handleInputChange}
+              aria-label="Choose an image"
+            />
+            <div
+              className={`dropzone debug-dropzone${isDragOver ? " is-over" : ""}${file ? " has-file" : ""}`}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setIsDragOver(true);
+              }}
+              onDragLeave={() => setIsDragOver(false)}
+              onDrop={handleDrop}
+            >
+              {previewUrl && file ? (
+                <>
+                  <img src={previewUrl} alt="" className="dropzone-preview" />
+                  <div className="dropzone-file">
+                    <span className="dropzone-filename">{file.name}</span>
+                  </div>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="dropzone-invite"
+                  onClick={() => inputRef.current?.click()}
+                >
+                  <PhotoIcon size={28} />
+                  <span className="dropzone-invite-line">Drop any image here</span>
+                  <span className="dropzone-invite-hint">
+                    or choose a file — no client-side checks, the point is watching the server decide
+                  </span>
+                </button>
+              )}
+            </div>
+
+            <div className="debug-source-actions">
+              <button type="button" className="btn" onClick={() => inputRef.current?.click()}>
+                {file ? "Choose another" : "Choose a file"}
+              </button>
+              <button
+                type="button"
+                className="btn is-primary"
+                onClick={() => void runAll()}
+                disabled={!file || busy}
+              >
+                {busy ? <span className="tool-spinner" /> : "Run all"}
+              </button>
+            </div>
+          </div>
+
+          {/* ── Validation panel ─────────────────────────────────────────── */}
+          <section className="debug-panel">
+            <header className="debug-panel-head">
+              <h3 className="debug-panel-title">Validation</h3>
+              {validation.status === "done" ? (
+                <span className={`debug-verdict${validation.data.ok ? " is-pass" : " is-fail"}`}>
+                  {validation.data.ok ? "PASS" : "FAIL"}
+                </span>
+              ) : null}
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void runValidation()}
+                disabled={!file || validation.status === "running"}
+              >
+                {validation.status === "running" ? <span className="tool-spinner" /> : "Re-run"}
+              </button>
+            </header>
+
+            {validation.status === "error" ? (
+              <p className="debug-panel-error">{validation.message}</p>
+            ) : null}
+
+            {validation.status === "done" ? (
+              <div className="debug-check-groups">
+                <div className="debug-check-group">
+                  <span className="debug-check-group-title">
+                    Technical{validation.data.technical_ok ? "" : " — failed"}
+                  </span>
+                  {validation.data.technical.map((check) => (
+                    <CheckRow key={check.name} {...check} />
+                  ))}
+                </div>
+                <div className="debug-check-group">
+                  <span className="debug-check-group-title">
+                    Content{" "}
+                    {validation.data.content_skipped_reason
+                      ? `— skipped (${validation.data.content_skipped_reason})`
+                      : validation.data.content_ok
+                        ? ""
+                        : "— failed"}
+                  </span>
+                  {validation.data.content.map((check) => (
+                    <CheckRow key={check.name} {...check} />
+                  ))}
+                </div>
+                <p className="debug-panel-elapsed">{formatMs(validation.data.elapsed_ms)}</p>
+              </div>
+            ) : validation.status === "idle" ? (
+              <p className="debug-panel-hint">Pick a photo, then run to see the scoreboard.</p>
+            ) : null}
+          </section>
+
+          {/* ── Depth map panel ──────────────────────────────────────────── */}
+          <section className="debug-panel">
+            <header className="debug-panel-head">
+              <h3 className="debug-panel-title">Depth map</h3>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void runDepth()}
+                disabled={!file || depth.status === "running"}
+              >
+                {depth.status === "running" ? <span className="tool-spinner" /> : "Re-run"}
+              </button>
+            </header>
+
+            <div className="debug-knobs">
+              <label className="debug-knob">
+                <span>Strategy</span>
+                <select
+                  value={depthStrategy}
+                  onChange={(e) => setDepthStrategy(e.target.value as DepthStrategy)}
+                >
+                  {DEPTH_STRATEGIES.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="debug-knob">
+                <span>Model (strategy=anything only)</span>
+                <input
+                  list="debug-depth-models"
+                  value={depthModel}
+                  onChange={(e) => setDepthModel(e.target.value)}
+                  disabled={depthStrategy !== "anything"}
+                />
+              </label>
+              <label className="debug-knob">
+                <span>Colormap</span>
+                <select value={colormap} onChange={(e) => setColormap(e.target.value as DepthColormap)}>
+                  {COLORMAPS.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {depth.status === "error" ? <p className="debug-panel-error">{depth.message}</p> : null}
+
+            {depth.status === "done" ? (
+              <>
+                <button
+                  type="button"
+                  className="debug-image-frame"
+                  onClick={() =>
+                    setLightboxSrc({ src: depth.data.objectUrl, alt: "Depth map render" })
+                  }
+                >
+                  <img src={depth.data.objectUrl} alt="Depth map render" />
+                </button>
+                <p className="debug-panel-elapsed">{formatMs(depth.data.elapsedMs)}</p>
+              </>
+            ) : depth.status === "idle" ? (
+              <p className="debug-panel-hint">Renders whatever Depth-Anything sees, as an image.</p>
+            ) : null}
+          </section>
+
+          {/* ── SAM segment-everything panel ─────────────────────────────── */}
+          <section className="debug-panel">
+            <header className="debug-panel-head">
+              <h3 className="debug-panel-title">SAM segment-everything</h3>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void runSam()}
+                disabled={!file || sam.status === "running"}
+              >
+                {sam.status === "running" ? <span className="tool-spinner" /> : "Re-run"}
+              </button>
+            </header>
+
+            <div className="debug-knobs">
+              <label className="debug-knob">
+                <span>Source</span>
+                <select value={samSource} onChange={(e) => setSamSource(e.target.value as SamSource)}>
+                  <option value="depth">depth (production rule)</option>
+                  <option value="rgb">rgb (raw photo)</option>
+                </select>
+              </label>
+              <label className="debug-knob">
+                <span>Depth strategy (source=depth only)</span>
+                <select
+                  value={samDepthStrategy}
+                  onChange={(e) => setSamDepthStrategy(e.target.value as DepthStrategy)}
+                  disabled={samSource !== "depth"}
+                >
+                  {DEPTH_STRATEGIES.map((s) => (
+                    <option key={s.value} value={s.value}>
+                      {s.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="debug-knob">
+                <span>Depth model</span>
+                <input
+                  list="debug-depth-models"
+                  value={samDepthModel}
+                  onChange={(e) => setSamDepthModel(e.target.value)}
+                  disabled={samSource !== "depth" || samDepthStrategy !== "anything"}
+                />
+              </label>
+              <label className="debug-knob">
+                <span>Points per side ({pointsPerSide})</span>
+                <input
+                  type="range"
+                  min={4}
+                  max={64}
+                  step={1}
+                  value={pointsPerSide}
+                  onChange={(e) => setPointsPerSide(Number(e.target.value))}
+                />
+              </label>
+              <label className="debug-knob">
+                <span>Pred IoU thresh ({predIouThresh.toFixed(2)})</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={predIouThresh}
+                  onChange={(e) => setPredIouThresh(Number(e.target.value))}
+                />
+              </label>
+              <label className="debug-knob">
+                <span>Stability score thresh ({stabilityScoreThresh.toFixed(2)})</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={stabilityScoreThresh}
+                  onChange={(e) => setStabilityScoreThresh(Number(e.target.value))}
+                />
+              </label>
+              <label className="debug-knob">
+                <span>Min mask region area ({minMaskRegionArea}px)</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={5000}
+                  step={50}
+                  value={minMaskRegionArea}
+                  onChange={(e) => setMinMaskRegionArea(Number(e.target.value))}
+                />
+              </label>
+              <label className="debug-knob">
+                <span>Overlay alpha ({alpha.toFixed(2)})</span>
+                <input
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.05}
+                  value={alpha}
+                  onChange={(e) => setAlpha(Number(e.target.value))}
+                />
+              </label>
+            </div>
+
+            {sam.status === "error" ? <p className="debug-panel-error">{sam.message}</p> : null}
+
+            {sam.status === "done" ? (
+              <>
+                <button
+                  type="button"
+                  className="debug-image-frame"
+                  onClick={() =>
+                    setLightboxSrc({ src: sam.data.objectUrl, alt: "SAM segment-everything render" })
+                  }
+                >
+                  <img src={sam.data.objectUrl} alt="SAM segment-everything render" />
+                </button>
+                <p className="debug-panel-elapsed">
+                  {sam.data.maskCount === null ? "" : `${sam.data.maskCount} masks · `}
+                  {formatMs(sam.data.elapsedMs)}
+                </p>
+              </>
+            ) : sam.status === "idle" ? (
+              <p className="debug-panel-hint">
+                Can take seconds to minutes — points_per_side² SAM forward passes.
+              </p>
+            ) : null}
+          </section>
+        </div>
+      </main>
+
+      <datalist id="debug-depth-models">
+        {KNOWN_DEPTH_MODELS.map((m) => (
+          <option key={m} value={m} />
+        ))}
+      </datalist>
+
+      {lightboxSrc ? (
+        <DebugLightbox
+          src={lightboxSrc.src}
+          alt={lightboxSrc.alt}
+          onClose={() => setLightboxSrc(null)}
+        />
+      ) : null}
+    </div>
+  );
+};

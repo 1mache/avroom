@@ -252,14 +252,14 @@ class InferenceClient:
 
 
     def run_debug_depth_map(
-        self, *, image_bytes: bytes, model_name: str, colormap: str
+        self, *, image_bytes: bytes, model_name: str, colormap: str, strategy: str = "anything"
     ) -> bytes:
         job = JobRequest(
             job_id=_new_job_id(),
             kind=JobKind.DEBUG_DEPTH_MAP,
             storage_dir=str(Path.cwd()),
             image_bytes=image_bytes,
-            options={"model_name": model_name, "colormap": colormap},
+            options={"model_name": model_name, "colormap": colormap, "strategy": strategy},
         )
         result = self._run(job)
         self._raise_if_failed(result)
@@ -274,6 +274,10 @@ class InferenceClient:
         depth_model_name: str,
         points_per_side: int,
         alpha: float,
+        depth_strategy: str = "anything",
+        pred_iou_thresh: float = 0.88,
+        stability_score_thresh: float = 0.95,
+        min_mask_region_area: int = 0,
     ) -> tuple[bytes, int]:
         job = JobRequest(
             job_id=_new_job_id(),
@@ -285,6 +289,10 @@ class InferenceClient:
                 "depth_model_name": depth_model_name,
                 "points_per_side": points_per_side,
                 "alpha": alpha,
+                "depth_strategy": depth_strategy,
+                "pred_iou_thresh": pred_iou_thresh,
+                "stability_score_thresh": stability_score_thresh,
+                "min_mask_region_area": min_mask_region_area,
             },
         )
         result = self._run(job)

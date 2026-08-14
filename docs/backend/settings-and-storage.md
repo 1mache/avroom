@@ -222,7 +222,7 @@ Clone lineage fields on `ObjectMetadata` (all optional / default `None` for non-
 
 ## What's not configurable
 
-- CORS origins (hardcoded in [`fastApi-app/main.py`](../../fastApi-app/main.py) lines 42–48).
+- CORS origins and `expose_headers` (hardcoded in [`fastApi-app/main.py`](../../fastApi-app/main.py) lines 53–64). `expose_headers` lists `X-Mask-Count`/`X-Elapsed-Ms` so browser JS can read the debug endpoints' custom response headers — `allow_headers` only covers request headers.
 - Output format (hardcoded `"png"` in `segment_at_click`).
 - Debug overlay subdir name (`"point"` constant inside `_create_debug_click_image`).
 - Mask dilation radius, SD strength, depth model IDs — all live in the AI pipeline; see [ai-pipeline/](../ai-pipeline/README.md).
@@ -236,3 +236,5 @@ These don't live in `settings.py`, but the AI pipeline reads them at runtime:
 - `SAM_CHECKPOINT_URL` — override the default `dl.fbaipublicfiles.com` URL.
 
 Source: [`sam_segmentation_strategy.py`](../../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) lines 29–62.
+
+`DEBUG_ENDPOINTS` **does** live in `settings.py` — `get_debug_endpoints_enabled()` (`_env_bool("DEBUG_ENDPOINTS", True)`) gates the `/debug` router; see [api-endpoints.md](api-endpoints.md#debug-endpoints).

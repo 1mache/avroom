@@ -2,18 +2,17 @@
 
 Welcome to the Avroom architecture documentation. These docs describe the **current state** of the project as found in the code (not aspirational design).
 
-> Last refresh: 2026-08-07
+> Last refresh: 2026-08-14
 
 What changed in this refresh:
 
-- Frontend: full rewrite of `frontend/` docs — they described the pre-redesign single-`MainPage` SPA (`UploadFrame`/`ResultFrame`/`ObjectPanel`/`SessionPicker`), which no longer exists. Now documents the real two-screen app: `App.tsx`'s local route switch (dashboard / upload / workspace, no router library), `DashboardScreen` + `UploadScreen` + `WorkspaceScreen`, the `Toolbar`/`ObjectRail` workspace chrome, and the three session hooks (`useSessionJobs`, `useSessionSync`, `useConflictNotices`).
-- Frontend: documented drag-to-reposition, object duplication, object deletion, 2D rotation (novel-view), and dashboard preview thumbnails end-to-end on the frontend side (backend side was already current).
-- Fixed a stale fact repeated in `CLAUDE.md` and `backend/api-endpoints.md`: the dashboard-preview debounce is 500ms (`PREVIEW_DEBOUNCE_MS`), not ~1.5s.
-- Fixed a stale architecture claim in `CLAUDE.md`'s Frontend Notes: the dashboard and upload screens exist and are wired up (they were previously described as "not yet built"); the workspace back arrow is enabled, not disabled.
-- Removed dead frontend code ahead of this refresh: the `clickImage` API wrapper (unused `POST /images/click` client), the unused `SessionSyncCheckRequest` TS type, and an orphaned `.stage-message-hint` CSS rule — `docs/frontend/api-integration.md` updated to match.
-- Root docs (`overview.md`, `data-flow.md`, `repo-structure.md`, `architecture.md`) had their remaining `MainPage`/`ObjectPanel`/`UploadFrame` references replaced.
+- Documented the entire `/debug` router for the first time (it existed on the backend before this refresh but had no docs coverage): `POST /debug/validate`, `POST /debug/depth-map`, `POST /debug/sam-everything` — see [backend/api-endpoints.md](backend/api-endpoints.md#debug-endpoints), [backend/schemas.md](backend/schemas.md#debug), and the `DEBUG_ENDPOINTS` gate in [backend/settings-and-storage.md](backend/settings-and-storage.md).
+- Documented the new Pipeline Debug screen (`DebugScreen`), reachable from the dashboard header's flask icon: [frontend/components.md](frontend/components.md#debugscreen), [frontend/user-flow.md](frontend/user-flow.md#pipeline-debug-screen), [frontend/api-integration.md](frontend/api-integration.md#debug-endpoints), [frontend/state-and-types.md](frontend/state-and-types.md#typesdebugts), [frontend/styling.md](frontend/styling.md).
+- Documented `ImageValidator.validate_all` (runs every technical check without early-exit, unlike `validate()`) and SAM `predict_everything`/`get_all_masks_for_image` (prompt-free segmentation, added for the debug endpoints) plus its new quality-threshold params — see [ai-pipeline/ai-engines/segmentation/contracts.md](ai-pipeline/ai-engines/segmentation/contracts.md) and [components.md](ai-pipeline/ai-engines/segmentation/components.md).
+- Documented `TestModules/src/utils/mask_visualizer.py` (`distinct_color`, `colorize_depth`, `overlay_masks`) — [ai-pipeline/utils/components.md](ai-pipeline/utils/components.md).
+- Fixed a stale line-number reference to the CORS middleware block in `main.py` (moved when `expose_headers` was added) and fixed a dead link to a nonexistent `.cursor/skills/` path in this file.
 
-If you change architecture, run the [`update-avroom-docs`](../.cursor/skills/update-avroom-docs/SKILL.md) skill to keep these files in sync with the code.
+If you change architecture, run the `update-docs` skill (see [`CLAUDE.md`](../CLAUDE.md) for how skills are invoked in this repo) to keep these files in sync with the code.
 
 ## How detail increases (pyramid)
 

@@ -1,6 +1,6 @@
 # API Endpoints
 
-Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py). 3D routes live in [`fastApi-app/api/model_3d.py`](../../fastApi-app/api/model_3d.py). Novel-view (rotation) routes live in [`fastApi-app/api/novel_view.py`](../../fastApi-app/api/novel_view.py).
+Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py). 3D routes live in [`fastApi-app/api/model_3d.py`](../../fastApi-app/api/model_3d.py). Novel-view (rotation) routes live in [`fastApi-app/api/novel_view.py`](../../fastApi-app/api/novel_view.py). Debug/inspection routes live in [`fastApi-app/api/debug_vision.py`](../../fastApi-app/api/debug_vision.py) — see [Debug endpoints](#debug-endpoints).
 
 | Method | Path | Request | Response |
 |---|---|---|---|
@@ -28,6 +28,9 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `POST` | `/3d/test-3d` | `{"uid":"...", "object_id": 0}` | GLB bytes |
 | `GET` | `/3d/{uid}/{object_id}` | path `uid`, `object_id` | GLB file |
 | `GET` | `/3d/{uid}` | path `uid` | GLB file (legacy id-0 fallback) |
+| `POST` | `/debug/validate` | multipart `file` | `DebugValidationResponse` |
+| `POST` | `/debug/depth-map` | multipart `file` + query params | PNG bytes |
+| `POST` | `/debug/sam-everything` | multipart `file` + query params | PNG bytes |
 
 ## `POST /images/upload`
 
@@ -266,3 +269,57 @@ Returns final artifact existence flags, derives `cutout_bounds` from cached fina
 ## Bounds Extraction
 
 `_extract_cutout_bounds_from_png_bytes(...)` decodes PNG with alpha, finds non-zero alpha pixels, and returns tight visible-object bounds. If decode or alpha is missing, it falls back to full-image bounds where possible.
+
+## Debug endpoints
+
+Router: [`fastApi-app/api/debug_vision.py`](../../fastApi-app/api/debug_vision.py), prefix `/debug`. Pipeline functions: [`fastApi-app/core/debug_vision.py`](../../fastApi-app/core/debug_vision.py). Test/inspection tools, not part of the production object-removal flow — **no session is created, nothing is written to disk**. All three are gated by `DEBUG_ENDPOINTS` (`settings.get_debug_endpoints_enabled()`, default enabled); when disabled, all three return **404**. Frontend entry point: the dashboard header's flask icon opens `DebugScreen` (see [frontend/user-flow.md](../frontend/user-flow.md#pipeline-debug-screen)).
+
+All three dispatch through the inference pool (`JobKind.DEBUG_DEPTH_MAP` / `DEBUG_SAM_EVERYTHING` for the two PNG endpoints; `/debug/validate`'s content stage reuses the existing `JobKind.VALIDATE_CONTENT`) — same concurrency model as production calls. Both PNG job kinds are in `_FACADE_JOB_KINDS` (`core/inference_pool/dispatch.py`) so inline mode takes the GPU lock.
+
+### `POST /debug/validate`
+
+Runs the **full** upload-validation scoreboard on an image, with no side effects. Unlike `POST /images/upload`, this never persists anything, never creates a session, and never stops at the first failed check — every technical check plus the content (CLIP) checks all run and are reported regardless of pass/fail. Always returns **200**; a failed check is data, not an error. Runs independently of the `VALIDATE` env var (this endpoint *is* the validator).
+
+1. Technical stage: `ImageValidator().validate_all(...)` (`core/image_validation/validator.py`) — every check runs even after an earlier one fails, unlike `validate()` (used by `POST /images/upload`), which raises `ImageValidationError` on the first failure. Both share one private `_run_checks(..., stop_on_first_failure: bool)` runner.
+2. A `decode` failure is still terminal for the technical stage (every check past `format_mime` reads from the decoded context) — reported as one failed `decode` check, and the content stage is skipped (`content_skipped_reason` set).
+3. Content stage (skipped only on decode failure): `get_inference_client().run_validate_content(...)` — the same `JobKind.VALIDATE_CONTENT` job `POST /images/upload` uses.
+4. Response `ok = technical_ok and (content_ok is not False)`.
+
+See `DebugValidationResponse` in [schemas.md](schemas.md#debug).
+
+### `POST /debug/depth-map`
+
+Renders a depth map for an uploaded image as a viewable PNG (not a `.npy` array). Query params:
+
+| Param | Default | Notes |
+|---|---|---|
+| `model` | `LiheYoung/depth-anything-small-hf` | HF checkpoint name. Only used when `strategy=anything`. |
+| `colormap` | `none` | One of `none`, `inferno`, `magma`, `turbo`, `jet`. `none` renders grayscale. |
+| `strategy` | `anything` | One of `anything`, `blended`, `enhanced_edge` — see below. |
+
+`core/debug_vision.py::_build_depth_strategy(strategy, model_name)` selects the depth-mapping strategy:
+
+- `anything` — `DepthAnythingMappingStrategy(model_name)`, a single checkpoint; the only one of the three that honors `model`.
+- `blended` — `NearFarBlendedDepthMappingStrategy()`, the near+far alpha-blended composite production actually feeds into edge enhancement (see [AI Pipeline Architecture](../../CLAUDE.md#ai-pipeline-architecture-critical)).
+- `enhanced_edge` — `EnhancedEdgeDepthMappingStrategy()`, `blended` plus CLAHE + bilateral filtering — production's **true default** (`DepthMappingFacade`'s own default strategy).
+
+Response is `image/png` with header `X-Elapsed-Ms`. `422` on an unknown `colormap`/`strategy` or an undecodable upload.
+
+### `POST /debug/sam-everything`
+
+Renders SAM's `SamAutomaticMaskGenerator` ("segment everything", prompt-free) output as a colored overlay on the original photo. Query params:
+
+| Param | Default | Notes |
+|---|---|---|
+| `source` | `depth` | `depth` feeds SAM the adapted depth map (production's rule — see [AI Pipeline Architecture](../../CLAUDE.md#ai-pipeline-architecture-critical)); `rgb` feeds the raw photo instead, to demonstrate why that rule exists (visibly more/noisier masks from fabric creases and shadows). |
+| `depth_strategy` | `anything` | Only used when `source=depth`. Same three options as `/debug/depth-map`'s `strategy`. |
+| `depth_model` | `LiheYoung/depth-anything-small-hf` | Only used when `source=depth` and `depth_strategy=anything`. |
+| `points_per_side` | `16` | SAM probe grid density, `4`–`64`. Runtime scales with the square of this value (`points_per_side²` forward passes). |
+| `pred_iou_thresh` | `0.88` | `0.0`–`1.0`. Minimum predicted mask-quality IoU to keep a candidate — matches `SamAutomaticMaskGenerator`'s own default. |
+| `stability_score_thresh` | `0.95` | `0.0`–`1.0`. Minimum stability score (robustness under threshold perturbation) to keep a candidate. |
+| `min_mask_region_area` | `0` | `0`–`100000`. Discards connected components smaller than this many pixels (`cv2.connectedComponents`-based post-processing inside `segment_anything`, no pycocotools dependency). |
+| `alpha` | `0.45` | `0.0`–`1.0`. Overlay tint strength. |
+
+The overlay is **always** drawn on the original photo, regardless of `source`. Response is `image/png` with headers `X-Mask-Count` and `X-Elapsed-Ms` — both must be read via `expose_headers` on the CORS middleware (see [settings-and-storage.md](settings-and-storage.md)) for browser JS to see them. `422` on an unknown `source`/`depth_strategy` or an undecodable upload.
+
+Underlying capability: `SamSegmentationStrategy.predict_everything(image, *, points_per_side, pred_iou_thresh, stability_score_thresh, min_mask_region_area)` in [`TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py`](../../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) — a non-abstract method on `ImageSegmentationStrategy` (default raises `NotImplementedError`, since prompt-free segmentation is SAM-specific) exposed at the facade level as `ImageSegmentationFacade.get_all_masks_for_image(...)`. Reuses the already-loaded `SamPredictor`'s weights via `_load_sam_mask_generator` (`functools.lru_cache`, keyed on checkpoint + all four threshold args) — no duplicate 370MB checkpoint load. Rendering uses `avroom_object_removal.utils.overlay_masks` (deterministic per-mask color via golden-ratio hue stepping, translucent fill + outline).

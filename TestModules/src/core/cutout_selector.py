@@ -22,6 +22,7 @@ _BAD_LABEL = "a partial cut, wall, floor, blob, or obstructed object"
 DEFAULT_THRESHOLD = 0.6
 MIN_AREA_FRACTION = 0.003
 MAX_AREA_FRACTION = 0.70
+_DUPLICATE_IOU = 0.85
 _GRAY = 128
 
 
@@ -55,17 +56,16 @@ def select_best_cutout(
 ) -> CutoutSelectionResult:
     """Pick the best complete-object cutout for ``click_xy``, or none.
 
-    Pre-filters masks that miss the click or cover too little / too much of
-    the image, then scores remaining crops with CLIP ``binary_prob``. Winner
-    is the highest ``P(good)`` at or above ``threshold``.
+    CLIP is a gate (``P(good) >= threshold``), not a ranker: its scores for
+    competing masks of the same object sit within noise of each other. The
+    winner is chosen by how many candidates agree on a silhouette — see
+    :func:`_pick_winner`.
     """
     scores: list[float] = []
     reasons: list[str] = []
     clip_crops_bgr: list[np.ndarray | None] = []
-    best_index: int | None = None
-    best_score = -1.0
 
-    for index, cutout in enumerate(cutouts_bgra):
+    for cutout in cutouts_bgra:
         reason = _prefilter_reason(cutout, click_xy)
         if reason is not None:
             scores.append(0.0)
@@ -84,10 +84,9 @@ def select_best_cutout(
         scores.append(good_p)
         reasons.append("scored")
         clip_crops_bgr.append(_pil_rgb_to_bgr(crop))
-        if good_p >= threshold and good_p > best_score:
-            best_score = good_p
-            best_index = index
 
+    alphas = [_alpha_mask(cutout) for cutout in cutouts_bgra]
+    best_index = _pick_winner(alphas, scores, threshold)
     if best_index is not None:
         reasons[best_index] = "winner"
 
@@ -111,6 +110,80 @@ def select_best_cutout(
         clip_crops_bgr=clip_crops_bgr,
     )
     return result
+
+
+def _alpha_mask(cutout_bgra: np.ndarray) -> np.ndarray:
+    if cutout_bgra.ndim != 3 or cutout_bgra.shape[2] < 4:
+        return np.zeros(cutout_bgra.shape[:2], dtype=bool)
+    return cutout_bgra[:, :, 3] > 0
+
+
+def _mask_iou(left: np.ndarray, right: np.ndarray) -> float:
+    union = int(np.count_nonzero(left | right))
+    if union == 0:
+        return 0.0
+    return float(int(np.count_nonzero(left & right))) / float(union)
+
+
+def _pick_winner(
+    alphas: Sequence[np.ndarray],
+    scores: Sequence[float],
+    threshold: float,
+) -> int | None:
+    """Pick the silhouette the most candidates agree on.
+
+    Each click yields six candidates: SAM's three multimask scales over the
+    depth map and over the RGB image. A true object boundary is one several
+    candidates land on independently; a part of an object, a leak into a
+    neighbour, and a mangled mask are usually one-offs. Within a group the
+    largest member wins, since near-identical masks differ only by pixels
+    one of them dropped.
+
+    ponytail: equal-support groups fall back to mean area, so two candidates
+    leaking into the same neighbour would outrank a single clean mask. Add
+    per-pass provenance to the candidate contract if that shows up.
+    """
+    eligible = [index for index, score in enumerate(scores) if score >= threshold]
+    if not eligible:
+        return None
+
+    groups = _group_by_silhouette(alphas, eligible)
+    best_group = max(groups, key=lambda group: (len(group), _mean_mask_area(group, alphas)))
+    winner = max(
+        best_group,
+        key=lambda index: (int(np.count_nonzero(alphas[index])), scores[index], index),
+    )
+    logger.info(
+        "Cutout selection: groups=%s winner=%s support=%d",
+        groups,
+        winner,
+        len(best_group),
+    )
+    return winner
+
+
+def _group_by_silhouette(
+    alphas: Sequence[np.ndarray],
+    eligible: Sequence[int],
+) -> list[list[int]]:
+    """Bucket candidates that trace the same silhouette (mutual IoU)."""
+    groups: list[list[int]] = []
+    for index in eligible:
+        for group in groups:
+            if all(
+                _mask_iou(alphas[index], alphas[member]) >= _DUPLICATE_IOU
+                for member in group
+            ):
+                group.append(index)
+                break
+        else:
+            groups.append([index])
+    return groups
+
+
+def _mean_mask_area(members: Sequence[int], alphas: Sequence[np.ndarray]) -> float:
+    total = sum(int(np.count_nonzero(alphas[index])) for index in members)
+    return float(total) / float(len(members))
 
 
 def _prefilter_reason(cutout_bgra: np.ndarray, click_xy: tuple[int, int]) -> str | None:

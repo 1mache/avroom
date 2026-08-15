@@ -143,7 +143,9 @@ class ObjectSegmentor:
             expand_pixels=run_context.get("expand_pixels", 14),
             use_broad_mask=run_context["use_broad_mask"],
         )
-        depth_pairs = self._process_candidates(depth_candidate_pairs, image, label="depth_pass")
+        depth_pairs = self._process_candidates(
+            depth_candidate_pairs, image, x, y, label="depth_pass"
+        )
         logger.info(f"Pass A (depth): {len(depth_pairs)} candidate(s) produced")
 
         logger.info("Pass B (image): requesting ALL candidate masks from SAM on original RGB...")
@@ -154,7 +156,9 @@ class ObjectSegmentor:
             expand_pixels=14,
             use_broad_mask=False,
         )
-        image_pairs = self._process_candidates(image_candidate_pairs, image, label="image_pass")
+        image_pairs = self._process_candidates(
+            image_candidate_pairs, image, x, y, label="image_pass"
+        )
         logger.info(f"Pass B (image): {len(image_pairs)} candidate(s) produced")
 
         result_pairs = depth_pairs + image_pairs
@@ -168,17 +172,22 @@ class ObjectSegmentor:
         self,
         candidate_pairs: tuple[tuple[np.ndarray, np.ndarray], ...],
         image: np.ndarray,
+        click_x: int,
+        click_y: int,
         label: str,
     ) -> list[tuple[np.ndarray, np.ndarray]]:
         """Process SAM candidate mask pairs into refined masks and BGRA cutouts.
 
-        Runs the refine-and-compose stage on every ``(expanded_mask, original_mask)``
-        pair produced by SAM. Both passes (depth and image) delegate here so the
-        processing logic stays in one place.
+        Runs the sanitize-refine-compose stage on every ``(expanded_mask,
+        original_mask)`` pair produced by SAM. Both passes (depth and image)
+        delegate here so the processing logic stays in one place.
 
         Args:
             candidate_pairs: Raw ``(expanded_mask, original_mask)`` pairs from SAM.
             image: Original BGR image used for cutout composition and overlays.
+            click_x: Click X coordinate, used to discard mask fragments that are
+                not connected to the object the user clicked.
+            click_y: Click Y coordinate, same purpose as ``click_x``.
             label: Short string prefix (e.g. ``"depth"`` or ``"image"``) applied to
                 all debug-image save keys so the two passes never overwrite each other.
 
@@ -203,6 +212,16 @@ class ObjectSegmentor:
 
             # Mask after routing-dilation (expand_pixels applied by SAM strategy).
             self.image_saver.save(f"{pfx}_sam_expanded_mask", expanded_mask)
+
+            # SAM emits detached speckles and interior gaps; both are corruption
+            # that would otherwise reach the cutout and the inpainting mask.
+            original_mask = self.mask_refiner.keep_click_component(
+                original_mask, click_x, click_y
+            )
+            expanded_mask = self.mask_refiner.keep_click_component(
+                expanded_mask, click_x, click_y
+            )
+            self.image_saver.save(f"{pfx}_sanitized_mask", original_mask)
 
             expanded_bool = expanded_mask > 0 if expanded_mask.dtype != bool else expanded_mask
             expanded_overlay = image.copy()

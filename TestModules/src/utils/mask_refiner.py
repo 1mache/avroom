@@ -20,6 +20,8 @@ class MaskRefiner:
       downward bias. This is the path used by ``ObjectRemover`` today.
     * :meth:`dilate_mask` - thin wrapper around ``cv2.dilate`` for callers
       that just want N-pixel expansion (used by SAM facade).
+    * :meth:`keep_click_component` - drop speckles not connected to the
+      click and fill enclosed holes. Every SAM candidate goes through this.
     """
 
     def __init__(self, depth_tolerance: int = 10) -> None:
@@ -91,6 +93,54 @@ class MaskRefiner:
 
         final = np.maximum(base_dilated, shifted_dilated)
         return final.astype(np.uint8)
+
+    def keep_click_component(
+        self,
+        mask: np.ndarray,
+        click_x: int,
+        click_y: int,
+    ) -> np.ndarray:
+        """Reduce ``mask`` to the one blob under the click, with holes filled.
+
+        SAM routinely returns a correct silhouette plus detached speckles
+        elsewhere in the frame, and sometimes drops interior pixels. Both are
+        corruption: the user clicked one object, so anything not connected to
+        that click is not part of it, and an enclosed gap inside it is a miss.
+        Concavities (the space between chair legs) reach the image border and
+        are deliberately preserved.
+
+        Returns the mask unchanged when the click falls outside it — callers
+        rely on the click/mask agreement gate to reject that case.
+        """
+        mask_uint8 = mask.astype(np.uint8)
+        if mask_uint8.max() == 1:
+            mask_uint8 = mask_uint8 * 255
+
+        height, width = mask_uint8.shape[:2]
+        if not (0 <= click_x < width and 0 <= click_y < height):
+            return mask_uint8
+        if mask_uint8[click_y, click_x] == 0:
+            return mask_uint8
+
+        _, labels = cv2.connectedComponents((mask_uint8 > 0).astype(np.uint8), connectivity=8)
+        click_label = int(labels[click_y, click_x])
+        kept = np.where(labels == click_label, 255, 0).astype(np.uint8)
+
+        padded = cv2.copyMakeBorder(kept, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
+        outside = cv2.bitwise_not(padded)
+        flood_scratch = np.zeros((padded.shape[0] + 2, padded.shape[1] + 2), np.uint8)
+        cv2.floodFill(outside, flood_scratch, (0, 0), 0)
+        holes = outside[1:-1, 1:-1]
+        filled = cv2.bitwise_or(kept, holes)
+
+        dropped = int(np.count_nonzero(mask_uint8 > 0)) - int(np.count_nonzero(kept))
+        if dropped > 0 or np.any(holes):
+            logger.debug(
+                "[MaskRefiner] Sanitized mask: dropped %d detached px, filled %d hole px",
+                dropped,
+                int(np.count_nonzero(holes)),
+            )
+        return filled
 
     def dilate_mask(self, mask: np.ndarray, pixels: int = 0) -> np.ndarray:
         """Expand ``mask`` by ``pixels`` in all directions (no-op if pixels<=0)."""

@@ -116,6 +116,56 @@ def test_debug_dump_writes_selection_json_and_winner() -> None:
     assert (debug_dir / "01_clip_crop.png").is_file()
 
 
+def test_agreed_silhouette_beats_higher_clip_fragment() -> None:
+    """A part of the object scores best on CLIP; two agreeing passes must win."""
+    seat = _bgra(alpha_rect=(20, 20, 50, 42))
+    chair_a = _bgra(alpha_rect=(18, 18, 52, 70))
+    chair_b = _bgra(alpha_rect=(18, 18, 52, 70))
+    result = select_best_cutout(
+        [seat, chair_a, chair_b],
+        click_xy=(35, 30),
+        scorer=_scorer({0: 0.976, 1: 0.966, 2: 0.965}),
+    )
+    assert result.winner_index in (1, 2)
+    assert result.reasons[0] == "scored"
+
+
+def test_agreed_silhouette_beats_higher_clip_clutter() -> None:
+    """Chair plus a neighbouring bag scores best on CLIP and still loses."""
+    chair_a = _bgra(alpha_rect=(20, 20, 50, 60))
+    chair_b = _bgra(alpha_rect=(20, 20, 50, 60))
+    chair_and_bag = _bgra(alpha_rect=(12, 12, 70, 72))
+    result = select_best_cutout(
+        [chair_a, chair_b, chair_and_bag],
+        click_xy=(35, 30),
+        scorer=_scorer({0: 0.966, 1: 0.965, 2: 0.980}),
+    )
+    assert result.winner_index in (0, 1)
+
+
+def test_largest_member_of_agreed_group_wins() -> None:
+    """Near-identical masks differ by dropped pixels; keep the complete one."""
+    clipped = _bgra(alpha_rect=(20, 20, 50, 56))
+    full_a = _bgra(alpha_rect=(20, 20, 50, 60))
+    full_b = _bgra(alpha_rect=(20, 20, 50, 60))
+    result = select_best_cutout(
+        [clipped, full_a, full_b],
+        click_xy=(35, 30),
+        scorer=_scorer({0: 0.976, 1: 0.966, 2: 0.965}),
+    )
+    assert result.winner_index in (1, 2)
+
+
+def test_single_candidate_still_wins_when_gated_through() -> None:
+    lone = _bgra(alpha_rect=(20, 20, 50, 60))
+    result = select_best_cutout(
+        [lone],
+        click_xy=(35, 30),
+        scorer=_scorer({0: 0.80}),
+    )
+    assert result.winner_index == 0
+
+
 def test_all_below_threshold_returns_none() -> None:
     viable = (20, 20, 50, 50)
     cutouts = [_bgra(alpha_rect=viable), _bgra(alpha_rect=viable)]

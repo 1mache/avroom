@@ -1,6 +1,6 @@
 # Inpainting verification
 
-**What this is:** Post-inpaint quality check on a Stable Diffusion (or LaMa-only) candidate. The facade holds one `InpaintingVerificationStrategy`. Default is CLIP labels on a padded mask crop.
+**What this is:** Post-inpaint quality check on a Stable Diffusion (or LaMa-only) candidate. The facade holds one `InpaintingVerificationStrategy`. Default is Gemini (`gemini-2.0-flash` REST). CLIP labels run when `GEMINI_API_KEY` is missing/placeholder or the call fails.
 
 **When it runs:** Inside `HybridInpaintingStrategy.inpaint` after every candidate, including when SD is skipped. Singular `POST /images/inpaint` and batch peels both go through Hybrid, so both get this loop. There is no separate inference `JobKind`.
 

@@ -7,9 +7,8 @@ from dataclasses import dataclass
 class InpaintingVerificationResult:
     """Outcome of one inpaint-quality check.
 
-    ``param_fixes_json`` is always a JSON object string. On failure the CLIP
-    v1 strategy echoes the input params (no invented knobs). A later strategy
-    can put real deltas in the same field.
+    ``param_fixes_json`` is always a JSON object string. Gemini puts rewritten
+    knobs here on fail. CLIP fallback echoes the input params.
     """
 
     ok: bool

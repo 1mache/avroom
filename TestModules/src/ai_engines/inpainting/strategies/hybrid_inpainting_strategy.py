@@ -33,8 +33,9 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
     so reimagined edges blend with surroundings without inventing furniture.
 
     After each candidate (including LaMa-only when SD is skipped), an
-    :class:`InpaintingVerificationFacade` judges the result. Failures replay
-    SD with the returned JSON params up to ``INPAINT_VERIFY_MAX_RETRIES``.
+    :class:`InpaintingVerificationFacade` (Gemini default) judges the result.
+    Failures replay SD with the returned JSON params up to
+    ``INPAINT_VERIFY_MAX_RETRIES``.
     """
 
     SD_SKIP_THRESHOLD: float = 0.2

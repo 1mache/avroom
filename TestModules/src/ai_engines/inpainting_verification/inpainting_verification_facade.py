@@ -7,8 +7,8 @@ import numpy as np
 from .inpaint_sd_params import InpaintSdParams
 from .inpainting_verification_result import InpaintingVerificationResult
 from .inpainting_verification_strategy import InpaintingVerificationStrategy
-from .strategies.clip_label_inpainting_verification_strategy import (
-    ClipLabelInpaintingVerificationStrategy,
+from .strategies.gemini_inpainting_verification_strategy import (
+    GeminiInpaintingVerificationStrategy,
 )
 
 logger = logging.getLogger(__name__)
@@ -17,13 +17,13 @@ logger = logging.getLogger(__name__)
 class InpaintingVerificationFacade:
     """Public entry point for post-inpaint quality checks.
 
-    Holds exactly one :class:`InpaintingVerificationStrategy`. Default is CLIP
-    label comparison on a padded mask crop.
+    Holds exactly one :class:`InpaintingVerificationStrategy`. Default is
+    Gemini (CLIP fallback when the API key is a placeholder).
     """
 
     def __init__(self, strategy: InpaintingVerificationStrategy | None = None) -> None:
         self._strategy: InpaintingVerificationStrategy = (
-            strategy or ClipLabelInpaintingVerificationStrategy()
+            strategy or GeminiInpaintingVerificationStrategy()
         )
         logger.info(
             "InpaintingVerificationFacade ready (strategy=%s)",

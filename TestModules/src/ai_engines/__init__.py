@@ -34,6 +34,7 @@ from .inpainting import (
 )
 from .inpainting_verification import (
     ClipLabelInpaintingVerificationStrategy,
+    GeminiInpaintingVerificationStrategy,
     INPAINT_VERIFY_CROP_PAD_RATIO,
     InpaintSdParams,
     InpaintingVerificationFacade,
@@ -81,6 +82,7 @@ __all__ = [
     "DepthMappingFacade",
     "DepthMappingStrategy",
     "ClipLabelInpaintingVerificationStrategy",
+    "GeminiInpaintingVerificationStrategy",
     "INPAINT_VERIFY_CROP_PAD_RATIO",
     "InpaintSdParams",
     "InpaintingVerificationFacade",

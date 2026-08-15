@@ -20,4 +20,4 @@ sequenceDiagram
     Hybrid->>Hybrid: sharpen and color nudge
 ```
 
-CLIP v1: pad-crop the mask, score labels, pass if `photorealistic room` wins. On fail, JSON is the params that were used (no invented knobs). Exhausted retries keep the last candidate.
+Default: pad-crop the mask, send crop + current params to Gemini. Pass copies input knobs. Fail returns rewritten knobs. Placeholder `GEMINI_API_KEY` (or HTTP/JSON failure) uses CLIP labels instead (`photorealistic room` wins). Exhausted retries keep the last candidate.

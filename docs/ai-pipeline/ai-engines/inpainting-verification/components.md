@@ -4,7 +4,7 @@ Source: [`TestModules/src/ai_engines/inpainting_verification/`](../../../../Test
 
 ## Facade
 
-- **`InpaintingVerificationFacade`** — Holds one `InpaintingVerificationStrategy`. Default: `ClipLabelInpaintingVerificationStrategy`.
+- **`InpaintingVerificationFacade`** — Holds one `InpaintingVerificationStrategy`. Default: `GeminiInpaintingVerificationStrategy`.
 
 ## Strategy ABC
 
@@ -12,7 +12,7 @@ Source: [`TestModules/src/ai_engines/inpainting_verification/`](../../../../Test
 
 ## Result and params
 
-- **`InpaintingVerificationResult`** — `ok`, `param_fixes_json`, CLIP `scores`, `winner_label`.
+- **`InpaintingVerificationResult`** — `ok`, `param_fixes_json`, `scores`, `winner_label`.
 - **`InpaintSdParams`** — `prompt`, `negative_prompt`, `strength`, `num_inference_steps`, `guidance_scale` with `to_json` / `from_json` (unknown keys dropped).
 
 ## Crop helper
@@ -23,4 +23,5 @@ Source: [`TestModules/src/ai_engines/inpainting_verification/`](../../../../Test
 
 | Strategy | Role |
 |----------|------|
+| `GeminiInpaintingVerificationStrategy` | Sends pad-crop PNG + params JSON to Gemini REST. Fail JSON carries rewritten knobs. Placeholder key / HTTP / bad JSON → CLIP. |
 | `ClipLabelInpaintingVerificationStrategy` | CLIP softmax over `photorealistic room` vs smear/unrealistic labels. Reuses `ClipZeroShotContentValidationStrategy.score_labels`. Fail JSON echoes input params. |

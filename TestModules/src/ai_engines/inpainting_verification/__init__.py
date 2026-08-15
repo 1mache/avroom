@@ -5,10 +5,14 @@ from .inpaint_sd_params import InpaintSdParams
 from .inpainting_verification_facade import InpaintingVerificationFacade
 from .inpainting_verification_result import InpaintingVerificationResult
 from .inpainting_verification_strategy import InpaintingVerificationStrategy
-from .strategies import ClipLabelInpaintingVerificationStrategy
+from .strategies import (
+    ClipLabelInpaintingVerificationStrategy,
+    GeminiInpaintingVerificationStrategy,
+)
 
 __all__ = [
     "ClipLabelInpaintingVerificationStrategy",
+    "GeminiInpaintingVerificationStrategy",
     "INPAINT_VERIFY_CROP_PAD_RATIO",
     "InpaintSdParams",
     "InpaintingVerificationFacade",

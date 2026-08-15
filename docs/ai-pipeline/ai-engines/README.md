@@ -22,6 +22,6 @@
 | [inpainting/README.md](inpainting/README.md) | LaMa hole fill, optional SD polish |
 | [reconstruction-3d/README.md](reconstruction-3d/README.md) | Optional image-to-GLB (TripoSR default; OpenLRM/Trellis optional) |
 | [content-validation/README.md](content-validation/README.md) | Upload content suitability (CLIP zero-shot default) |
-| [inpainting-verification/README.md](inpainting-verification/README.md) | Post-inpaint CLIP check + SD retry inside Hybrid |
+| [inpainting-verification/README.md](inpainting-verification/README.md) | Post-inpaint Gemini check + SD retry inside Hybrid |
 
 Upstream: [core/README.md](../core/README.md).

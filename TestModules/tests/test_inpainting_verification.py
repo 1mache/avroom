@@ -13,6 +13,7 @@ from PIL import Image
 
 from avroom_object_removal import (  # noqa: E402
     ClipLabelInpaintingVerificationStrategy,
+    GeminiInpaintingVerificationStrategy,
     HybridInpaintingStrategy,
     ImageInpaintingStrategy,
     InpaintSdParams,
@@ -167,6 +168,64 @@ def test_hybrid_skip_sd_when_verify_passes() -> None:
     result = hybrid.inpaint(image, mask, strength=0.1)
     assert sd.calls == []
     assert np.all(result == np.array((5, 5, 5), dtype=np.uint8))
+
+
+def test_gemini_fail_returns_rewritten_prompt() -> None:
+    params = _params()
+
+    def complete_fn(_crop: np.ndarray, received: InpaintSdParams) -> str:
+        assert received.prompt == params.prompt
+        return (
+            '{"ok":false,"winner_label":"smeared blob","prompt":"fixed wall",'
+            '"negative_prompt":"blob","strength":0.5,"num_inference_steps":40,'
+            '"guidance_scale":8.0}'
+        )
+
+    strategy = GeminiInpaintingVerificationStrategy(
+        api_key="placeholder",
+        complete_fn=complete_fn,
+    )
+    image, mask = _scene()
+    result = strategy.verify(image, mask, params)
+    assert result.ok is False
+    assert result.winner_label == "smeared blob"
+    fixed = InpaintSdParams.from_json(result.param_fixes_json)
+    assert fixed.prompt == "fixed wall"
+    assert fixed.strength == 0.5
+
+
+def test_gemini_placeholder_key_uses_clip_fallback() -> None:
+    def score_fn(_img: Image.Image, labels: tuple[str, ...]) -> dict[str, float]:
+        return {label: (1.0 if label == GOOD_LABEL else 0.0) for label in labels}
+
+    strategy = GeminiInpaintingVerificationStrategy(
+        api_key="placeholder",
+        clip_fallback=ClipLabelInpaintingVerificationStrategy(score_fn=score_fn),
+    )
+    image, mask = _scene()
+    params = _params()
+    result = strategy.verify(image, mask, params)
+    assert result.ok is True
+    assert result.param_fixes_json == params.to_json()
+
+
+def test_gemini_bad_json_falls_back_to_clip() -> None:
+    def complete_fn(_crop: np.ndarray, _params: InpaintSdParams) -> str:
+        return "not-json"
+
+    def score_fn(_img: Image.Image, labels: tuple[str, ...]) -> dict[str, float]:
+        return {label: (1.0 if label == "smeared blob" else 0.0) for label in labels}
+
+    strategy = GeminiInpaintingVerificationStrategy(
+        api_key="test-key",
+        complete_fn=complete_fn,
+        clip_fallback=ClipLabelInpaintingVerificationStrategy(score_fn=score_fn),
+    )
+    image, mask = _scene()
+    params = _params()
+    result = strategy.verify(image, mask, params)
+    assert result.ok is False
+    assert result.param_fixes_json == params.to_json()
 
 
 def test_hybrid_skip_sd_then_verify_fail_starts_sd() -> None:

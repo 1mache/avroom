@@ -1,16 +1,18 @@
 import React, { useCallback, useState } from "react";
 
 import { DashboardScreen } from "./components/layout/DashboardScreen";
+import { DebugScreen } from "./components/layout/DebugScreen";
 import { UploadScreen } from "./components/layout/UploadScreen";
 import { WorkspaceScreen } from "./components/layout/WorkspaceScreen";
 
-// Two screens and the upload step between them. Not enough surface to justify
-// a router: the dashboard is home, and the workspace is always entered with a
-// session already chosen.
+// Two screens, the upload step, and the pipeline debug screen. Not enough
+// surface to justify a router: the dashboard is home, and every other screen
+// is always entered from it.
 type Route =
   | { screen: "dashboard" }
   | { screen: "upload" }
-  | { screen: "workspace"; uid: string };
+  | { screen: "workspace"; uid: string }
+  | { screen: "debug" };
 
 export const App: React.FC = () => {
   const [route, setRoute] = useState<Route>({ screen: "dashboard" });
@@ -28,10 +30,15 @@ export const App: React.FC = () => {
     return <UploadScreen onCancel={goToDashboard} onUploaded={openSession} />;
   }
 
+  if (route.screen === "debug") {
+    return <DebugScreen onExit={goToDashboard} />;
+  }
+
   return (
     <DashboardScreen
       onOpenSession={openSession}
       onNewSession={() => setRoute({ screen: "upload" })}
+      onOpenDebug={() => setRoute({ screen: "debug" })}
     />
   );
 };

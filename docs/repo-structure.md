@@ -35,6 +35,8 @@ fastApi-app/
 │   ├── object_metadata.py    - per-object JSON metadata + UUID index
 │   ├── mask_cache.py         - filesystem helpers for temporary segmentation candidates
 │   ├── object_storage.py     - filesystem path helpers for finalized per-object artifacts
+│   ├── image_codec.py        - shared PNG encode + base64 helpers (api/ and core/)
+│   ├── avroom_package.py     - lazy avroom_object_removal imports with install-hint errors
 │   ├── inference_lock.py     - process-wide GPU lock (inline mode)
 │   └── inference_pool/       - optional worker pool + session runtime (canvas writer, region leases)
 │       ├── client.py         - inline vs pool dispatch

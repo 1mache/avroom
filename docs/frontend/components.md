@@ -4,7 +4,7 @@
 
 [`react-front/src/components/layout/DashboardScreen.tsx`](../../react-front/src/components/layout/DashboardScreen.tsx)
 
-Props: `{ onOpenSession: (uid: string) => void; onNewSession: () => void }`.
+Props: `{ onOpenSession: (uid: string) => void; onNewSession: () => void; onOpenDebug: () => void }`.
 
 The app's home screen. Owns `sessions: SessionInfo[]`, `loadState: "loading" | "ready" | "offline"`, `pendingDeleteUid: string | null`, `isDeleting`, `error`.
 
@@ -12,6 +12,7 @@ The app's home screen. Owns `sessions: SessionInfo[]`, `loadState: "loading" | "
 - Renders a "New session" CTA that calls `onNewSession`, a scrollable grid of `SessionCard`s (only the grid scrolls — the CTA stays reachable regardless of list length), a loading-skeleton state, and an empty state when there are no sessions.
 - Delete flow: a `SessionCard`'s trash button calls `onRequestDelete(uid)`, which sets `pendingDeleteUid`; a `ConfirmDialog` confirms; on confirm, `deleteSession(uid)` is awaited and the session is filtered out of local state on success, or `error` is set (generic error modal) on failure.
 - Clicking a `SessionCard` calls `onOpenSession(uid)`, which `App.tsx` routes into the workspace.
+- The header (`.dash-header`) carries a right-aligned (`.dash-header-end`, `margin-left: auto`) icon-only button (`FlaskIcon`, `data-tip="Pipeline debug"`) that calls `onOpenDebug`, routing to `DebugScreen`. Always visible regardless of whether the backend's `DEBUG_ENDPOINTS` is on — a disabled backend surfaces as a 404 inside each panel, not a hidden button (no extra dashboard-load request to probe first).
 
 ## `UploadScreen`
 
@@ -74,6 +75,22 @@ A pointer-down inside `.stage-input` that hits an object (rather than arming cut
 ### Rendering
 
 Renders `Toolbar` (wired to nearly all local + hook state), a `<main className="stage">` containing the background photo, one `.stage-cutout` `<img>` per visible object (z-index keeps the selected object on top regardless of creation order), the transparent `.stage-input` hit layer, a pick-point marker while `cutMode` is armed, the `Model3DFrame` in place of the selected object's 2D cutout while `rotateMode` is on, a 4-corner `.selection-frame` around the selected object, conflict notices (`useConflictNotices`), and `ObjectRail`. Outside `<main>`: `MaskPickerModal` (while choosing a segmentation candidate), the object-delete `ConfirmDialog`, and a generic error modal.
+
+## `DebugScreen`
+
+[`react-front/src/components/layout/DebugScreen.tsx`](../../react-front/src/components/layout/DebugScreen.tsx)
+
+Props: `{ onExit: () => void }`.
+
+Reachable from the dashboard header's flask icon. Upload a photo and see the full validation scoreboard plus rendered depth-map and SAM segment-everything output, regardless of whether validation passed — every knob the backend's `/debug` router exposes is a control here (see [backend/api-endpoints.md](../backend/api-endpoints.md#debug-endpoints) and [user-flow.md](user-flow.md#pipeline-debug-screen)). Nothing here creates a session or writes to disk.
+
+- **Source strip** reuses `UploadScreen`'s dropzone markup/classes (`.dropzone`, `.dropzone-preview`, `.dropzone-invite`) but with no client-side type/size pre-check — the point of the screen is watching the server decide. Picking a new file bumps `runTokenRef` and resets all three panels to `idle`.
+- **Three panels** (Validation, Depth map, SAM segment-everything), each independently `Re-run`-able, each holding its own `PanelState<T>` (`idle | running | done | error` — see [state-and-types.md](state-and-types.md#typesdebugts)) and its own knobs. A panel entering `error` renders the message **inside the panel**, never the generic modal — a debug screen exists to show failures.
+- **`Run all`** awaits `runValidation()` → `runDepth()` → `runSam()` **sequentially**, not in parallel — SAM shares the process-wide GPU lock with everything else in inline mode, so firing all three at once would only queue behind each other anyway. Each stage runs regardless of whether an earlier one failed.
+- **Staleness guard**: `runTokenRef` is bumped on every new file pick; each async run captures its own token and checks it before committing state (same pattern as `useSessionJobs`'s `imageIdRef`), so a slow response for a since-discarded photo can never overwrite a fresher run's result. A discarded-but-still-inflight PNG result has its object URL revoked immediately rather than held.
+- **Object URL lifecycle**: `heldUrlsRef` (a `Set<string>`) tracks every blob URL the depth/SAM panels have ever produced. Re-running a panel revokes its previous `done` result's URL before storing the new one; unmounting revokes everything still held, plus the source preview URL (read through a `previewUrlRef` mirror, since the unmount effect's closure would otherwise only ever see the initial-render value).
+- **Full-screen viewer**: clicking either rendered PNG opens `DebugLightbox`, a small component defined in the same file (not `ConfirmDialog`/`MaskPickerModal` — those are shaped for decisions, not viewing). Fixed overlay on `.modal-backdrop`'s z-index band, image at `object-fit: contain` on the app's transparency checkerboard, closed by Esc, backdrop click, or a close button.
+- Depth/SAM model fields are `<input list=...>` bound to a shared `<datalist id="debug-depth-models">` (5 known HF checkpoints) — a dropdown that still accepts free text.
 
 ## `Toolbar`
 
@@ -140,8 +157,8 @@ Builds a full Three.js scene/camera/renderer/`OrbitControls` (damping on, pannin
 
 [`react-front/src/components/icons.tsx`](../../react-front/src/components/icons.tsx)
 
-A shared `Svg` wrapper (24-unit viewBox, `strokeWidth: 1.6`, round caps/joins, `fill: none`, `stroke: currentColor`) gives every icon a consistent hand-drawn look. Exports one `React.FC<IconProps>` per icon (`IconProps = { size?: number }`, default `18`): `BackIcon`, `ScissorsIcon`, `RotateIcon`, `CopyIcon`, `SmartPasteIcon`, `TrashIcon`, `CheckIcon`, `EyeIcon`, `EyeOffIcon`, `RevertIcon`, `PlusIcon`, `PhotoIcon`. No icon carries a text label — every usage relies on the `[data-tip]` hover tooltip (see [styling.md](styling.md)).
+A shared `Svg` wrapper (24-unit viewBox, `strokeWidth: 1.6`, round caps/joins, `fill: none`, `stroke: currentColor`) gives every icon a consistent hand-drawn look. Exports one `React.FC<IconProps>` per icon (`IconProps = { size?: number }`, default `18`): `BackIcon`, `ScissorsIcon`, `RotateIcon`, `CopyIcon`, `SmartPasteIcon`, `TrashIcon`, `CheckIcon`, `EyeIcon`, `EyeOffIcon`, `RevertIcon`, `PlusIcon`, `PhotoIcon`, `FlaskIcon`. No icon carries a text label — every usage relies on the `[data-tip]` hover tooltip (see [styling.md](styling.md)).
 
 ## CSS roles
 
-See [styling.md](styling.md) for the full section-by-section map of `style.css`. In short: `.stage*` classes belong to `WorkspaceScreen`, `.toolbar*`/`.tool-*` to `Toolbar`, `.rail*` to `ObjectRail`, `.dash*`/`.session-*` to `DashboardScreen`/`SessionCard`, `.dropzone*`/`.upload-*` to `UploadScreen`, and `.modal*`/`.mask-*`/`.confirm-*`/`.btn*` are shared across `ConfirmDialog`, `MaskPickerModal`, and the inline error modals in both screens.
+See [styling.md](styling.md) for the full section-by-section map of `style.css`. In short: `.stage*` classes belong to `WorkspaceScreen`, `.toolbar*`/`.tool-*` to `Toolbar`, `.rail*` to `ObjectRail`, `.dash*`/`.session-*` to `DashboardScreen`/`SessionCard`, `.dropzone*`/`.upload-*` to `UploadScreen`, `.debug-*` to `DebugScreen` (reusing `.dropzone*`/`.btn*`/`.modal-backdrop`/`.checker` where the shapes already match), and `.modal*`/`.mask-*`/`.confirm-*`/`.btn*` are shared across `ConfirmDialog`, `MaskPickerModal`, and the inline error modals in both screens.

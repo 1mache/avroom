@@ -9,9 +9,6 @@ import binascii
 import io
 import os
 
-import json
-import cv2
-import numpy as np
 from PIL import Image, UnidentifiedImageError
 
 from fastapi import APIRouter, File, HTTPException, Response, UploadFile
@@ -20,8 +17,10 @@ from pathlib import Path
 
 from core.image_processing import (
     build_object_metadata_for_inpaint,
+    debug_click_image_path,
     get_image_path,
 )
+from core.image_codec import to_base64_ascii
 from core.image_validation import ImageValidationError, ImageValidator
 from core.inference_pool.client import InferenceJobError, get_inference_client
 from core.inference_pool.session_runtime import (
@@ -51,7 +50,6 @@ from core.object_metadata import (
 from schemas.image import (
     ClickRequest,
     ClickResultResponse,
-    CutoutBounds,
     DuplicateObjectResponse,
     ImageUploadResponse,
     InpaintMaskRequest,
@@ -77,10 +75,13 @@ from core.object_storage import (
     current_background_path,
     delete_legacy_object_artifacts,
     delete_object_artifact_files,
+    legacy_object_cutout_path,
+    legacy_object_glb_path,
     list_object_ids,
     next_object_id,
     object_cutout_path,
     object_glb_path,
+    remove_file,
     resolve_object_cutout_path,
     resolve_object_glb_path,
     session_preview_path,
@@ -92,10 +93,10 @@ from settings import (
     get_3d_storage_dir,
     get_image_storage_dir,
     get_session_last_changed,
-    get_sessions_file,
     evaluate_session_sync,
     is_session_registered,
     load_names,
+    load_session_uids,
     register_uid,
     remove_session_name,
     get_upload_validation_enabled,
@@ -113,14 +114,7 @@ logger = logging.getLogger(__name__)
 async def get_sessions() -> list[SessionInfo]:
     """Return all image UIDs registered via upload, with optional human-readable names."""
     logger.info("Sessions list requested")
-    sessions_file = get_sessions_file()
-    uids: list[str] = []
-    if sessions_file.exists():
-        try:
-            uids = json.loads(sessions_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, ValueError):
-            uids = []
-
+    uids = load_session_uids()
     names = load_names()
     result = [
         SessionInfo(uid=u, name=names.get(u), last_changed=get_session_last_changed(u))
@@ -166,19 +160,13 @@ async def upload_image(
         raise HTTPException(status_code=500, detail=f"Upload failed: {exc}") from exc
 
     if get_upload_validation_enabled():
+        # ImageValidationError is itself a ValueError; both mean "rejected".
         try:
             ImageValidator().validate(
                 file_bytes,
                 filename=original_filename,
                 content_type=file.content_type,
             )
-        except ImageValidationError as exc:
-            logger.warning(
-                "Upload rejected by technical validation: filename=%s detail=%s",
-                original_filename,
-                exc,
-            )
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
         except ValueError as exc:
             logger.warning(
                 "Upload rejected by technical validation: filename=%s detail=%s",
@@ -274,15 +262,14 @@ def handle_click(request: ClickRequest) -> ClickResultResponse:
         logger.exception("Click processing failed")
         raise HTTPException(status_code=500, detail=f"Click processing failed: {exc}") from exc
 
-    # save the background and cutout images to the disk
-    background_image_path = storage_dir / f"{request.image_id}_background.png"
-    background_image_path.write_bytes(background_bytes)
-    cutout_image_path = storage_dir / f"{request.image_id}_cutout.png"
-    cutout_image_path.write_bytes(cutout_bytes)
+    # Legacy endpoint: writes the pre-numbering artifact names, which
+    # resolve_object_cutout_path still reads back as object id 0.
+    current_background_path(storage_dir, request.image_id).write_bytes(background_bytes)
+    legacy_object_cutout_path(storage_dir, request.image_id).write_bytes(cutout_bytes)
     touch_session(request.image_id)
 
-    background_b64 = base64.b64encode(background_bytes).decode("ascii")
-    cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")
+    background_b64 = to_base64_ascii(background_bytes)
+    cutout_b64 = to_base64_ascii(cutout_bytes)
     # Frontend uses these bounds to clamp drag by visible object, not by the
     # transparent padding that exists around most cutouts.
     cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_bytes)
@@ -358,7 +345,7 @@ def segment_image(request: SegmentRequest) -> SegmentResponse:
         masks.append(
             SegmentMaskOption(
                 mask_id=mask_id,
-                cutout_b64=base64.b64encode(cutout_bytes).decode("ascii"),
+                cutout_b64=to_base64_ascii(cutout_bytes),
                 format="png",
                 cutout_bounds=extract_cutout_bounds_from_png_bytes(cutout_bytes),
             )
@@ -446,8 +433,8 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
             drop_lease(request.image_id, lease)
         release_canvas_writer(request.image_id)
 
-    background_b64 = base64.b64encode(background_bytes).decode("ascii")
-    cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")
+    background_b64 = to_base64_ascii(background_bytes)
+    cutout_b64 = to_base64_ascii(cutout_bytes)
     cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_bytes)
 
     logger.info(
@@ -495,46 +482,30 @@ async def delete_session(uid: str) -> Response:
             path.unlink(missing_ok=True)
             removed += 1
 
-        for suffix in ("_background.png", "_cutout.png", "_preview.jpg"):
-            p = storage_dir / f"{uid}{suffix}"
-            if p.exists():
-                p.unlink()
-                removed += 1
+        three_d_dir = get_3d_storage_dir()
+        for path in (
+            current_background_path(storage_dir, uid),
+            legacy_object_cutout_path(storage_dir, uid),
+            session_preview_path(storage_dir, uid),
+            debug_click_image_path(storage_dir, uid),
+            # Legacy single GLB (written by earlier backend versions).
+            legacy_object_glb_path(three_d_dir, uid),
+        ):
+            removed += remove_file(path)
 
         delete_candidates(storage_dir, uid)
 
         # Collect per-object ids before deleting files (list_object_ids scans disk).
         obj_ids = list_object_ids(storage_dir, uid)
 
-        # Remove all numbered per-object cutouts.
+        # Remove all numbered per-object cutouts and GLB files.
         for oid in obj_ids:
-            p = object_cutout_path(storage_dir, uid, oid)
-            if p.exists():
-                p.unlink()
-                removed += 1
+            removed += remove_file(object_cutout_path(storage_dir, uid, oid))
+            removed += remove_file(object_glb_path(three_d_dir, uid, oid))
 
         delete_session_metadata(storage_dir, uid, obj_ids)
         removed += delete_session_depth_maps(storage_dir, uid)
         removed += delete_session_camera_calib(storage_dir, uid)
-
-        debug_path = storage_dir / "point" / f"{uid}_debug.png"
-        if debug_path.exists():
-            debug_path.unlink()
-            removed += 1
-
-        # Legacy single GLB (written by earlier backend versions).
-        glb_path = get_3d_storage_dir() / f"{uid}.glb"
-        if glb_path.exists():
-            glb_path.unlink()
-            removed += 1
-
-        # Remove all numbered per-object GLB files.
-        three_d_dir = get_3d_storage_dir()
-        for oid in obj_ids:
-            p = object_glb_path(three_d_dir, uid, oid)
-            if p.exists():
-                p.unlink()
-                removed += 1
 
         # Cached novel-view results and their preview placeholders, one file
         # per (object, snapped pose) pair -- glob rather than reconstructing
@@ -733,6 +704,20 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
 
     new_object_id: int | None = None
     clone_metadata: ObjectMetadata | None = None
+
+    def rollback_clone() -> None:
+        """Undo a partially written clone so no orphan cutout survives the failure."""
+        if new_object_id is None:
+            return
+        delete_object_artifact_files(
+            base_dir=storage_dir,
+            glb_dir=three_d_dir,
+            uid=source.session_id,
+            object_id=new_object_id,
+        )
+        if clone_metadata is not None:
+            remove_object_index_entry(clone_metadata.uuid)
+
     try:
         try:
             acquire_canvas_writer(source.session_id)
@@ -761,27 +746,11 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
         raise
     except FileNotFoundError as exc:
         logger.warning("Object duplicate failed — missing artifact: uuid=%s detail=%s", object_uuid, exc)
-        if new_object_id is not None:
-            delete_object_artifact_files(
-                base_dir=storage_dir,
-                glb_dir=three_d_dir,
-                uid=source.session_id,
-                object_id=new_object_id,
-            )
-            if clone_metadata is not None:
-                remove_object_index_entry(clone_metadata.uuid)
+        rollback_clone()
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Object duplicate failed: uuid=%s", object_uuid)
-        if new_object_id is not None:
-            delete_object_artifact_files(
-                base_dir=storage_dir,
-                glb_dir=three_d_dir,
-                uid=source.session_id,
-                object_id=new_object_id,
-            )
-            if clone_metadata is not None:
-                remove_object_index_entry(clone_metadata.uuid)
+        rollback_clone()
         raise HTTPException(status_code=500, detail=f"Object duplicate failed: {exc}") from exc
 
     assert clone_metadata is not None
@@ -911,7 +880,7 @@ def rescale_object_by_depth(
         source_average_depth=result.source_average_depth,
         target_depth=result.target_depth,
         scale_factor=result.scale_factor,
-        cutout_b64=base64.b64encode(result.cutout_bytes).decode("ascii"),
+        cutout_b64=to_base64_ascii(result.cutout_bytes),
         format="png",
         cutout_bounds=cutout_bounds,
     )
@@ -948,9 +917,11 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
                 )
                 continue
             cutout_bytes = cutout_path.read_bytes()
-            cutout_b64 = base64.b64encode(cutout_bytes).decode("ascii")
+            cutout_b64 = to_base64_ascii(cutout_bytes)
             cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_bytes)
             has_3d = resolve_object_glb_path(three_d_dir, uid, oid).exists()
+            # Metadata is absent for objects created before it was introduced;
+            # those fall back to nulls plus an unmoved (0, 0) offset.
             meta = load_object_metadata(storage_dir, uid, oid)
             objects_list.append(
                 ObjectInfo(
@@ -1010,7 +981,7 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     status = UidCacheStatusResponse(
         uid=uid,
         name=names.get(uid),
-        has_background=(storage_dir / f"{uid}_background.png").exists(),
+        has_background=current_background_path(storage_dir, uid).exists(),
         has_cutout=bool(obj_ids),
         has_3d=has_3d,
         cutout_bounds=cutout_bounds,
@@ -1029,7 +1000,7 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
 async def get_background(uid: str) -> FileResponse:
     """Serve the cached background PNG for the given UID."""
     logger.info("Background requested: uid=%s", uid)
-    path = get_image_storage_dir() / f"{uid}_background.png"
+    path = current_background_path(get_image_storage_dir(), uid)
     if not path.exists():
         logger.warning("Background not found: uid=%s path=%s", uid, path)
         raise HTTPException(status_code=404, detail="Background not found")

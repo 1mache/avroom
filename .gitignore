@@ -67,6 +67,9 @@ fastApi-app/images/
 # ---- Cursor local tooling (hooks, skills) ----
 .cursor/
 
+# ---- Poster assets (local only) ----
+poster/
+
 # ---- Vendored third-party clone (treated as local dependency) ----
 TestModules/src/ai_engines/3dRreconstruction/Hunyuan3D-2.1/
 # Python Cache

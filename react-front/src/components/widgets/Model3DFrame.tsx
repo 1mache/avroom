@@ -2,9 +2,10 @@ import React, { forwardRef, useEffect, useImperativeHandle, useRef } from "react
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 
 // Camera tuned for "object on pedestal" framing inside current viewport sizes.
-const CAMERA_FOV = 40;
+export const CAMERA_FOV = 40;
 const CAMERA_NEAR = 0.1;
 const CAMERA_FAR = 1000;
 const CAMERA_POSITION = { x: 0, y: 0, z: 7 };
@@ -19,7 +20,7 @@ const AMBIENT_LIGHT_COLOR = 0xffffff;
 const AMBIENT_LIGHT_INTENSITY = 1.0;
 
 const KEY_LIGHT_COLOR = 0xffffff;
-const KEY_LIGHT_INTENSITY = 2.2;
+export const KEY_LIGHT_INTENSITY = 2.2;
 const KEY_LIGHT_POSITION = { x: 4, y: 6, z: 5 };
 
 const FILL_LIGHT_COLOR = 0xffffff;
@@ -36,11 +37,11 @@ const RIM_LIGHT_POSITION = { x: 0, y: -3, z: -6 };
 const HEADLIGHT_COLOR = 0xffffff;
 const HEADLIGHT_INTENSITY = 0.65;
 
-const MATERIAL_ROUGHNESS = 0.3;
+export const MATERIAL_ROUGHNESS = 0.3;
 // glTF defaults to metallicFactor=1; a fully metallic PBR material with no
 // environment map renders near-black under direct lights alone. Clamp it
 // down so brightening the rig above actually shows.
-const MAX_MATERIAL_METALNESS = 0.1;
+export const MAX_MATERIAL_METALNESS = 0.1;
 
 // The viewer canvas is inflated by this factor around the object's on-stage
 // rect (see model3DFrameStyle in MainPage) and the model is fit to fill
@@ -59,6 +60,18 @@ const glbToViewRotation = (): THREE.Matrix4 => new THREE.Matrix4();
 
 interface Props {
   glbData: ArrayBuffer | null;
+  /** "glb" (default) parses via GLTFLoader; "obj" decodes glbData as UTF-8 OBJ text via OBJLoader. */
+  format?: "glb" | "obj";
+  /**
+   * Optional overrides for the debug 3D panel (`DebugScreen`). All default to
+   * today's hardcoded constants below when omitted, so `WorkspaceScreen` —
+   * which never passes any of these — sees byte-identical behavior to before
+   * these props existed.
+   */
+  roughness?: number;
+  metalness?: number;
+  keyLightIntensity?: number;
+  cameraFov?: number;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -125,7 +138,16 @@ const collectCameraSpacePoints = (
 };
 
 export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model3DFrame(
-  { glbData, className, style },
+  {
+    glbData,
+    format = "glb",
+    roughness = MATERIAL_ROUGHNESS,
+    metalness,
+    keyLightIntensity = KEY_LIGHT_INTENSITY,
+    cameraFov = CAMERA_FOV,
+    className,
+    style,
+  },
   ref,
 ) {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -133,6 +155,15 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
   const controlsRef = useRef<OrbitControls | null>(null);
   const initialAzimuthalRef = useRef(0);
   const initialPolarRef = useRef(0);
+  // Populated by the load effect below; read by the secondary slider-driven
+  // effects so a knob tweak can mutate the live scene in place instead of
+  // re-parsing the model (glbData/format are the only load-effect deps).
+  const sceneStateRef = useRef<{
+    camera: THREE.PerspectiveCamera;
+    keyLight: THREE.DirectionalLight;
+    group: THREE.Group;
+    fitGroupToView: () => void;
+  } | null>(null);
 
   useImperativeHandle(
     ref,
@@ -171,10 +202,14 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
     const height = mount.clientHeight;
 
     // Scene lifecycle is fully local to this effect so cleanup can dispose every
-    // Three.js object when GLB data changes or component unmounts.
+    // Three.js object when GLB data changes or component unmounts. roughness/
+    // metalness/keyLightIntensity/cameraFov are read once here (initial
+    // construction) but deliberately NOT in the deps array below -- the three
+    // secondary effects further down mutate this same live scene in place
+    // when a slider changes, so a knob tweak never re-parses the model.
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(
-      CAMERA_FOV,
+      cameraFov,
       width / height,
       CAMERA_NEAR,
       CAMERA_FAR,
@@ -212,7 +247,7 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
 
     scene.add(new THREE.AmbientLight(AMBIENT_LIGHT_COLOR, AMBIENT_LIGHT_INTENSITY));
 
-    const key = new THREE.DirectionalLight(KEY_LIGHT_COLOR, KEY_LIGHT_INTENSITY);
+    const key = new THREE.DirectionalLight(KEY_LIGHT_COLOR, keyLightIntensity);
     key.position.set(KEY_LIGHT_POSITION.x, KEY_LIGHT_POSITION.y, KEY_LIGHT_POSITION.z);
     scene.add(key);
 
@@ -288,9 +323,13 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
       group.scale.setScalar(scale);
     };
 
-    const loader = new GLTFLoader();
-    loader.parse(glbData.slice(0), "", (gltf) => {
-      const obj = gltf.scene;
+    // Read by the secondary slider-driven effects below so a knob tweak can
+    // reach into this same live scene instead of re-running this effect.
+    sceneStateRef.current = { camera, keyLight: key, group, fitGroupToView };
+
+    // Shared by both loader branches: recenter/normalize the loaded object,
+    // apply the material sliders, orient it, and fit it to the viewport.
+    const settleLoadedObject = (obj: THREE.Object3D, isObjFormat: boolean) => {
       const box = new THREE.Box3().setFromObject(obj);
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
@@ -298,15 +337,31 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
 
       // Normalize to roughly unit size first so the fit iteration below starts
       // from extents comparable to the orbit radius, whatever scale the source
-      // GLB happens to use.
+      // model happens to use.
       const normalizedScale = 1 / maxDim;
       obj.scale.setScalar(normalizedScale);
       obj.position.copy(center).multiplyScalar(-normalizedScale);
 
       obj.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
-          child.material.roughness = MATERIAL_ROUGHNESS;
-          child.material.metalness = Math.min(child.material.metalness, MAX_MATERIAL_METALNESS);
+        if (!(child instanceof THREE.Mesh)) {
+          return;
+        }
+        if (isObjFormat) {
+          // OBJ has no usable baked PBR material here (OBJLoader's own
+          // default is Phong, and any referenced .mtl may be missing) --
+          // always give it a fresh MeshStandardMaterial so the roughness/
+          // metalness sliders have something to drive.
+          child.material = new THREE.MeshStandardMaterial({
+            color: 0xaaaaaa,
+            roughness,
+            metalness: metalness ?? MAX_MATERIAL_METALNESS,
+          });
+        } else if (child.material instanceof THREE.MeshStandardMaterial) {
+          child.material.roughness = roughness;
+          child.material.metalness =
+            metalness === undefined
+              ? Math.min(child.material.metalness, MAX_MATERIAL_METALNESS)
+              : metalness;
         }
       });
 
@@ -318,7 +373,18 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
 
       group.add(oriented);
       fitGroupToView();
-    });
+    };
+
+    if (format === "obj") {
+      const text = new TextDecoder().decode(glbData);
+      const obj = new OBJLoader().parse(text);
+      settleLoadedObject(obj, true);
+    } else {
+      const loader = new GLTFLoader();
+      loader.parse(glbData.slice(0), "", (gltf) => {
+        settleLoadedObject(gltf.scene, false);
+      });
+    }
 
     let frameId: number;
     const animate = () => {
@@ -345,11 +411,56 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
       renderer.dispose();
       rendererRef.current = null;
       controlsRef.current = null;
+      sceneStateRef.current = null;
       if (mount.contains(renderer.domElement)) {
         mount.removeChild(renderer.domElement);
       }
     };
-  }, [glbData]);
+    // roughness/metalness/keyLightIntensity/cameraFov intentionally omitted --
+    // see comment at the top of this effect; the three effects below handle
+    // their live updates without re-running this one.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [glbData, format]);
+
+  // Material sliders: mutate every already-loaded mesh's material in place.
+  // A no-op if the model hasn't finished loading yet -- settleLoadedObject
+  // above already applies the current roughness/metalness at load time, so
+  // there's no gap between "model appears" and "sliders take effect."
+  useEffect(() => {
+    const state = sceneStateRef.current;
+    if (!state) {
+      return;
+    }
+    state.group.traverse((child) => {
+      if (child instanceof THREE.Mesh && child.material instanceof THREE.MeshStandardMaterial) {
+        child.material.roughness = roughness;
+        if (metalness !== undefined) {
+          child.material.metalness = metalness;
+        }
+      }
+    });
+  }, [roughness, metalness]);
+
+  // Key light slider: mutate the existing light's intensity, no reload.
+  useEffect(() => {
+    const state = sceneStateRef.current;
+    if (!state) {
+      return;
+    }
+    state.keyLight.intensity = keyLightIntensity;
+  }, [keyLightIntensity]);
+
+  // Camera FOV slider: mutate the existing camera and re-fit, no reload --
+  // fitGroupToView reads camera.fov live off the (mutated) camera object.
+  useEffect(() => {
+    const state = sceneStateRef.current;
+    if (!state) {
+      return;
+    }
+    state.camera.fov = cameraFov;
+    state.camera.updateProjectionMatrix();
+    state.fitGroupToView();
+  }, [cameraFov]);
 
   return (
     <div className={`model-3d-frame${className ? ` ${className}` : ""}`} style={style}>

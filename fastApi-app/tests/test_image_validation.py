@@ -137,6 +137,56 @@ def test_image_validator_short_circuits_on_first_failure() -> None:
     assert exc_info.value.failed_results[0].name == "file_size"
 
 
+def test_validate_all_never_raises_and_reports_every_failure() -> None:
+    # Dark, blurry, uniform, undersized — fails resolution, blur, exposure and
+    # uniform_scene simultaneously. validate() would stop at "resolution".
+    bgr = np.zeros((100, 100, 3), dtype=np.uint8)
+    ok, buffer = cv2.imencode(".png", bgr)
+    assert ok and buffer is not None
+
+    results = ImageValidator().validate_all(
+        buffer.tobytes(), filename="bad.png", content_type="image/png"
+    )
+
+    failed_names = {r.name for r in results if not r.passed}
+    assert len(failed_names) > 1
+    assert "resolution" in failed_names
+    # file_size/format_mime passed, so decode still ran and every remaining
+    # check contributed a result (not just the first failure).
+    assert {r.name for r in results} >= {
+        "file_size",
+        "format_mime",
+        "animated_frames",
+        "resolution",
+        "alpha_empty",
+        "blur",
+        "exposure",
+        "uniform_scene",
+    }
+
+
+def test_validate_all_passes_sharp_room_png() -> None:
+    png = _make_sharp_room_png()
+    results = ImageValidator().validate_all(png, filename="room.png", content_type="image/png")
+    assert len(results) >= 8
+    assert all(result.passed for result in results)
+
+
+def test_validate_all_stops_reporting_after_decode_failure() -> None:
+    # A real PNG header (sniffable, passes format_mime) truncated so early
+    # that PIL can't even identify the file (UnidentifiedImageError — the
+    # one decode failure build_validation_context actually catches).
+    truncated = _make_sharp_room_png()[:40]
+
+    results = ImageValidator().validate_all(truncated, filename="bad.png", content_type="image/png")
+
+    names = [r.name for r in results]
+    assert names[-1] == "decode"
+    assert not results[-1].passed
+    # Nothing past decode (blur, exposure, etc.) since none of it could run.
+    assert "blur" not in names
+
+
 @pytest.mark.skipif(
     __import__("importlib").util.find_spec("fastapi") is None,
     reason="fastapi not installed",

@@ -16,6 +16,19 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+def remove_file(path: Path) -> int:
+    """Delete *path* if it exists and return how many files that removed (0 or 1).
+
+    Returning a count rather than a bool lets callers accumulate a total with
+    ``removed += remove_file(...)`` instead of repeating an exists/unlink pair.
+    """
+
+    if not path.exists():
+        return 0
+    path.unlink(missing_ok=True)
+    return 1
+
+
 def object_cutout_path(base_dir: Path, uid: str, object_id: int) -> Path:
     """Return the canonical path for a finalized object cutout PNG.
 
@@ -33,6 +46,20 @@ def object_cutout_path(base_dir: Path, uid: str, object_id: int) -> Path:
     return base_dir / f"{uid}_{object_id}_cutout.png"
 
 
+def object_meta_path(base_dir: Path, session_id: str, object_id: int) -> Path:
+    """Return the canonical path for one object's metadata JSON file."""
+
+    return base_dir / f"{session_id}_{object_id}_meta.json"
+
+
+def _novel_view_stem(uid: str, object_id: int, azimuth_deg: float, relative_elevation_deg: float) -> str:
+    """Return the shared filename stem identifying one object at one snapped pose."""
+
+    az_key = int(round(azimuth_deg))
+    el_key = int(round(relative_elevation_deg))
+    return f"{uid}_{object_id}_novel_az{az_key}_el{el_key}"
+
+
 def object_novel_view_path(
     base_dir: Path,
     uid: str,
@@ -42,9 +69,7 @@ def object_novel_view_path(
 ) -> Path:
     """Return the canonical path for a cached novel-view PNG artifact."""
 
-    az_key = int(round(azimuth_deg))
-    el_key = int(round(relative_elevation_deg))
-    return base_dir / f"{uid}_{object_id}_novel_az{az_key}_el{el_key}.png"
+    return base_dir / f"{_novel_view_stem(uid, object_id, azimuth_deg, relative_elevation_deg)}.png"
 
 
 def object_novel_view_preview_path(
@@ -61,9 +86,24 @@ def object_novel_view_preview_path(
     the read-side cache check in ``POST /images/novel-view``.
     """
 
-    az_key = int(round(azimuth_deg))
-    el_key = int(round(relative_elevation_deg))
-    return base_dir / f"{uid}_{object_id}_novel_az{az_key}_el{el_key}.preview.png"
+    stem = _novel_view_stem(uid, object_id, azimuth_deg, relative_elevation_deg)
+    return base_dir / f"{stem}.preview.png"
+
+
+def legacy_object_cutout_path(base_dir: Path, uid: str) -> Path:
+    """Return the pre-numbering cutout path ``{uid}_cutout.png``.
+
+    Written by backend versions that predate per-object numbering; still read
+    (and deleted) as object id 0 for those sessions.
+    """
+
+    return base_dir / f"{uid}_cutout.png"
+
+
+def legacy_object_glb_path(glb_dir: Path, uid: str) -> Path:
+    """Return the pre-numbering GLB path ``{uid}.glb`` (see :func:`legacy_object_cutout_path`)."""
+
+    return glb_dir / f"{uid}.glb"
 
 
 def resolve_object_cutout_path(base_dir: Path, uid: str, object_id: int) -> Path:
@@ -84,7 +124,7 @@ def resolve_object_cutout_path(base_dir: Path, uid: str, object_id: int) -> Path
     """
     numbered = object_cutout_path(base_dir, uid, object_id)
     if object_id == 0 and not numbered.exists():
-        legacy = base_dir / f"{uid}_cutout.png"
+        legacy = legacy_object_cutout_path(base_dir, uid)
         logger.debug(
             "resolve_object_cutout_path: numbered path absent, using legacy: uid=%s path=%s",
             uid,
@@ -128,7 +168,7 @@ def resolve_object_glb_path(glb_dir: Path, uid: str, object_id: int) -> Path:
     """
     numbered = object_glb_path(glb_dir, uid, object_id)
     if object_id == 0 and not numbered.exists():
-        legacy = glb_dir / f"{uid}.glb"
+        legacy = legacy_object_glb_path(glb_dir, uid)
         logger.debug(
             "resolve_object_glb_path: numbered path absent, using legacy: uid=%s path=%s",
             uid,
@@ -165,8 +205,7 @@ def list_object_ids(base_dir: Path, uid: str) -> list[int]:
             if m:
                 ids.add(int(m.group(1)))
 
-        legacy = base_dir / f"{uid}_cutout.png"
-        if legacy.exists():
+        if legacy_object_cutout_path(base_dir, uid).exists():
             ids.add(0)
 
     return sorted(ids)
@@ -242,9 +281,7 @@ def list_object_novel_view_paths(base_dir: Path, uid: str, object_id: int) -> li
         if not entry.is_file():
             continue
         name = entry.name
-        if not name.startswith(prefix):
-            continue
-        if name.endswith(".preview.png") or name.endswith(".png"):
+        if name.startswith(prefix) and name.endswith(".png"):
             paths.append(entry)
     return sorted(paths)
 
@@ -356,26 +393,15 @@ def delete_object_artifact_files(
     without matching metadata.
     """
 
-    removed = 0
-    cutout = object_cutout_path(base_dir, uid, object_id)
-    if cutout.exists():
-        cutout.unlink()
-        removed += 1
-
-    glb = object_glb_path(glb_dir, uid, object_id)
-    if glb.exists():
-        glb.unlink()
-        removed += 1
+    removed = remove_file(object_cutout_path(base_dir, uid, object_id))
+    removed += remove_file(object_glb_path(glb_dir, uid, object_id))
 
     for novel_path in list_object_novel_view_paths(base_dir, uid, object_id):
         novel_path.unlink(missing_ok=True)
         removed += 1
 
     if include_metadata:
-        meta_path = base_dir / f"{uid}_{object_id}_meta.json"
-        if meta_path.exists():
-            meta_path.unlink()
-            removed += 1
+        removed += remove_file(object_meta_path(base_dir, uid, object_id))
 
     logger.debug(
         "Deleted object artifact files: uid=%s object_id=%d removed=%d",
@@ -400,15 +426,6 @@ def delete_legacy_object_artifacts(*, base_dir: Path, glb_dir: Path, uid: str) -
     Returns:
         Number of files removed (0, 1, or 2).
     """
-    removed = 0
-    legacy_cutout = base_dir / f"{uid}_cutout.png"
-    if legacy_cutout.exists():
-        legacy_cutout.unlink()
-        removed += 1
-
-    legacy_glb = glb_dir / f"{uid}.glb"
-    if legacy_glb.exists():
-        legacy_glb.unlink()
-        removed += 1
-
+    removed = remove_file(legacy_object_cutout_path(base_dir, uid))
+    removed += remove_file(legacy_object_glb_path(glb_dir, uid))
     return removed

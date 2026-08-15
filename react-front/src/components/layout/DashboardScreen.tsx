@@ -5,12 +5,13 @@ import avroomLogo from "../../assets/avroom.png";
 import type { SessionInfo } from "../../types/api";
 import { byMostRecentlyEdited } from "../../utils/time";
 import { SessionCard } from "../dashboard/SessionCard";
-import { PlusIcon } from "../icons";
+import { FlaskIcon, PlusIcon } from "../icons";
 import { ConfirmDialog } from "../widgets/ConfirmDialog";
 
 export interface DashboardScreenProps {
   onOpenSession: (uid: string) => void;
   onNewSession: () => void;
+  onOpenDebug: () => void;
 }
 
 type LoadState = "loading" | "ready" | "offline";
@@ -22,6 +23,7 @@ type LoadState = "loading" | "ready" | "offline";
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onOpenSession,
   onNewSession,
+  onOpenDebug,
 }) => {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
@@ -69,6 +71,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       <header className="dash-header">
         <img src={avroomLogo} alt="" className="dash-logo" />
         <span className="dash-wordmark">AVRoom</span>
+        <button
+          type="button"
+          className="tool-btn dash-header-end"
+          onClick={onOpenDebug}
+          aria-label="Pipeline debug"
+          data-tip="Pipeline debug"
+        >
+          <FlaskIcon />
+        </button>
       </header>
 
       <main className="dash-main">

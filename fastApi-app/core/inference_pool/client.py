@@ -14,6 +14,8 @@ from schemas.image import ImageProcessingOptions
 from settings import get_inference_worker_count
 
 if TYPE_CHECKING:
+    from core.camera_calibration import CameraCalibrationOutcome
+    from core.content_validation import ContentValidationOutcome
     from core.image_processing import RescaleByDepthResult
 
 logger = logging.getLogger(__name__)
@@ -25,8 +27,10 @@ _client: InferenceClient | None = None
 class InferenceJobError(RuntimeError):
     """Raised when an inference job fails in a worker or inline."""
 
-    def __init__(self, message: str) -> None:
-        super().__init__(message)
+
+def _new_job_id() -> str:
+    """Return a fresh id correlating one submitted job with its result."""
+    return str(uuid.uuid4())
 
 
 class InferenceClient:
@@ -60,7 +64,7 @@ class InferenceClient:
         verify: str | None = None,
     ) -> list[tuple[str, bytes]]:
         job = JobRequest(
-            job_id=str(uuid.uuid4()),
+            job_id=_new_job_id(),
             kind=JobKind.SEGMENT,
             storage_dir=str(base_dir.resolve()),
             image_id=image_id,
@@ -83,7 +87,7 @@ class InferenceClient:
         base_dir: Path,
     ) -> tuple[bytes, bytes, str]:
         job = JobRequest(
-            job_id=str(uuid.uuid4()),
+            job_id=_new_job_id(),
             kind=JobKind.INPAINT,
             storage_dir=str(base_dir.resolve()),
             image_id=image_id,
@@ -106,7 +110,7 @@ class InferenceClient:
         options: ImageProcessingOptions | None = None,
     ) -> tuple[bytes, bytes, str]:
         job = JobRequest(
-            job_id=str(uuid.uuid4()),
+            job_id=_new_job_id(),
             kind=JobKind.CLICK,
             storage_dir=str(base_dir.resolve()),
             image_id=image_id,
@@ -132,7 +136,7 @@ class InferenceClient:
         from core.image_processing import RescaleByDepthResult
 
         job = JobRequest(
-            job_id=str(uuid.uuid4()),
+            job_id=_new_job_id(),
             kind=JobKind.RESCALE_BY_DEPTH,
             storage_dir=str(base_dir.resolve()),
             object_uuid=object_uuid,
@@ -160,7 +164,7 @@ class InferenceClient:
 
     def run_generate_3d(self, *, cutout_path: Path) -> bytes:
         job = JobRequest(
-            job_id=str(uuid.uuid4()),
+            job_id=_new_job_id(),
             kind=JobKind.GENERATE_3D,
             storage_dir=str(cutout_path.parent.resolve()),
             cutout_path=str(cutout_path.resolve()),
@@ -181,7 +185,7 @@ class InferenceClient:
         mesh_path: Path,
     ) -> np.ndarray:
         job = JobRequest(
-            job_id=str(uuid.uuid4()),
+            job_id=_new_job_id(),
             kind=JobKind.NOVEL_VIEW,
             storage_dir=str(cutout_path.parent.resolve()),
             cutout_path=str(cutout_path.resolve()),
@@ -200,7 +204,7 @@ class InferenceClient:
         from core.content_validation import ContentValidationOutcome
 
         job = JobRequest(
-            job_id=str(uuid.uuid4()),
+            job_id=_new_job_id(),
             kind=JobKind.VALIDATE_CONTENT,
             storage_dir=str(Path.cwd()),
             image_bytes=image_bytes,
@@ -222,7 +226,7 @@ class InferenceClient:
         from core.camera_calibration import CameraCalibrationOutcome
 
         job = JobRequest(
-            job_id=str(uuid.uuid4()),
+            job_id=_new_job_id(),
             kind=JobKind.CALIBRATE_CAMERA,
             storage_dir=str(Path.cwd()),
             image_bytes=image_bytes,
@@ -247,6 +251,57 @@ class InferenceClient:
             confidence=result.camera_calib_confidence,
             camera_model=result.camera_calib_camera_model or "pinhole",
         )
+
+
+    def run_debug_depth_map(
+        self, *, image_bytes: bytes, model_name: str, colormap: str, strategy: str = "anything"
+    ) -> bytes:
+        job = JobRequest(
+            job_id=_new_job_id(),
+            kind=JobKind.DEBUG_DEPTH_MAP,
+            storage_dir=str(Path.cwd()),
+            image_bytes=image_bytes,
+            options={"model_name": model_name, "colormap": colormap, "strategy": strategy},
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.debug_png_bytes is not None
+        return result.debug_png_bytes
+
+    def run_debug_sam_everything(
+        self,
+        *,
+        image_bytes: bytes,
+        source: str,
+        depth_model_name: str,
+        points_per_side: int,
+        alpha: float,
+        depth_strategy: str = "anything",
+        pred_iou_thresh: float = 0.88,
+        stability_score_thresh: float = 0.95,
+        min_mask_region_area: int = 0,
+    ) -> tuple[bytes, int]:
+        job = JobRequest(
+            job_id=_new_job_id(),
+            kind=JobKind.DEBUG_SAM_EVERYTHING,
+            storage_dir=str(Path.cwd()),
+            image_bytes=image_bytes,
+            options={
+                "source": source,
+                "depth_model_name": depth_model_name,
+                "points_per_side": points_per_side,
+                "alpha": alpha,
+                "depth_strategy": depth_strategy,
+                "pred_iou_thresh": pred_iou_thresh,
+                "stability_score_thresh": stability_score_thresh,
+                "min_mask_region_area": min_mask_region_area,
+            },
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.debug_png_bytes is not None
+        assert result.debug_mask_count is not None
+        return result.debug_png_bytes, result.debug_mask_count
 
 
 def init_inference_client(pool: InferencePool | None = None) -> None:

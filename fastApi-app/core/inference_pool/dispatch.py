@@ -16,6 +16,8 @@ _FACADE_JOB_KINDS = frozenset({
     JobKind.NOVEL_VIEW,
     JobKind.VALIDATE_CONTENT,
     JobKind.CALIBRATE_CAMERA,
+    JobKind.DEBUG_DEPTH_MAP,
+    JobKind.DEBUG_SAM_EVERYTHING,
 })
 
 
@@ -143,33 +145,66 @@ def _execute_impl(job: JobRequest) -> JobResult:
         from core.content_validation import validate_upload_content
 
         assert job.image_bytes is not None
-        outcome = validate_upload_content(job.image_bytes)
+        content = validate_upload_content(job.image_bytes)
         return JobResult(
             job_id=job.job_id,
             ok=True,
-            validation_ok=outcome.is_valid,
-            validation_checks=outcome.checks,
-            validation_scores=outcome.scores,
-            validation_messages=outcome.messages,
+            validation_ok=content.is_valid,
+            validation_checks=content.checks,
+            validation_scores=content.scores,
+            validation_messages=content.messages,
         )
 
     if job.kind == JobKind.CALIBRATE_CAMERA:
         from core.camera_calibration import calibrate_upload_image
 
         assert job.image_bytes is not None
-        outcome = calibrate_upload_image(job.image_bytes)
+        calibration = calibrate_upload_image(job.image_bytes)
         return JobResult(
             job_id=job.job_id,
             ok=True,
-            camera_calib_gravity=outcome.gravity,
-            camera_calib_roll_deg=outcome.roll_deg,
-            camera_calib_pitch_deg=outcome.pitch_deg,
-            camera_calib_fx=outcome.fx,
-            camera_calib_fy=outcome.fy,
-            camera_calib_cx=outcome.cx,
-            camera_calib_cy=outcome.cy,
-            camera_calib_confidence=outcome.confidence,
-            camera_calib_camera_model=outcome.camera_model,
+            camera_calib_gravity=calibration.gravity,
+            camera_calib_roll_deg=calibration.roll_deg,
+            camera_calib_pitch_deg=calibration.pitch_deg,
+            camera_calib_fx=calibration.fx,
+            camera_calib_fy=calibration.fy,
+            camera_calib_cx=calibration.cx,
+            camera_calib_cy=calibration.cy,
+            camera_calib_confidence=calibration.confidence,
+            camera_calib_camera_model=calibration.camera_model,
+        )
+
+    if job.kind == JobKind.DEBUG_DEPTH_MAP:
+        from core.debug_vision import render_depth_map_png
+
+        assert job.image_bytes is not None
+        debug_options = job.options or {}
+        png_bytes = render_depth_map_png(
+            job.image_bytes,
+            model_name=debug_options["model_name"],
+            colormap=debug_options["colormap"],
+            strategy=debug_options.get("strategy", "anything"),
+        )
+        return JobResult(job_id=job.job_id, ok=True, debug_png_bytes=png_bytes)
+
+    if job.kind == JobKind.DEBUG_SAM_EVERYTHING:
+        from core.debug_vision import render_sam_everything_png
+
+        assert job.image_bytes is not None
+        debug_options = job.options or {}
+        png_bytes, mask_count = render_sam_everything_png(
+            job.image_bytes,
+            source=debug_options["source"],
+            depth_model_name=debug_options["depth_model_name"],
+            points_per_side=debug_options["points_per_side"],
+            alpha=debug_options["alpha"],
+            depth_strategy=debug_options.get("depth_strategy", "anything"),
+            pred_iou_thresh=debug_options.get("pred_iou_thresh", 0.88),
+            stability_score_thresh=debug_options.get("stability_score_thresh", 0.95),
+            min_mask_region_area=debug_options.get("min_mask_region_area", 0),
+        )
+        return JobResult(
+            job_id=job.job_id, ok=True, debug_png_bytes=png_bytes, debug_mask_count=mask_count
         )
 
     raise ValueError(f"Unsupported job kind: {job.kind}")

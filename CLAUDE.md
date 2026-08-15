@@ -88,6 +88,16 @@ Central config lives in `fastApi-app/logging_config.py`. Call `setup_logging()` 
 
 Use `logger = logging.getLogger(__name__)` at module level. No `print()`. Level controlled via `LOG_LEVEL` env var (default `INFO`). Output goes to stdout and `fastApi-app/logs/app.log` (gitignored, rotates at 5 MB).
 
+## Shared FastAPI Helpers
+
+Reuse these instead of re-implementing them per module:
+
+- `core/image_codec.py` — `encode_png(array, label)` and `to_base64_ascii(bytes)`. Never hand-roll `cv2.imencode` / `base64.b64encode(...).decode("ascii")` in a route or pipeline function.
+- `core/avroom_package.py` — `load_avroom_attr(attr, module=...)` for every deferred `avroom_object_removal` import; it converts a missing install into one `RuntimeError` with the `pip install -e ./TestModules` hint.
+- `core/object_storage.py` — all `{uid}_{object_id}_…` path construction, plus `legacy_object_cutout_path` / `legacy_object_glb_path` for pre-numbering names and `remove_file(path) -> int` for "delete if present, count it" loops.
+- `core/depth_cache.py` — `memory_image_key(bytes)` builds the `memory://<sha256>` key the AI pipeline caches model state under.
+- `settings.py` — `_read_json` / `_write_json` / `load_session_uids` back every JSON sidecar (sessions, names, timestamps); `_env_int` / `_env_float` / `_env_bool` back every env-var getter.
+
 ## Python Code Style
 
 - **Python 3.11**, type-checked with **mypy**.
@@ -131,6 +141,17 @@ Set `VALIDATE=false` before starting the server to skip both stages (default: `V
 
 Not wired into segment/inpaint/removal pipelines.
 
+### Debug vision endpoints
+
+`POST /debug/validate`, `POST /debug/depth-map`, and `POST /debug/sam-everything` (`fastApi-app/api/debug_vision.py`) are test/inspection tools, not production flow — no session, no disk writes. All three accept a multipart `file` upload and are gated by `DEBUG_ENDPOINTS` (`settings.get_debug_endpoints_enabled`, default enabled; `false` → all three 404). The React frontend has a dedicated screen for these — see `DebugScreen` under Frontend Notes below.
+
+- `/debug/validate` runs the **full** validation scoreboard (`ImageValidator.validate_all` — every technical check plus the CLIP content checks, never stopping at the first failure, unlike `POST /images/upload`'s `validate()`) and always returns 200 JSON (`DebugValidationResponse`) — a failed check is data, not an error.
+- `/debug/depth-map?strategy=anything|blended|enhanced_edge&model=...&colormap=none|inferno|magma|turbo|jet` renders one of three depth strategies as a PNG via `avroom_object_removal.utils.colorize_depth`. `strategy=anything` is `DepthAnythingMappingStrategy(model)` (the only one honoring `model`); `blended`/`enhanced_edge` are the actual multi-checkpoint strategies production uses (`NearFarBlendedDepthMappingStrategy` / `EnhancedEdgeDepthMappingStrategy`, production's true default).
+- `/debug/sam-everything?source=depth|rgb&depth_strategy=...&points_per_side=16&pred_iou_thresh=0.88&stability_score_thresh=0.95&min_mask_region_area=0&alpha=0.45` runs `SamSegmentationStrategy.predict_everything` (wraps `SamAutomaticMaskGenerator`, reusing the already-loaded `SamPredictor` weights via a second `functools.lru_cache`'d loader, now keyed on all four quality-threshold args too) and renders the masks via `avroom_object_removal.utils.overlay_masks` (deterministic per-mask color, translucent fill + outline) composited onto the original photo. `source=depth` (default) feeds SAM the same `SamImageAdapter`-adapted depth map production uses; `source=rgb` feeds the raw photo instead, to visually demonstrate why the depth-map rule exists (visibly more/noisier masks from fabric creases and shadows).
+- All three dispatch through the inference pool (`/debug/validate`'s content stage reuses `JobKind.VALIDATE_CONTENT`; the two PNG endpoints are `JobKind.DEBUG_DEPTH_MAP` / `DEBUG_SAM_EVERYTHING`, in `_FACADE_JOB_KINDS` so inline mode takes the GPU lock) — same concurrency model as every other model call, see `core/inference_pool/`.
+- `predict_everything` is on `ImageSegmentationStrategy` as a non-abstract method (default raises `NotImplementedError`) since prompt-free segmentation is SAM-specific, not a general strategy capability. `ImageSegmentationFacade.get_all_masks_for_image` exposes it at the facade level, alongside the existing point-prompted `get_mask_at_point` / `get_all_masks_for_position`.
+- `X-Mask-Count`/`X-Elapsed-Ms` response headers require `expose_headers` on the CORS middleware (`main.py`) — `allow_headers` only covers request headers, so without it browser JS reads both as `null`.
+
 ## Trellis 2 3D Generation
 
 `TrellisModule/` (package `avroom_trellis`) wraps Microsoft's Trellis 2 image-to-3D model **via the public Hugging Face Space** (`microsoft/TRELLIS.2`) using `gradio_client`. Local install is not supported on this machine (Linux + 24 GB VRAM only).
@@ -143,7 +164,7 @@ Install: `pip install -e ./TrellisModule` (or `pip install -r requirements.txt` 
 
 ## Frontend Notes
 
-The product has **two screens plus an upload step**: `DashboardScreen` (session list, new-session entry, session delete), `UploadScreen` (file intake between dashboard and workspace), and `WorkspaceScreen` (the editor). `App.tsx` switches between them with a local discriminated-union `Route` state (`{screen:"dashboard"} | {screen:"upload"} | {screen:"workspace", uid}`) — no router library, no auth. The dashboard is home (`App` boots into it); `WorkspaceScreen` is mounted `key={uid}` so switching sessions remounts it cleanly rather than reusing state. The Toolbar's back arrow calls `onExit`, which routes back to the dashboard — it is enabled, not disabled.
+The product has **two screens plus an upload step, plus a separate debug screen**: `DashboardScreen` (session list, new-session entry, session delete), `UploadScreen` (file intake between dashboard and workspace), `WorkspaceScreen` (the editor), and `DebugScreen` (upload a photo, see the full validation report plus rendered depth-map/SAM output — no session created; see "Debug vision endpoints" above). `App.tsx` switches between them with a local discriminated-union `Route` state (`{screen:"dashboard"} | {screen:"upload"} | {screen:"workspace", uid} | {screen:"debug"}`) — no router library, no auth. The dashboard is home (`App` boots into it); `WorkspaceScreen` is mounted `key={uid}` so switching sessions remounts it cleanly rather than reusing state. The Toolbar's back arrow calls `onExit`, which routes back to the dashboard — it is enabled, not disabled. `DashboardScreen`'s header carries a right-aligned flask-icon button (`onOpenDebug`) that routes to `DebugScreen`, always visible regardless of whether the backend's `DEBUG_ENDPOINTS` is on (a disabled backend surfaces as a 404 inside each panel, not a hidden button).
 
 - API base URL defaults to `http://127.0.0.1:8000`; override with `VITE_API_BASE_URL` env var. `DashboardScreen`'s session-list fetch shows an offline state with a retry action on failure; `WorkspaceScreen`'s own session boot shows a plain "Opening the session" placeholder on the stage while loading and falls back to `sessionName = uid` if the cache-status fetch fails (no dedicated offline UI there).
 - Click coordinates are translated from display-space to natural image-space before sending to the API. All the contain-fit ↔ natural-pixel conversions live in `src/utils/stageGeometry.ts` (`getContainedImageRect`, `toNaturalPoint`, `clampCutoutOffset`, `getBoundsStageRect`, `buildHitTestOrder`, `compositePreviewOntoCanvas`) — reuse them rather than re-deriving the math.

@@ -195,3 +195,30 @@ The handler reads `request.model_fields_set` (which keys were actually present i
 `ClickRequest` and `ClickResultResponse` remain for `POST /images/click`, but normal frontend flow uses `SegmentRequest` followed by `InpaintMaskRequest`.
 
 Frontend mirrors these types in [`react-front/src/types/api.ts`](../../react-front/src/types/api.ts). No codegen exists.
+
+## Debug
+
+Defined in [`fastApi-app/schemas/debug.py`](../../fastApi-app/schemas/debug.py) — kept separate from `schemas/image.py` since these back the `/debug` router only (see [api-endpoints.md](api-endpoints.md#debug-endpoints)).
+
+`DebugCheckResult` — one technical or content validation check's outcome.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `str` | Check identifier, e.g. `blur` or `exposure`. |
+| `passed` | `bool` | Whether this check passed. |
+| `score` | `float \| null` | Check-specific numeric score, if any. Always `null` for content checks — `checks` and `scores` in `ContentValidationOutcome` use unrelated key namespaces (e.g. `scene_space_or_landscape` vs `scene_p`) with no declared mapping. |
+| `message` | `str` | Human-readable detail, populated mainly on failure. |
+
+`DebugValidationResponse` is returned by `POST /debug/validate`.
+
+| Field | Type | Description |
+|---|---|---|
+| `ok` | `bool` | True iff every technical and content check passed. |
+| `technical_ok` | `bool` | True iff every technical check passed. |
+| `content_ok` | `bool \| null` | True/False if content validation ran; `null` if skipped (decode failure). |
+| `technical` | `list[DebugCheckResult]` | Every technical check, in run order. |
+| `content` | `list[DebugCheckResult]` | Every content (CLIP) check, if it ran; empty list when skipped. |
+| `content_skipped_reason` | `str \| null` | Why the content stage didn't run, if it didn't. |
+| `elapsed_ms` | `float` | Total wall time for both stages. |
+
+Frontend mirrors these types in [`react-front/src/types/debug.ts`](../../react-front/src/types/debug.ts).

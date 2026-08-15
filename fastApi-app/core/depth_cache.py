@@ -19,6 +19,16 @@ def content_hash_for_bytes(image_bytes: bytes) -> str:
     return hashlib.sha256(image_bytes).hexdigest()
 
 
+def memory_image_key(image_bytes: bytes) -> str:
+    """Return the ``memory://<hash>`` key the AI pipeline caches model state under.
+
+    The ``memory://`` prefix tells the pipeline "these bytes were handed to you
+    directly, do not read the path from disk" while still giving it a stable
+    identity to key its per-image caches on.
+    """
+    return f"memory://{content_hash_for_bytes(image_bytes)}"
+
+
 def depth_map_path(base_dir: Path, session_id: str, content_hash: str) -> Path:
     """Return canonical path for a cached depth map NumPy array."""
     return base_dir / f"{session_id}_depth_{content_hash}.npy"

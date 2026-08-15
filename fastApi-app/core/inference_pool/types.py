@@ -16,6 +16,8 @@ class JobKind(str, Enum):
     NOVEL_VIEW = "novel_view"
     VALIDATE_CONTENT = "validate_content"
     CALIBRATE_CAMERA = "calibrate_camera"
+    DEBUG_DEPTH_MAP = "debug_depth_map"
+    DEBUG_SAM_EVERYTHING = "debug_sam_everything"
     SHUTDOWN = "shutdown"
 
 
@@ -75,3 +77,5 @@ class JobResult:
     camera_calib_cy: float | None = None
     camera_calib_confidence: float | None = None
     camera_calib_camera_model: str | None = None
+    debug_png_bytes: bytes | None = None
+    debug_mask_count: int | None = None

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 from PIL import Image
@@ -16,6 +16,7 @@ class ImageValidationContext:
     pil_image: Image.Image
     rgb_array: np.ndarray
     bgr_array: np.ndarray
+    gray_array: np.ndarray
     width: int
     height: int
     alpha_opaque_ratio: float = 1.0

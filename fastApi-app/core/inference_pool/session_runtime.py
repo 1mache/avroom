@@ -14,7 +14,7 @@ from typing import AbstractSet
 
 import numpy as np
 
-from core.mask_cache import load_refined_mask
+from core.mask_cache import load_refined_mask, mask_id_from_index
 from settings import get_inference_job_timeout_sec
 
 logger = logging.getLogger(__name__)
@@ -155,13 +155,6 @@ def drop_lease(image_id: str, lease: InpaintLease) -> None:
             pass
 
 
-def release_inpaint(image_id: str, lease: InpaintLease) -> None:
-    """Drop lease and release canvas writer (idempotent cleanup helper)."""
-
-    drop_lease(image_id, lease)
-    release_canvas_writer(image_id)
-
-
 def assert_segment_click_allowed(image_id: str, x: int, y: int) -> None:
     """Reject segment clicks that fall inside an active inpaint lease region.
 
@@ -188,8 +181,6 @@ def pinned_mask_ids(image_id: str) -> set[str]:
 
 def mask_id_for_candidate_slot(slot: int, exclude_mask_ids: AbstractSet[str]) -> str:
     """Return the public mask id for the slot-th new candidate, skipping pinned ids."""
-
-    from core.mask_cache import mask_id_from_index
 
     candidate_index = 0
     assigned = 0

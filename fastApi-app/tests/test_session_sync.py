@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -92,6 +93,11 @@ def test_set_name_advances_last_changed(storage_sandbox: Path) -> None:
     uid = "session-e"
     _register_session(uid)
     initial = settings.touch_session(uid)
+
+    # touch_session stamps the wall clock, whose resolution on Windows is
+    # coarse enough that two back-to-back calls can land on the same value.
+    # Real mutations are always further apart than this.
+    time.sleep(0.01)
 
     settings.set_session_name(uid, "Living room")
     updated = settings.touch_session(uid)

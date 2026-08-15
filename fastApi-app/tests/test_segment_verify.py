@@ -69,7 +69,11 @@ def test_auto_verify_returns_only_winner(tmp_path: Path) -> None:
     image_id = "session-auto"
     _write_session_png(tmp_path, image_id)
     depth = np.zeros((40, 40), dtype=np.uint8)
-    selection = CutoutSelectionResult(winner_index=2, scores=(0.1, 0.2, 0.9, 0.3, 0.4, 0.5))
+    selection = CutoutSelectionResult(
+        winner_index=2,
+        scores=(0.1, 0.2, 0.9, 0.3, 0.4, 0.5),
+        reasons=("scored", "scored", "winner", "scored", "scored", "scored"),
+    )
 
     with (
         _patch_segmentor(_six_pairs()),
@@ -94,7 +98,11 @@ def test_auto_verify_raises_when_no_winner(tmp_path: Path) -> None:
     image_id = "session-auto-none"
     _write_session_png(tmp_path, image_id)
     depth = np.zeros((40, 40), dtype=np.uint8)
-    selection = CutoutSelectionResult(winner_index=None, scores=(0.1, 0.2, 0.3, 0.2, 0.1, 0.0))
+    selection = CutoutSelectionResult(
+        winner_index=None,
+        scores=(0.1, 0.2, 0.3, 0.2, 0.1, 0.0),
+        reasons=("scored",) * 6,
+    )
 
     with (
         _patch_segmentor(_six_pairs()),

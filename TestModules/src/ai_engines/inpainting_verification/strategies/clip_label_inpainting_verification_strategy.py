@@ -75,4 +75,6 @@ class ClipLabelInpaintingVerificationStrategy(InpaintingVerificationStrategy):
         return InpaintingVerificationResult(
             ok=ok,
             param_fixes_json=params.to_json(),
+            scores=scores,
+            winner_label=winner,
         )

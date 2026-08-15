@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
@@ -302,6 +302,39 @@ class InferenceClient:
         assert result.debug_png_bytes is not None
         assert result.debug_mask_count is not None
         return result.debug_png_bytes, result.debug_mask_count
+
+    def run_debug_auto_mask_pick(
+        self, *, image_bytes: bytes, x: int, y: int
+    ) -> dict[str, Any]:
+        job = JobRequest(
+            job_id=_new_job_id(),
+            kind=JobKind.DEBUG_AUTO_MASK_PICK,
+            storage_dir=str(Path.cwd()),
+            image_bytes=image_bytes,
+            x=x,
+            y=y,
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.debug_payload is not None
+        return result.debug_payload
+
+    def run_debug_inpaint_verify(
+        self, *, image_bytes: bytes, x: int, y: int, mask_index: int | None
+    ) -> dict[str, Any]:
+        job = JobRequest(
+            job_id=_new_job_id(),
+            kind=JobKind.DEBUG_INPAINT_VERIFY,
+            storage_dir=str(Path.cwd()),
+            image_bytes=image_bytes,
+            x=x,
+            y=y,
+            options={"mask_index": mask_index},
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.debug_payload is not None
+        return result.debug_payload
 
 
 def init_inference_client(pool: InferencePool | None = None) -> None:

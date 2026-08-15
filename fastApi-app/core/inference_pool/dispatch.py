@@ -18,6 +18,8 @@ _FACADE_JOB_KINDS = frozenset({
     JobKind.CALIBRATE_CAMERA,
     JobKind.DEBUG_DEPTH_MAP,
     JobKind.DEBUG_SAM_EVERYTHING,
+    JobKind.DEBUG_AUTO_MASK_PICK,
+    JobKind.DEBUG_INPAINT_VERIFY,
 })
 
 
@@ -206,6 +208,26 @@ def _execute_impl(job: JobRequest) -> JobResult:
         return JobResult(
             job_id=job.job_id, ok=True, debug_png_bytes=png_bytes, debug_mask_count=mask_count
         )
+
+    if job.kind == JobKind.DEBUG_AUTO_MASK_PICK:
+        from core.debug_vision import run_auto_mask_pick
+
+        assert job.image_bytes is not None and job.x is not None and job.y is not None
+        payload = run_auto_mask_pick(job.image_bytes, x=job.x, y=job.y)
+        return JobResult(job_id=job.job_id, ok=True, debug_payload=payload)
+
+    if job.kind == JobKind.DEBUG_INPAINT_VERIFY:
+        from core.debug_vision import run_inpaint_verify
+
+        assert job.image_bytes is not None and job.x is not None and job.y is not None
+        debug_options = job.options or {}
+        payload = run_inpaint_verify(
+            job.image_bytes,
+            x=job.x,
+            y=job.y,
+            mask_index=debug_options.get("mask_index"),
+        )
+        return JobResult(job_id=job.job_id, ok=True, debug_payload=payload)
 
     raise ValueError(f"Unsupported job kind: {job.kind}")
 

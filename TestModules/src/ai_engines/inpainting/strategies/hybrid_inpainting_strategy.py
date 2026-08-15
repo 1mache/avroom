@@ -9,6 +9,7 @@ import numpy as np
 from ....utils.debug_image_saver import DebugImageSaver
 from ...inpainting_verification.crop import (
     INPAINT_VERIFY_CROP_PAD_RATIO as _CROP_PAD_RATIO,
+    crop_around_mask,
 )
 from ...inpainting_verification.inpaint_sd_params import InpaintSdParams
 from ...inpainting_verification.inpainting_verification_facade import (
@@ -97,6 +98,7 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
         )
 
     def inpaint(self, image: np.ndarray, mask: np.ndarray, **kwargs: Any) -> np.ndarray:
+        verify_trace = kwargs.pop("verify_trace", None)
         if mask.ndim == 3:
             mask = mask[:, :, 0]
 
@@ -117,13 +119,15 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
         dynamic_strength = float(kwargs.get("strength", 0.35))
         params = self._snapshot_params(kwargs, dynamic_strength)
 
-        if dynamic_strength <= self.SD_SKIP_THRESHOLD:
+        sd_skipped = dynamic_strength <= self.SD_SKIP_THRESHOLD
+        if sd_skipped:
             candidate = primary_result.copy()
             logger.info("Skipping SD (strength <= 0.2); using primary result only.")
         else:
             candidate = self._run_sd(primary_result, mask, params)
 
         retries_left = self.INPAINT_VERIFY_MAX_RETRIES
+        attempt_index = 0
         while True:
             verdict = self._verifier.verify(candidate, mask, params)
             logger.info(
@@ -131,17 +135,40 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
                 verdict.ok,
                 retries_left,
             )
+            if verify_trace is not None:
+                verify_trace.append(
+                    {
+                        "attempt_index": attempt_index,
+                        "ok": verdict.ok,
+                        "scores": dict(verdict.scores),
+                        "winner_label": verdict.winner_label,
+                        "sd_skipped": sd_skipped and attempt_index == 0,
+                        "params": {
+                            "prompt": params.prompt,
+                            "negative_prompt": params.negative_prompt,
+                            "strength": params.strength,
+                            "num_inference_steps": params.num_inference_steps,
+                            "guidance_scale": params.guidance_scale,
+                        },
+                        "param_fixes_json": verdict.param_fixes_json,
+                        "candidate_bgr": candidate.copy(),
+                        "clip_crop_bgr": crop_around_mask(candidate, mask).copy(),
+                        "lama_bgr": primary_result.copy() if attempt_index == 0 else None,
+                    }
+                )
             if verdict.ok:
                 break
             if retries_left <= 0:
                 logger.warning("Inpaint verify exhausted retries; keeping last candidate.")
                 break
             retries_left -= 1
+            attempt_index += 1
             try:
                 params = InpaintSdParams.from_json(verdict.param_fixes_json)
             except (KeyError, ValueError, TypeError):
                 logger.warning("Ignoring unverifiable param JSON; replaying last params.")
             candidate = self._run_sd(primary_result, mask, params)
+            sd_skipped = False
 
         final_result = candidate
 

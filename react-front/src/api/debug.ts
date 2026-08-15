@@ -1,6 +1,8 @@
 import { API_BASE_URL, ApiError } from "./images";
 import type {
+  DebugAutoMaskPickResponse,
   DebugImageResult,
+  DebugInpaintVerifyResponse,
   DebugValidationResponse,
   DepthMapOptions,
   SamEverythingOptions,
@@ -98,4 +100,44 @@ export async function debugSamEverything(
     alpha: String(options.alpha),
   });
   return postForDebugImage(`${API_BASE_URL}/debug/sam-everything?${params.toString()}`, file);
+}
+
+export async function debugAutoMaskPick(
+  file: File,
+  x: number,
+  y: number,
+): Promise<DebugAutoMaskPickResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const params = new URLSearchParams({ x: String(x), y: String(y) });
+  const response = await fetch(`${API_BASE_URL}/debug/auto-mask-pick?${params.toString()}`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    return throwDebugApiError(response);
+  }
+  return (await response.json()) as DebugAutoMaskPickResponse;
+}
+
+export async function debugInpaintVerify(
+  file: File,
+  x: number,
+  y: number,
+  maskIndex: number | null,
+): Promise<DebugInpaintVerifyResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const params = new URLSearchParams({ x: String(x), y: String(y) });
+  if (maskIndex !== null) {
+    params.set("mask_index", String(maskIndex));
+  }
+  const response = await fetch(`${API_BASE_URL}/debug/inpaint-verify?${params.toString()}`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!response.ok) {
+    return throwDebugApiError(response);
+  }
+  return (await response.json()) as DebugInpaintVerifyResponse;
 }

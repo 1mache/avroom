@@ -123,6 +123,6 @@ Mirrors the backend's Pydantic models in [`fastApi-app/schemas/image.py`](../../
 
 [`react-front/src/types/debug.ts`](../../react-front/src/types/debug.ts)
 
-Mirrors [`fastApi-app/schemas/debug.py`](../../fastApi-app/schemas/debug.py) (`DebugCheckResult`, `DebugValidationResponse` — see [backend/schemas.md](../backend/schemas.md#debug)) plus the query-param shapes for the two PNG endpoints: `DepthMapOptions { strategy, model, colormap }`, `SamEverythingOptions { source, depthStrategy, depthModel, pointsPerSide, predIouThresh, stabilityScoreThresh, minMaskRegionArea, alpha }`, and the local-only `DebugImageResult { objectUrl, elapsedMs, maskCount }` returned by `api/debug.ts`. Kept separate from `types/api.ts`, which mirrors `schemas/image.py`.
+Mirrors [`fastApi-app/schemas/debug.py`](../../fastApi-app/schemas/debug.py) (`DebugCheckResult`, `DebugValidationResponse`, `DebugAutoMaskPickResponse`, `DebugInpaintVerifyResponse` — see [backend/schemas.md](../backend/schemas.md#debug)) plus PNG-endpoint option types and local `DebugImageResult`. Kept separate from `types/api.ts`.
 
-`DebugScreen`'s own panel state is a small discriminated union defined inline (not in this file): `PanelState<T> = {status:"idle"} | {status:"running"} | {status:"done", data:T} | {status:"error", message:string}`, one instance per panel (validation, depth, SAM).
+`DebugScreen`'s panel state is a small discriminated union defined inline: `PanelState<T> = idle | running | done | error`, one instance per panel (validation, depth, SAM, mask pick, inpaint verify).

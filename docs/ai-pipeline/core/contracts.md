@@ -48,7 +48,7 @@ Typically 3 pairs (SAM's three multimask candidates). Inpainting is not performe
 - **`scorer`** — Object with `binary_prob(pil_image, positive, negative)` (CLIP strategy).
 - **`threshold`** — Minimum `P(good)` to accept a winner (default `0.6`).
 
-**Returns** `CutoutSelectionResult(winner_index: int | None, scores: tuple[float, ...])`. Pre-filtered candidates score `0.0`. `winner_index` is `None` when every candidate fails the click/area gate or stays below threshold.
+**Returns** `CutoutSelectionResult(winner_index, scores, reasons)`. Pre-filtered candidates score `0.0`. `reasons` is one tag per cutout (`click_miss`, `area_too_small`, `scored`, `winner`, …). `winner_index` is `None` when every candidate fails the click/area gate or stays below threshold.
 
 ---
 

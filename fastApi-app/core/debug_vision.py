@@ -16,7 +16,9 @@ import cv2
 import numpy as np
 
 from core.avroom_package import load_avroom_attr
-from core.image_codec import encode_png
+from core.depth_cache import memory_image_key
+from core.image_codec import encode_png, to_base64_ascii
+from core.image_processing import _get_cutout_clip_scorer
 
 logger = logging.getLogger(__name__)
 
@@ -213,3 +215,166 @@ def render_sam_everything_png(
         len(png_bytes),
     )
     return png_bytes, len(masks)
+
+
+def _png_b64(image: np.ndarray, label: str) -> str:
+    return to_base64_ascii(encode_png(image, label))
+
+
+def _validate_click(bgr: np.ndarray, x: int, y: int) -> None:
+    height, width = bgr.shape[:2]
+    if x < 0 or y < 0 or x >= width or y >= height:
+        raise ValueError(f"Click ({x}, {y}) is outside the image ({width}x{height}).")
+
+
+def _segment_click(
+    image_bytes: bytes, bgr: np.ndarray, x: int, y: int
+) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+    ObjectSegmentor = load_avroom_attr("ObjectSegmentor")
+    segmentor = ObjectSegmentor()
+    return segmentor.get_mask_for_object_at_position(
+        image_path=memory_image_key(image_bytes),
+        x=x,
+        y=y,
+        image_bytes=image_bytes,
+    )
+
+
+def run_auto_mask_pick(image_bytes: bytes, *, x: int, y: int) -> dict[str, Any]:
+    """Segment at a click and rank cutouts with CLIP. Returns JSON-ready dict."""
+    start = time.monotonic()
+    bgr = _decode_bgr(image_bytes, label="auto-mask-pick")
+    _validate_click(bgr, x, y)
+
+    select_best_cutout = load_avroom_attr("select_best_cutout")
+    DEFAULT_THRESHOLD = load_avroom_attr(
+        "DEFAULT_THRESHOLD", module="avroom_object_removal.core.cutout_selector"
+    )
+    _cutout_preview_bgr = load_avroom_attr(
+        "_cutout_preview_bgr", module="avroom_object_removal.core.cutout_selector"
+    )
+    _crop_on_gray = load_avroom_attr(
+        "_crop_on_gray", module="avroom_object_removal.core.cutout_selector"
+    )
+    _pil_rgb_to_bgr = load_avroom_attr(
+        "_pil_rgb_to_bgr", module="avroom_object_removal.core.cutout_selector"
+    )
+
+    pairs = _segment_click(image_bytes, bgr, x, y)
+    cutouts = [cutout for _mask, cutout in pairs]
+    selection = select_best_cutout(
+        cutouts,
+        click_xy=(x, y),
+        scorer=_get_cutout_clip_scorer(),
+    )
+
+    candidates: list[dict[str, Any]] = []
+    for index, cutout in enumerate(cutouts):
+        crop_pil = _crop_on_gray(cutout)
+        clip_b64 = (
+            _png_b64(_pil_rgb_to_bgr(crop_pil), f"clip crop {index}") if crop_pil is not None else None
+        )
+        reason = selection.reasons[index] if index < len(selection.reasons) else "unknown"
+        score = float(selection.scores[index]) if index < len(selection.scores) else 0.0
+        candidates.append(
+            {
+                "index": index,
+                "score": round(score, 4),
+                "reason": reason,
+                "preview_b64": _png_b64(_cutout_preview_bgr(cutout, (x, y)), f"preview {index}"),
+                "clip_crop_b64": clip_b64,
+                "cutout_b64": _png_b64(cutout, f"cutout {index}"),
+            }
+        )
+
+    elapsed_ms = (time.monotonic() - start) * 1000
+    logger.info(
+        "Auto mask pick debug complete: candidates=%d winner=%s elapsed_ms=%.1f",
+        len(candidates),
+        selection.winner_index,
+        elapsed_ms,
+    )
+    return {
+        "click_xy": [x, y],
+        "threshold": float(DEFAULT_THRESHOLD),
+        "winner_index": selection.winner_index,
+        "candidates": candidates,
+        "elapsed_ms": elapsed_ms,
+    }
+
+
+def run_inpaint_verify(
+    image_bytes: bytes,
+    *,
+    x: int,
+    y: int,
+    mask_index: int | None,
+) -> dict[str, Any]:
+    """Inpaint one click-candidate and return the CLIP verify retry trace."""
+    start = time.monotonic()
+    bgr = _decode_bgr(image_bytes, label="inpaint-verify")
+    _validate_click(bgr, x, y)
+
+    select_best_cutout = load_avroom_attr("select_best_cutout")
+    HybridInpaintingStrategy = load_avroom_attr("HybridInpaintingStrategy")
+
+    pairs = _segment_click(image_bytes, bgr, x, y)
+    if not pairs:
+        raise ValueError("Segmentation returned no candidates.")
+
+    cutouts = [cutout for _mask, cutout in pairs]
+    selection = select_best_cutout(
+        cutouts,
+        click_xy=(x, y),
+        scorer=_get_cutout_clip_scorer(),
+    )
+    chosen = mask_index if mask_index is not None else selection.winner_index
+    if chosen is None:
+        raise ValueError("no viable mask")
+    if chosen < 0 or chosen >= len(pairs):
+        raise ValueError(f"mask_index {chosen} is out of range (0..{len(pairs) - 1}).")
+
+    refined_mask, _cutout = pairs[chosen]
+    verify_trace: list[dict[str, Any]] = []
+    hybrid = HybridInpaintingStrategy()
+    final_bgr = hybrid.inpaint(bgr, refined_mask, verify_trace=verify_trace)
+
+    attempts: list[dict[str, Any]] = []
+    lama_b64: str | None = None
+    for entry in verify_trace:
+        if entry.get("lama_bgr") is not None and lama_b64 is None:
+            lama_b64 = _png_b64(entry["lama_bgr"], "lama")
+        params = entry["params"]
+        attempts.append(
+            {
+                "attempt_index": entry["attempt_index"],
+                "ok": entry["ok"],
+                "sd_skipped": entry["sd_skipped"],
+                "scores": entry["scores"],
+                "winner_label": entry["winner_label"],
+                "params": params,
+                "param_fixes_json": entry["param_fixes_json"],
+                "candidate_b64": _png_b64(entry["candidate_bgr"], f"candidate {entry['attempt_index']}"),
+                "clip_crop_b64": _png_b64(entry["clip_crop_bgr"], f"clip crop {entry['attempt_index']}"),
+            }
+        )
+
+    passed = bool(attempts) and bool(attempts[-1]["ok"])
+    elapsed_ms = (time.monotonic() - start) * 1000
+    logger.info(
+        "Inpaint verify debug complete: mask_index=%d attempts=%d passed=%s elapsed_ms=%.1f",
+        chosen,
+        len(attempts),
+        passed,
+        elapsed_ms,
+    )
+    return {
+        "click_xy": [x, y],
+        "mask_index": chosen,
+        "passed": passed,
+        "retries_exhausted": not passed,
+        "lama_b64": lama_b64,
+        "final_b64": _png_b64(final_bgr, "final inpaint"),
+        "attempts": attempts,
+        "elapsed_ms": elapsed_ms,
+    }

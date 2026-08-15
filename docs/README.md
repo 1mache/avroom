@@ -2,15 +2,12 @@
 
 Welcome to the Avroom architecture documentation. These docs describe the **current state** of the project as found in the code (not aspirational design).
 
-> Last refresh: 2026-08-14
+> Last refresh: 2026-08-15
 
 What changed in this refresh:
 
-- Documented the entire `/debug` router for the first time (it existed on the backend before this refresh but had no docs coverage): `POST /debug/validate`, `POST /debug/depth-map`, `POST /debug/sam-everything` — see [backend/api-endpoints.md](backend/api-endpoints.md#debug-endpoints), [backend/schemas.md](backend/schemas.md#debug), and the `DEBUG_ENDPOINTS` gate in [backend/settings-and-storage.md](backend/settings-and-storage.md).
-- Documented the new Pipeline Debug screen (`DebugScreen`), reachable from the dashboard header's flask icon: [frontend/components.md](frontend/components.md#debugscreen), [frontend/user-flow.md](frontend/user-flow.md#pipeline-debug-screen), [frontend/api-integration.md](frontend/api-integration.md#debug-endpoints), [frontend/state-and-types.md](frontend/state-and-types.md#typesdebugts), [frontend/styling.md](frontend/styling.md).
-- Documented `ImageValidator.validate_all` (runs every technical check without early-exit, unlike `validate()`) and SAM `predict_everything`/`get_all_masks_for_image` (prompt-free segmentation, added for the debug endpoints) plus its new quality-threshold params — see [ai-pipeline/ai-engines/segmentation/contracts.md](ai-pipeline/ai-engines/segmentation/contracts.md) and [components.md](ai-pipeline/ai-engines/segmentation/components.md).
-- Documented `TestModules/src/utils/mask_visualizer.py` (`distinct_color`, `colorize_depth`, `overlay_masks`) — [ai-pipeline/utils/components.md](ai-pipeline/utils/components.md).
-- Fixed a stale line-number reference to the CORS middleware block in `main.py` (moved when `expose_headers` was added) and fixed a dead link to a nonexistent `.cursor/skills/` path in this file.
+- Documented `POST /debug/auto-mask-pick` and `POST /debug/inpaint-verify` (click-seeded CLIP mask ranking and hybrid inpaint retry traces) plus matching DebugScreen panels.
+- Noted `CutoutSelectionResult.reasons` and `InpaintingVerificationResult` CLIP `scores`/`winner_label`, plus optional `verify_trace` on hybrid inpaint.
 
 If you change architecture, run the `update-docs` skill (see [`CLAUDE.md`](../CLAUDE.md) for how skills are invoked in this repo) to keep these files in sync with the code.
 

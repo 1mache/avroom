@@ -113,13 +113,24 @@ sequenceDiagram
     Backend-->>Debug: PNG bytes + X-Mask-Count + X-Elapsed-Ms
     Debug-->>User: SAM panel renders
 
+    User->>Debug: click photo
+    Debug-->>User: seed point marker
+    Debug->>API: debugAutoMaskPick(file, x, y)
+    API->>Backend: POST /debug/auto-mask-pick
+    Backend-->>Debug: candidates + scores + winner
+    Debug-->>User: mask-pick grid
+    Debug->>API: debugInpaintVerify(file, x, y, maskIndex)
+    API->>Backend: POST /debug/inpaint-verify
+    Backend-->>Debug: lama + retry trace + final
+    Debug-->>User: inpaint-verify timeline
+
     User->>Debug: click a rendered PNG
     Debug-->>User: DebugLightbox full-screen viewer (Esc/backdrop closes)
 ```
 
-A separate screen reached from the dashboard header (`App.tsx`'s `{screen:"debug"}` route), not part of the session workspace — no `uid`, no session created, nothing written to disk. See [components.md](components.md#debugscreen) for the panel/state breakdown and [backend/api-endpoints.md](../backend/api-endpoints.md#debug-endpoints) for the three endpoints it drives.
+A separate screen reached from the dashboard header (`App.tsx`'s `{screen:"debug"}` route), not part of the session workspace — no `uid`, no session created, nothing written to disk. See [components.md](components.md#debugscreen) for the panel/state breakdown and [backend/api-endpoints.md](../backend/api-endpoints.md#debug-endpoints) for the endpoints it drives.
 
-Each of the three panels (Validation, Depth map, SAM segment-everything) can also be re-run individually with its own knobs, independent of `Run all` — a panel's knob changes only take effect on its next `Re-run`, not live. Depth and SAM stages always run whether or not the validation stage passed; that's the point of the screen. `Run all` runs the three sequentially rather than in parallel, since SAM shares the process-wide GPU lock with everything else in inline mode (`docs/backend/concurrency.md`) — firing all three at once would just serialize behind the lock anyway.
+Validation, depth, and SAM can be re-run individually or via `Run all` (sequential). Auto mask pick and inpaint verify need a click on the photo and are not included in `Run all`.
 
 ## Dashboard preview thumbnails
 

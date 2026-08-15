@@ -14,3 +14,5 @@ class InpaintingVerificationResult:
 
     ok: bool
     param_fixes_json: str
+    scores: dict[str, float]
+    winner_label: str

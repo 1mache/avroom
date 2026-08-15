@@ -60,6 +60,7 @@ def test_click_miss_is_prefiltered() -> None:
     )
     assert result.winner_index is None
     assert result.scores == (0.0,)
+    assert result.reasons == ("click_miss",)
 
 
 def test_area_too_small_is_prefiltered() -> None:
@@ -94,6 +95,7 @@ def test_picks_highest_score_above_threshold() -> None:
     )
     assert result.winner_index == 1
     assert result.scores == (0.41, 0.82, 0.70)
+    assert result.reasons == ("scored", "winner", "scored")
 
 
 def test_debug_dump_writes_selection_json_and_winner() -> None:

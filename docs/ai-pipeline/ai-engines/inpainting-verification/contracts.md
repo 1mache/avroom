@@ -15,9 +15,11 @@
 class InpaintingVerificationResult:
     ok: bool
     param_fixes_json: str
+    scores: dict[str, float]
+    winner_label: str
 ```
 
-CLIP v1 fail: `param_fixes_json == params.to_json()`. Hybrid replays known keys only.
+CLIP v1 fail: `param_fixes_json == params.to_json()`. Hybrid replays known keys only. Optional `verify_trace` list kwarg on `HybridInpaintingStrategy.inpaint` records each attempt (images + params) for `/debug/inpaint-verify`; production inpaint still returns only the final BGR array.
 
 ## Labels (CLIP default)
 

@@ -47,3 +47,51 @@ export interface DebugImageResult {
   elapsedMs: number | null;
   maskCount: number | null;
 }
+
+export interface DebugMaskCandidate {
+  index: number;
+  score: number;
+  reason: string;
+  preview_b64: string;
+  clip_crop_b64: string | null;
+  cutout_b64: string;
+}
+
+export interface DebugAutoMaskPickResponse {
+  click_xy: [number, number] | number[];
+  threshold: number;
+  winner_index: number | null;
+  candidates: DebugMaskCandidate[];
+  elapsed_ms: number;
+}
+
+export interface DebugSdParams {
+  prompt: string;
+  negative_prompt: string;
+  strength: number;
+  num_inference_steps: number;
+  guidance_scale: number;
+}
+
+export interface DebugInpaintAttempt {
+  attempt_index: number;
+  ok: boolean;
+  sd_skipped: boolean;
+  scores: Record<string, number>;
+  winner_label: string;
+  params: DebugSdParams;
+  param_fixes_json: string;
+  candidate_b64: string;
+  clip_crop_b64: string;
+}
+
+export interface DebugInpaintVerifyResponse {
+  click_xy: [number, number] | number[];
+  mask_index: number;
+  passed: boolean;
+  retries_exhausted: boolean;
+  lama_b64: string | null;
+  final_b64: string;
+  attempts: DebugInpaintAttempt[];
+  elapsed_ms: number;
+}

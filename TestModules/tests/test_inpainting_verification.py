@@ -62,7 +62,12 @@ class _ScriptedVerifier(InpaintingVerificationStrategy):
     ) -> InpaintingVerificationResult:
         ok = self._oks[min(self.calls, len(self._oks) - 1)]
         self.calls += 1
-        return InpaintingVerificationResult(ok=ok, param_fixes_json=params.to_json())
+        return InpaintingVerificationResult(
+            ok=ok,
+            param_fixes_json=params.to_json(),
+            scores={},
+            winner_label="",
+        )
 
 
 def _params() -> InpaintSdParams:
@@ -100,6 +105,8 @@ def test_clip_verify_pass_when_good_label_wins() -> None:
     image, mask = _scene()
     result = strategy.verify(image, mask, _params())
     assert result.ok is True
+    assert result.winner_label == GOOD_LABEL
+    assert result.scores[GOOD_LABEL] == 1.0
 
 
 def test_clip_verify_fail_echoes_input_params() -> None:
@@ -123,9 +130,15 @@ def test_hybrid_fail_then_pass_uses_second_sd() -> None:
     )
     hybrid.SHARPEN_AMOUNT = 0.0
     image, mask = _scene()
-    result = hybrid.inpaint(image, mask, strength=0.35)
+    trace: list[dict[str, Any]] = []
+    result = hybrid.inpaint(image, mask, strength=0.35, verify_trace=trace)
     assert len(sd.calls) == 2
     assert np.all(result == np.array((20, 20, 20), dtype=np.uint8))
+    assert len(trace) == 2
+    assert trace[0]["ok"] is False
+    assert trace[1]["ok"] is True
+    assert "strength" in trace[0]["params"]
+    assert trace[0]["candidate_bgr"].shape[:2] == image.shape[:2]
 
 
 def test_hybrid_always_fail_keeps_last_after_two_retries() -> None:

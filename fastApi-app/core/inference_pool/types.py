@@ -18,6 +18,8 @@ class JobKind(str, Enum):
     CALIBRATE_CAMERA = "calibrate_camera"
     DEBUG_DEPTH_MAP = "debug_depth_map"
     DEBUG_SAM_EVERYTHING = "debug_sam_everything"
+    DEBUG_AUTO_MASK_PICK = "debug_auto_mask_pick"
+    DEBUG_INPAINT_VERIFY = "debug_inpaint_verify"
     SHUTDOWN = "shutdown"
 
 
@@ -79,3 +81,4 @@ class JobResult:
     camera_calib_camera_model: str | None = None
     debug_png_bytes: bytes | None = None
     debug_mask_count: int | None = None
+    debug_payload: dict[str, Any] | None = None

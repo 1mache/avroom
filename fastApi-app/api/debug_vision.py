@@ -17,8 +17,13 @@ from fastapi.responses import Response
 
 from core.debug_vision import COLORMAPS, DEPTH_STRATEGIES, SEGMENT_SOURCES
 from core.image_validation import ImageValidator
-from core.inference_pool.client import get_inference_client
-from schemas.debug import DebugCheckResult, DebugValidationResponse
+from core.inference_pool.client import InferenceJobError, get_inference_client
+from schemas.debug import (
+    DebugAutoMaskPickResponse,
+    DebugCheckResult,
+    DebugInpaintVerifyResponse,
+    DebugValidationResponse,
+)
 from settings import get_debug_endpoints_enabled
 
 router = APIRouter(prefix="/debug", tags=["debug"])
@@ -291,3 +296,96 @@ def debug_sam_everything(
         media_type="image/png",
         headers={"X-Mask-Count": str(mask_count), "X-Elapsed-Ms": f"{elapsed_ms:.1f}"},
     )
+
+
+def _read_upload(file: UploadFile, *, label: str) -> bytes:
+    try:
+        return file.file.read()
+    except Exception as exc:
+        logger.exception("%s read failed: filename=%s", label, file.filename)
+        raise HTTPException(status_code=500, detail=f"Failed to read upload: {exc}") from exc
+
+
+def _http_from_inference(exc: InferenceJobError) -> HTTPException:
+    detail = str(exc)
+    lowered = detail.lower()
+    if "outside the image" in lowered or "no viable mask" in lowered or "out of range" in lowered:
+        return HTTPException(status_code=422, detail=detail)
+    return HTTPException(status_code=500, detail=detail)
+
+
+@router.post("/auto-mask-pick", response_model=DebugAutoMaskPickResponse)
+def debug_auto_mask_pick(
+    file: Annotated[UploadFile, File(..., description="Image to segment.")],
+    x: Annotated[int, Query(description="Click x in natural image pixels.")],
+    y: Annotated[int, Query(description="Click y in natural image pixels.")],
+) -> DebugAutoMaskPickResponse:
+    """Rank every SAM candidate at a click with CLIP. No session writes."""
+    _require_enabled()
+    logger.info("debug/auto-mask-pick called: filename=%s click=(%d,%d)", file.filename, x, y)
+    image_bytes = _read_upload(file, label="debug/auto-mask-pick")
+    try:
+        payload = get_inference_client().run_debug_auto_mask_pick(
+            image_bytes=image_bytes, x=x, y=y
+        )
+    except InferenceJobError as exc:
+        logger.warning("debug/auto-mask-pick rejected: %s", exc)
+        raise _http_from_inference(exc) from exc
+    except ValueError as exc:
+        logger.warning("debug/auto-mask-pick rejected: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("debug/auto-mask-pick failed: filename=%s", file.filename)
+        raise HTTPException(status_code=500, detail=f"Auto mask pick failed: {exc}") from exc
+
+    logger.info(
+        "debug/auto-mask-pick complete: filename=%s candidates=%d winner=%s",
+        file.filename,
+        len(payload["candidates"]),
+        payload["winner_index"],
+    )
+    return DebugAutoMaskPickResponse.model_validate(payload)
+
+
+@router.post("/inpaint-verify", response_model=DebugInpaintVerifyResponse)
+def debug_inpaint_verify(
+    file: Annotated[UploadFile, File(..., description="Image to inpaint.")],
+    x: Annotated[int, Query(description="Click x in natural image pixels.")],
+    y: Annotated[int, Query(description="Click y in natural image pixels.")],
+    mask_index: Annotated[
+        int | None,
+        Query(description="Candidate index to inpaint. Defaults to CLIP winner."),
+    ] = None,
+) -> DebugInpaintVerifyResponse:
+    """Run hybrid inpaint + CLIP retries on one mask. No session writes."""
+    _require_enabled()
+    logger.info(
+        "debug/inpaint-verify called: filename=%s click=(%d,%d) mask_index=%s",
+        file.filename,
+        x,
+        y,
+        mask_index,
+    )
+    image_bytes = _read_upload(file, label="debug/inpaint-verify")
+    try:
+        payload = get_inference_client().run_debug_inpaint_verify(
+            image_bytes=image_bytes, x=x, y=y, mask_index=mask_index
+        )
+    except InferenceJobError as exc:
+        logger.warning("debug/inpaint-verify rejected: %s", exc)
+        raise _http_from_inference(exc) from exc
+    except ValueError as exc:
+        logger.warning("debug/inpaint-verify rejected: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("debug/inpaint-verify failed: filename=%s", file.filename)
+        raise HTTPException(status_code=500, detail=f"Inpaint verify failed: {exc}") from exc
+
+    logger.info(
+        "debug/inpaint-verify complete: filename=%s mask_index=%s passed=%s attempts=%d",
+        file.filename,
+        payload["mask_index"],
+        payload["passed"],
+        len(payload["attempts"]),
+    )
+    return DebugInpaintVerifyResponse.model_validate(payload)

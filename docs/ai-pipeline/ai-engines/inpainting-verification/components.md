@@ -12,7 +12,7 @@ Source: [`TestModules/src/ai_engines/inpainting_verification/`](../../../../Test
 
 ## Result and params
 
-- **`InpaintingVerificationResult`** — `ok: bool`, `param_fixes_json: str` (always a JSON object).
+- **`InpaintingVerificationResult`** — `ok`, `param_fixes_json`, CLIP `scores`, `winner_label`.
 - **`InpaintSdParams`** — `prompt`, `negative_prompt`, `strength`, `num_inference_steps`, `guidance_scale` with `to_json` / `from_json` (unknown keys dropped).
 
 ## Crop helper

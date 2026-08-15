@@ -32,6 +32,8 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `POST` | `/debug/validate` | multipart `file` | `DebugValidationResponse` |
 | `POST` | `/debug/depth-map` | multipart `file` + query params | PNG bytes |
 | `POST` | `/debug/sam-everything` | multipart `file` + query params | PNG bytes |
+| `POST` | `/debug/auto-mask-pick` | multipart `file` + `x` `y` query | `DebugAutoMaskPickResponse` |
+| `POST` | `/debug/inpaint-verify` | multipart `file` + `x` `y` `mask_index` query | `DebugInpaintVerifyResponse` |
 
 ## `POST /images/upload`
 
@@ -280,9 +282,9 @@ Returns final artifact existence flags, derives `cutout_bounds` from cached fina
 
 ## Debug endpoints
 
-Router: [`fastApi-app/api/debug_vision.py`](../../fastApi-app/api/debug_vision.py), prefix `/debug`. Pipeline functions: [`fastApi-app/core/debug_vision.py`](../../fastApi-app/core/debug_vision.py). Test/inspection tools, not part of the production object-removal flow — **no session is created, nothing is written to disk**. All three are gated by `DEBUG_ENDPOINTS` (`settings.get_debug_endpoints_enabled()`, default enabled); when disabled, all three return **404**. Frontend entry point: the dashboard header's flask icon opens `DebugScreen` (see [frontend/user-flow.md](../frontend/user-flow.md#pipeline-debug-screen)).
+Router: [`fastApi-app/api/debug_vision.py`](../../fastApi-app/api/debug_vision.py), prefix `/debug`. Pipeline functions: [`fastApi-app/core/debug_vision.py`](../../fastApi-app/core/debug_vision.py). Test/inspection tools, not part of the production object-removal flow — **no session is created, nothing is written to disk**. All of them are gated by `DEBUG_ENDPOINTS` (`settings.get_debug_endpoints_enabled()`, default enabled); when disabled, they return **404**. Frontend entry point: the dashboard header's flask icon opens `DebugScreen` (see [frontend/user-flow.md](../frontend/user-flow.md#pipeline-debug-screen)).
 
-All three dispatch through the inference pool (`JobKind.DEBUG_DEPTH_MAP` / `DEBUG_SAM_EVERYTHING` for the two PNG endpoints; `/debug/validate`'s content stage reuses the existing `JobKind.VALIDATE_CONTENT`) — same concurrency model as production calls. Both PNG job kinds are in `_FACADE_JOB_KINDS` (`core/inference_pool/dispatch.py`) so inline mode takes the GPU lock.
+GPU jobs dispatch through the inference pool (`JobKind.DEBUG_DEPTH_MAP` / `DEBUG_SAM_EVERYTHING` / `DEBUG_AUTO_MASK_PICK` / `DEBUG_INPAINT_VERIFY`; `/debug/validate`'s content stage reuses `JobKind.VALIDATE_CONTENT`). Those four debug job kinds are in `_FACADE_JOB_KINDS` (`core/inference_pool/dispatch.py`) so inline mode takes the GPU lock. JSON debug jobs put their payload on `JobResult.debug_payload`.
 
 ### `POST /debug/validate`
 
@@ -331,3 +333,11 @@ Renders SAM's `SamAutomaticMaskGenerator` ("segment everything", prompt-free) ou
 The overlay is **always** drawn on the original photo, regardless of `source`. Response is `image/png` with headers `X-Mask-Count` and `X-Elapsed-Ms` — both must be read via `expose_headers` on the CORS middleware (see [settings-and-storage.md](settings-and-storage.md)) for browser JS to see them. `422` on an unknown `source`/`depth_strategy` or an undecodable upload.
 
 Underlying capability: `SamSegmentationStrategy.predict_everything(image, *, points_per_side, pred_iou_thresh, stability_score_thresh, min_mask_region_area)` in [`TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py`](../../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) — a non-abstract method on `ImageSegmentationStrategy` (default raises `NotImplementedError`, since prompt-free segmentation is SAM-specific) exposed at the facade level as `ImageSegmentationFacade.get_all_masks_for_image(...)`. Reuses the already-loaded `SamPredictor`'s weights via `_load_sam_mask_generator` (`functools.lru_cache`, keyed on checkpoint + all four threshold args) — no duplicate 370MB checkpoint load. Rendering uses `avroom_object_removal.utils.overlay_masks` (deterministic per-mask color via golden-ratio hue stepping, translucent fill + outline).
+
+### `POST /debug/auto-mask-pick`
+
+Runs `ObjectSegmentor` at query `x`,`y` (natural-image pixels) then `select_best_cutout`. Returns every candidate's preview/cutout PNG (base64), CLIP crop when scored, `score`, `reason`, and `winner_index`. Does **not** write session mask cache. `422` if the click is outside the image.
+
+### `POST /debug/inpaint-verify`
+
+Same click segmentation as auto-mask-pick, then hybrid inpaint on `mask_index` (optional; defaults to CLIP winner). Returns LaMa PNG, per-retry candidate + CLIP crop, CLIP scores, SD params sent, verifier `param_fixes_json`, and the final sharpened image. `422` if the click is out of bounds, `mask_index` is out of range, or there is no viable mask when `mask_index` is omitted.

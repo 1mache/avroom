@@ -37,11 +37,13 @@ class CutoutSelectionResult:
     """Outcome of ranking BGRA cutout candidates for one click.
 
     ``scores`` is one ``P(good)`` per input cutout. Pre-filtered candidates
-    (click miss or area out of range) are recorded as ``0.0``.
+    (click miss or area out of range) are recorded as ``0.0``. ``reasons``
+    is one reject/score tag per cutout (``winner`` on the chosen index).
     """
 
     winner_index: int | None
     scores: tuple[float, ...]
+    reasons: tuple[str, ...]
 
 
 def select_best_cutout(
@@ -95,7 +97,11 @@ def select_best_cutout(
         tuple(round(score, 3) for score in scores),
         threshold,
     )
-    result = CutoutSelectionResult(winner_index=best_index, scores=tuple(scores))
+    result = CutoutSelectionResult(
+        winner_index=best_index,
+        scores=tuple(scores),
+        reasons=tuple(reasons),
+    )
     _save_auto_mask_debug(
         cutouts_bgra,
         click_xy=click_xy,

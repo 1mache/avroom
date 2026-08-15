@@ -32,6 +32,15 @@ from .inpainting import (
     LamaInpaintingStrategy,
     StableDiffusionInpaintingStrategy,
 )
+from .inpainting_verification import (
+    ClipLabelInpaintingVerificationStrategy,
+    INPAINT_VERIFY_CROP_PAD_RATIO,
+    InpaintSdParams,
+    InpaintingVerificationFacade,
+    InpaintingVerificationResult,
+    InpaintingVerificationStrategy,
+    crop_around_mask,
+)
 from .novel_view import (
     NovelViewFacade,
     NovelViewStrategy,
@@ -71,6 +80,13 @@ __all__ = [
     "DepthAnythingMappingStrategy",
     "DepthMappingFacade",
     "DepthMappingStrategy",
+    "ClipLabelInpaintingVerificationStrategy",
+    "INPAINT_VERIFY_CROP_PAD_RATIO",
+    "InpaintSdParams",
+    "InpaintingVerificationFacade",
+    "InpaintingVerificationResult",
+    "InpaintingVerificationStrategy",
+    "crop_around_mask",
     "HybridInpaintingStrategy",
     "ImageInpaintingFacade",
     "ImageInpaintingStrategy",

@@ -95,6 +95,8 @@ export function effectiveCutoutBounds(
 export interface PendingInpaintJob {
   jobId: string;
   maskId: string;
+  kind?: "inpaint" | "batch";
+  batchId?: string;
   normalizedClickPos: ClickPosition | null;
   startedAt: number;
 }

@@ -8,6 +8,7 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `POST` | `/images/upload` | multipart file | `ImageUploadResponse` (422 on failed technical or content validation) |
 | `POST` | `/images/segment` | `SegmentRequest` | `SegmentResponse` |
 | `POST` | `/images/inpaint` | `InpaintMaskRequest` | `InpaintMaskResponse` |
+| `POST` | `/images/{uid}/batch` | `BatchRequest` | `BatchResponse` |
 | `POST` | `/images/click` | `ClickRequest` | `ClickResultResponse` legacy one-step flow |
 | `POST` | `/images/{uid}/name` | `SetNameRequest` | `SessionInfo` |
 | `POST` | `/images/{uid}/sync-check` | `SessionSyncCheckRequest` | `SessionSyncCheckResponse` |
@@ -91,6 +92,12 @@ Behavior:
 15. Return `InpaintMaskResponse` with `object_id`, `object_uuid`, plus background/cutout base64.
 
 If `mask_id` is unknown or candidate cache is gone, endpoint returns `404`. Overlap or canvas-busy conflicts return `409`. See [concurrency.md](concurrency.md).
+
+## `POST /images/{uid}/batch`
+
+Blocking `def` handler. Discovers masks (`box` via SAM-everything on adapted depth, `clicks` via `verify=auto` segment, `objects` skips inpaint), peels overlapping stacks nearer-first using exclusive-region depth, inpaints sequentially with Hybrid verification, then generates GLBs. Per-object failures are skipped. Same-batch canvas updates are not treated as 409. External overlapping leases still 409 that object (skip). `verify` is forced to `auto`.
+
+Orchestrator: [`fastApi-app/core/batch_jobs.py`](../../fastApi-app/core/batch_jobs.py). Peel helpers: [`TestModules/src/core/batch_peel.py`](../../TestModules/src/core/batch_peel.py).
 
 ## `GET /images/{uid}/objects`
 

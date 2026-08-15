@@ -38,6 +38,13 @@ export const ScissorsIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
+export const AreaIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <rect x="5" y="5" width="14" height="14" />
+    <path d="M5 10h14" />
+  </Svg>
+);
+
 export const RotateIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>
     <ellipse cx="12" cy="12" rx="9" ry="4.2" transform="rotate(-24 12 12)" />

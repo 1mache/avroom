@@ -6,11 +6,12 @@ import {
   duplicateObject as duplicateObjectRequest,
   getSessionObjects,
   inpaintMask,
+  runSessionBatch,
   segmentImage,
   setObjectName,
   synthesizeNovelView,
 } from "../api/images";
-import type { CutoutBounds, ObjectInfo, SegmentRequest, VerifyMode } from "../types/api";
+import type { BatchRequest, CutoutBounds, ObjectInfo, SegmentRequest, VerifyMode } from "../types/api";
 import type {
   ClickPosition,
   CutoutAlphaBounds,
@@ -86,6 +87,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   const [objects, setObjects] = useState<CutoutObject[]>([]);
   const [selectedObjectId, setSelectedObjectId] = useState<number | null>(null);
   const [pendingJobs, setPendingJobs] = useState<PendingInpaintJob[]>([]);
+  const [isBatching, setIsBatching] = useState(false);
   const [segmentState, setSegmentState] = useState<SegmentPickerState>({ status: "idle" });
   const [backgroundSrc, setBackgroundSrc] = useState<string | null>(null);
   const [isDuplicating, setIsDuplicating] = useState(false);
@@ -185,6 +187,35 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       -1,
     );
   }, []);
+
+  const runBatch = useCallback(
+    async (source: BatchRequest["source"]) => {
+      const currentImageId = imageIdRef.current;
+      if (!currentImageId || isBatching) {
+        return;
+      }
+      const jobId = nextPendingJobId();
+      setIsBatching(true);
+      setPendingJobs((prev) => [
+        ...prev,
+        { jobId, maskId: "batch", kind: "batch", normalizedClickPos: null, startedAt: Date.now() },
+      ]);
+      try {
+        await runSessionBatch(currentImageId, { source, verify: "auto" });
+        if (imageIdRef.current === currentImageId) {
+          onMutated?.();
+        }
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "inpaint");
+        }
+      } finally {
+        setPendingJobs((prev) => prev.filter((j) => j.jobId !== jobId));
+        setIsBatching(false);
+      }
+    },
+    [isBatching, onError, onMutated],
+  );
 
   const closeMaskPicker = useCallback(() => {
     setSegmentState({ status: "idle" });
@@ -500,6 +531,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     pendingJobs,
     hasPendingWork:
       pendingJobs.length > 0 ||
+      isBatching ||
       isDuplicating ||
       isDeleting ||
       objects.some((o) => o.rotation?.status === "pending"),
@@ -511,6 +543,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     setBackgroundSrc,
     isDuplicating,
     runSegment,
+    runBatch,
+    isBatching,
     closeMaskPicker,
     selectMask,
     commitRotation,

@@ -11,7 +11,7 @@ The FastAPI service coordinates same-session segment and inpaint work in the **A
 
 Pool startup is wired in [`fastApi-app/main.py`](../../fastApi-app/main.py) lifespan via [`core/inference_pool/pool.py`](../../fastApi-app/core/inference_pool/pool.py). Jobs are submitted through [`core/inference_pool/client.py`](../../fastApi-app/core/inference_pool/client.py) and dispatched by [`core/inference_pool/dispatch.py`](../../fastApi-app/core/inference_pool/dispatch.py).
 
-Heavy routes (`segment`, `inpaint`, legacy `click`, 3D, novel view) are synchronous `def` handlers so Starlette runs them on a thread pool and the event loop stays responsive for light GETs.
+Heavy routes (`segment`, `inpaint`, legacy `click`, 3D, novel view, `POST /images/{uid}/batch`) are synchronous `def` handlers so Starlette runs them on a thread pool and the event loop stays responsive for light GETs.
 
 ## Session runtime (API process)
 
@@ -22,7 +22,7 @@ Module: [`core/inference_pool/session_runtime.py`](../../fastApi-app/core/infere
 At most **one inpaint GPU + commit** may run per `image_id` at a time. A second non-overlapping inpaint **blocks** on the canvas writer until the first finishes, then loads the **updated** canvas.
 
 - Acquired in [`api/routes.py`](../../fastApi-app/api/routes.py) `inpaint_mask` before `run_inpaint`.
-- Held through GPU work, metadata build, background/cutout writes, and per-mask candidate delete.
+- Held through GPU work, metadata build, background/cutout writes, and per-mask candidate delete. Batch peels acquire the writer **one object at a time** so overlapping sibling masks queue instead of 409.
 - Writer wait timeout reuses `INFERENCE_JOB_TIMEOUT_SEC` (default 600). On timeout → HTTP **409** with a clear detail.
 
 ### Region leases

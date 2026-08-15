@@ -104,6 +104,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // pickPoint: that click, in natural-image pixels, kept on screen while the
   // mask picker is open so the user can see what they aimed at.
   const [cutMode, setCutMode] = useState(false);
+  const [areaMode, setAreaMode] = useState(false);
+  const [areaDraft, setAreaDraft] = useState<{
+    start: ClickPosition;
+    current: ClickPosition;
+  } | null>(null);
+  const [batchUuids, setBatchUuids] = useState<Set<string>>(new Set());
   const [pickPoint, setPickPoint] = useState<ClickPosition | null>(null);
   const [verifyMode, setVerifyMode] = useState<VerifyMode>("manual");
 
@@ -438,8 +444,16 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
   const handleCut = useCallback(() => {
     setRotateMode(false);
+    setAreaMode(false);
     setPickPoint(null);
     setCutMode((armed) => !armed);
+  }, []);
+
+  const handleArea = useCallback(() => {
+    setRotateMode(false);
+    setCutMode(false);
+    setPickPoint(null);
+    setAreaMode((armed) => !armed);
   }, []);
 
   const handleMaskSelected = useCallback(
@@ -640,7 +654,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // Enter commits the rotation (same as pressing rotate again); Escape backs
   // out of whichever mode is armed. Both bail while a text field owns focus.
   useEffect(() => {
-    if (!rotateMode && !cutMode) {
+    if (!rotateMode && !cutMode && !areaMode) {
       return;
     }
 
@@ -654,6 +668,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         event.preventDefault();
         setRotateMode(false);
         setCutMode(false);
+        setAreaMode(false);
+        setAreaDraft(null);
         setPickPoint(null);
       } else if (event.key === "Enter" && rotateMode) {
         event.preventDefault();
@@ -663,7 +679,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [rotateMode, cutMode, commitCurrentRotation]);
+  }, [rotateMode, cutMode, areaMode, commitCurrentRotation]);
 
   // --- pointer interaction on the photo -----------------------------------
 
@@ -682,6 +698,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       }
 
       // Scissors armed: this click is the segmentation seed, not a selection.
+      if (areaMode) {
+        event.preventDefault();
+        setAreaDraft({ start: natural, current: natural });
+        return;
+      }
+
       if (cutMode) {
         event.preventDefault();
         setPickPoint(natural);
@@ -740,6 +762,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       naturalSize,
       renderedRect,
       cutMode,
+      areaMode,
       verifyMode,
       jobs.runSegment,
       jobs.objects,
@@ -750,6 +773,51 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       selectObject,
     ],
   );
+
+  useEffect(() => {
+    if (!areaDraft || !naturalSize || !renderedRect) {
+      return;
+    }
+    const handleMove = (event: PointerEvent) => {
+      const stage = stageRef.current;
+      if (!stage) {
+        return;
+      }
+      const stageRect = stage.getBoundingClientRect();
+      const natural = toNaturalPoint(
+        event.clientX - stageRect.left,
+        event.clientY - stageRect.top,
+        renderedRect,
+        naturalSize,
+      );
+      if (!natural) {
+        return;
+      }
+      setAreaDraft((prev) => (prev ? { ...prev, current: natural } : prev));
+    };
+    const handleUp = () => {
+      setAreaDraft((prev) => {
+        if (!prev) {
+          return null;
+        }
+        const x0 = Math.round(Math.min(prev.start.x, prev.current.x));
+        const y0 = Math.round(Math.min(prev.start.y, prev.current.y));
+        const x1 = Math.round(Math.max(prev.start.x, prev.current.x));
+        const y1 = Math.round(Math.max(prev.start.y, prev.current.y));
+        if (x1 - x0 >= 8 && y1 - y0 >= 8 && !jobs.isBatching) {
+          void jobs.runBatch({ kind: "box", x0, y0, x1, y1 });
+        }
+        return null;
+      });
+      setAreaMode(false);
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+    return () => {
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+  }, [areaDraft, naturalSize, renderedRect, jobs]);
 
   useEffect(() => {
     if (!isDragging) {
@@ -894,7 +962,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
   const photoSrc = jobs.backgroundSrc ?? originalSrc;
 
-  const status = jobs.isSegmenting
+  const status = jobs.isBatching
+    ? "batch cutting"
+    : jobs.isSegmenting
     ? "finding masks"
     : jobs.pendingJobs.length > 0
       ? `removing ${jobs.pendingJobs.length}`
@@ -916,6 +986,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         hasSelection={jobs.selectedObjectId !== null}
         cutMode={cutMode}
         onCut={handleCut}
+        areaMode={areaMode}
+        onArea={handleArea}
+        batchBusy={jobs.isBatching}
         verifyMode={verifyMode}
         onVerifyModeChange={setVerifyMode}
         rotateMode={rotateMode}
@@ -932,7 +1005,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
       <main
         ref={stageRef}
-        className={`stage${cutMode ? " is-picking" : ""}${isDragging ? " is-dragging" : ""}`}
+        className={`stage${cutMode || areaMode ? " is-picking" : ""}${isDragging ? " is-dragging" : ""}`}
       >
         {photoSrc ? (
           <>
@@ -971,6 +1044,18 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                 input and hit-tests against real alpha instead. */}
             <div className="stage-input" onPointerDown={handleStagePointerDown} />
 
+            {areaDraft && renderedRect && naturalSize ? (
+              <div
+                className="stage-area-box"
+                style={{
+                  left: `${renderedRect.x + (Math.min(areaDraft.start.x, areaDraft.current.x) / naturalSize.width) * renderedRect.width}px`,
+                  top: `${renderedRect.y + (Math.min(areaDraft.start.y, areaDraft.current.y) / naturalSize.height) * renderedRect.height}px`,
+                  width: `${(Math.abs(areaDraft.current.x - areaDraft.start.x) / naturalSize.width) * renderedRect.width}px`,
+                  height: `${(Math.abs(areaDraft.current.y - areaDraft.start.y) / naturalSize.height) * renderedRect.height}px`,
+                }}
+              />
+            ) : null}
+
             {pickPoint && renderedRect && naturalSize ? (
               <span
                 className="stage-pick-marker"
@@ -1002,6 +1087,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
         {rotateMode ? (
           <p className="stage-hint">Drag to orbit · Enter applies · Esc cancels</p>
+        ) : areaMode ? (
+          <p className="stage-hint">Drag a box around the furniture · Esc cancels</p>
         ) : cutMode ? (
           <p className="stage-hint">Click the object you want to cut out · Esc cancels</p>
         ) : null}
@@ -1032,6 +1119,31 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             showOriginalIds={showOriginalIds}
             disabled={isPreparing3D}
             onSelectObject={selectObject}
+            onToggleBatchUuid={(uuid, on) => {
+              setBatchUuids((prev) => {
+                const next = new Set(prev);
+                if (on) {
+                  next.add(uuid);
+                } else {
+                  next.delete(uuid);
+                }
+                return next;
+              });
+            }}
+            batchUuids={batchUuids}
+            onGenerate3D={() => {
+              const uuids = [...batchUuids];
+              if (uuids.length === 0) {
+                const selected = jobs.objects.find((o) => o.objectId === jobs.selectedObjectId);
+                if (selected?.uuid) {
+                  uuids.push(selected.uuid);
+                }
+              }
+              if (uuids.length > 0) {
+                void jobs.runBatch({ kind: "objects", uuids });
+              }
+            }}
+            generate3DDisabled={jobs.isBatching}
             onToggleHidden={handleToggleHidden}
             onToggleShowOriginal={handleToggleShowOriginal}
             onRenameObject={handleRenameObject}

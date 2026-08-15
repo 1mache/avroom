@@ -69,6 +69,8 @@ from schemas.image import (
     RescaleByDepthRequest,
     RescaleByDepthResponse,
     UidCacheStatusResponse,
+    BatchRequest,
+    BatchResponse,
 )
 from core.object_storage import (
     copy_object_artifacts,
@@ -457,6 +459,33 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
         object_uuid=object_metadata.uuid,
         source_elevation_deg=object_metadata.source_elevation_deg,
     )
+
+
+@router.post("/{uid}/batch", response_model=BatchResponse)
+def run_batch(uid: str, request: BatchRequest) -> BatchResponse:
+    """Discover or select objects, peel with auto verify, then generate GLBs."""
+
+    logger.info("Batch requested: uid=%s source=%s", uid, request.source.kind)
+    if not is_session_registered(uid):
+        raise HTTPException(status_code=404, detail=f"Unknown session uid={uid}")
+    from core.batch_jobs import run_session_batch
+
+    try:
+        result = run_session_batch(uid, request, get_image_storage_dir())
+    except SessionConflictError as exc:
+        logger.warning("Batch rejected due to session conflict: %s", exc)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        logger.exception("Batch failed due to missing file")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        logger.exception("Batch failed due to invalid input")
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Batch failed")
+        raise HTTPException(status_code=500, detail=f"Batch failed: {exc}") from exc
+    logger.info("Batch finished: uid=%s batch_id=%s", uid, result.batch_id)
+    return result
 
 
 @router.delete("/{uid}", status_code=204)

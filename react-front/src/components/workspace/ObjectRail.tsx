@@ -28,6 +28,10 @@ export interface ObjectRailProps {
   showOriginalIds: ReadonlySet<number>;
   disabled: boolean;
   onSelectObject: (objectId: number) => void;
+  batchUuids: ReadonlySet<string>;
+  onToggleBatchUuid: (uuid: string, on: boolean) => void;
+  onGenerate3D: () => void;
+  generate3DDisabled: boolean;
   onToggleHidden: (objectId: number) => void;
   onToggleShowOriginal: (objectId: number) => void;
   onRenameObject: (objectId: number, uuid: string, name: string | null) => void;
@@ -47,6 +51,10 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
   showOriginalIds,
   disabled,
   onSelectObject,
+  batchUuids,
+  onToggleBatchUuid,
+  onGenerate3D,
+  generate3DDisabled,
   onToggleHidden,
   onToggleShowOriginal,
   onRenameObject,
@@ -165,6 +173,14 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
         <div className="rail-head">
           <span className="rail-title">Objects</span>
           <span className="rail-count">{String(total).padStart(2, "0")}</span>
+          <button
+            type="button"
+            className="rail-3d"
+            onClick={onGenerate3D}
+            disabled={generate3DDisabled || objects.every((o) => !o.uuid)}
+          >
+            3D
+          </button>
         </div>
 
         <div className="rail-list">
@@ -176,12 +192,20 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
             return (
               <div
                 key={obj.objectId}
-                className={`rail-row${isSelected ? " is-selected" : ""}${obj.hidden ? " is-hidden" : ""}`}
+                className={`rail-row${isSelected ? " is-selected" : ""}${obj.hidden ? " is-hidden" : ""}${obj.uuid && batchUuids.has(obj.uuid) ? " is-batch" : ""}`}
               >
                 <button
                   type="button"
                   className="rail-thumb"
-                  onClick={() => handleSelect(obj.objectId)}
+                  onClick={(event) => {
+                    if (event.ctrlKey || event.metaKey) {
+                      if (obj.uuid) {
+                        onToggleBatchUuid(obj.uuid, !(obj.uuid && batchUuids.has(obj.uuid)));
+                      }
+                      return;
+                    }
+                    handleSelect(obj.objectId);
+                  }}
                   disabled={disabled || obj.hidden}
                   aria-label={`Select ${obj.name ?? `object ${obj.objectId}`}`}
                 >

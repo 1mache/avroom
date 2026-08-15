@@ -14,6 +14,8 @@ import type {
   SessionSyncCheckResponse,
   UidCacheStatusResponse,
   UpdateObjectRequest,
+  BatchRequest,
+  BatchResponse,
 } from "../types/api";
 
 export const API_BASE_URL =
@@ -246,6 +248,17 @@ export async function setObjectOffset(
   });
 
   return handleJsonResponse<ObjectMetadataResponse>(response);
+}
+
+export async function runSessionBatch(uid: string, payload: BatchRequest): Promise<BatchResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/${uid}/batch`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ ...payload, verify: "auto" }),
+  });
+  return handleJsonResponse<BatchResponse>(response);
 }
 
 export async function duplicateObject(objectUuid: string): Promise<DuplicateObjectResponse> {

@@ -107,16 +107,19 @@ class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
 
         if prompt is None:
             prompt = self._prompt
+        negative_prompt = str(kwargs.get("negative_prompt", self._negative_prompt))
+        num_inference_steps = int(kwargs.get("num_inference_steps", 30))
+        guidance_scale = float(kwargs.get("guidance_scale", 10.0))
 
         logger.info(f"Running inference with prompt: '{prompt}'")
         pipe = _load_stable_diffusion_pipe(self._model_id, self._device)
         result = pipe(
             prompt=prompt,
-            negative_prompt=self._negative_prompt,
+            negative_prompt=negative_prompt,
             image=pil_image_resized,
             mask_image=pil_mask_resized,
-            num_inference_steps=30,
-            guidance_scale=10.0,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
             strength=strength,
         ).images[0]
 

@@ -52,6 +52,7 @@ def test_heavy_endpoints_are_sync_handlers() -> None:
         "delete_object",
         "generate_test_3d",
         "synthesize_novel_view",
+        "run_batch",
     }
     source_files = (
         _APP_ROOT / "api" / "routes.py",

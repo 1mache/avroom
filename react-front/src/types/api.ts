@@ -136,6 +136,38 @@ export interface ObjectListResponse {
   objects: ObjectInfo[];
 }
 
+export type BatchSource =
+  | { kind: "box"; x0: number; y0: number; x1: number; y1: number }
+  | { kind: "clicks"; points: { x: number; y: number }[] }
+  | { kind: "objects"; uuids: string[] };
+
+export interface BatchRequest {
+  source: BatchSource;
+  then?: Array<"inpaint" | "generate_3d">;
+  verify?: VerifyMode;
+}
+
+export interface BatchObjectResult {
+  object_id: number | null;
+  object_uuid: string | null;
+  status: string;
+  error: string | null;
+}
+
+export interface BatchGlbResult {
+  object_id: number;
+  ok: boolean;
+  error: string | null;
+}
+
+export interface BatchResponse {
+  batch_id: string;
+  image_id: string;
+  objects: BatchObjectResult[];
+  glbs: BatchGlbResult[];
+  last_changed: string;
+}
+
 export type AzimuthDirection = "CLOCKWISE" | "C_CLOCKWISE";
 export type ElevationDirection = "UP" | "DOWN";
 export type ZoomDirection = "ZOOM_IN" | "ZOOM_OUT";

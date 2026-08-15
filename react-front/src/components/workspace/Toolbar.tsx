@@ -2,6 +2,7 @@ import React from "react";
 
 import type { VerifyMode } from "../../types/api";
 import {
+  AreaIcon,
   BackIcon,
   CheckIcon,
   CopyIcon,
@@ -20,6 +21,9 @@ export interface ToolbarProps {
   /** Scissors is armed: the next click on the photo starts a cutout. */
   cutMode: boolean;
   onCut: () => void;
+  areaMode: boolean;
+  onArea: () => void;
+  batchBusy: boolean;
   /** CLIP vs picker for the next cutout. */
   verifyMode: VerifyMode;
   onVerifyModeChange: (mode: VerifyMode) => void;
@@ -50,6 +54,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   hasSelection,
   cutMode,
   onCut,
+  areaMode,
+  onArea,
+  batchBusy,
   verifyMode,
   onVerifyModeChange,
   rotateMode,
@@ -101,6 +108,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         onClick={onCut}
       >
         <ScissorsIcon />
+      </button>
+
+      <button
+        type="button"
+        className={`tool-btn${areaMode ? " is-armed" : ""}`}
+        data-tip={areaMode ? "Drag a box on the photo" : "Cut everything in a box"}
+        aria-label="Cut objects in area"
+        aria-pressed={areaMode}
+        disabled={batchBusy}
+        onClick={onArea}
+      >
+        <AreaIcon />
       </button>
 
       <div

@@ -11,7 +11,7 @@ Code: [`TestModules/src/ai_engines/inpainting/`](../../../../TestModules/src/ai_
 ## Detail pages
 
 - [components.md](components.md) — facade and strategies
-- [flow.md](flow.md) — LaMa → optional SD → blend
+- [flow.md](flow.md) — LaMa → optional SD → verify/retry → blend
 - [contracts.md](contracts.md) — image/mask IO
 - [operations.md](operations.md) — thresholds, SD defaults, debug PNGs
 

@@ -7,6 +7,16 @@ import cv2
 import numpy as np
 
 from ....utils.debug_image_saver import DebugImageSaver
+from ...inpainting_verification.crop import (
+    INPAINT_VERIFY_CROP_PAD_RATIO as _CROP_PAD_RATIO,
+)
+from ...inpainting_verification.inpaint_sd_params import InpaintSdParams
+from ...inpainting_verification.inpainting_verification_facade import (
+    InpaintingVerificationFacade,
+)
+from ...inpainting_verification.inpainting_verification_strategy import (
+    InpaintingVerificationStrategy,
+)
 from ..image_inpainting_strategy import ImageInpaintingStrategy
 from .lama_inpainting_strategy import LamaInpaintingStrategy
 from .stable_diffusion_inpainting_strategy import StableDiffusionInpaintingStrategy
@@ -21,26 +31,70 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
     content. Phase 2 (SD, optional): texture refinement at low ``strength``
     so reimagined edges blend with surroundings without inventing furniture.
 
-    Both phases are themselves :class:`ImageInpaintingStrategy` instances
-    injected at construction, so the composition is itself a Strategy
-    (callers can swap in different LaMa or SD variants without modifying
-    this class).
+    After each candidate (including LaMa-only when SD is skipped), an
+    :class:`InpaintingVerificationFacade` judges the result. Failures replay
+    SD with the returned JSON params up to ``INPAINT_VERIFY_MAX_RETRIES``.
     """
 
     SD_SKIP_THRESHOLD: float = 0.2
     SHARPEN_SIGMA: float = 0.8
     SHARPEN_AMOUNT: float = 0.6
+    INPAINT_VERIFY_MAX_RETRIES: int = 2
+    INPAINT_VERIFY_CROP_PAD_RATIO: float = _CROP_PAD_RATIO
 
     def __init__(
         self,
         primary: ImageInpaintingStrategy | None = None,
         refiner: ImageInpaintingStrategy | None = None,
+        verifier: InpaintingVerificationFacade | InpaintingVerificationStrategy | None = None,
     ) -> None:
         logger.info("Initializing Hybrid Inpainting Pipeline...")
         self._primary: ImageInpaintingStrategy = primary or LamaInpaintingStrategy()
         self._refiner: ImageInpaintingStrategy = refiner or StableDiffusionInpaintingStrategy()
+        self._verifier: InpaintingVerificationFacade = (
+            verifier
+            if isinstance(verifier, InpaintingVerificationFacade)
+            else InpaintingVerificationFacade(strategy=verifier)
+        )
         self._image_saver = DebugImageSaver()
         logger.info("Hybrid Pipeline initialized successfully.")
+
+    def _snapshot_params(self, kwargs: dict[str, Any], strength: float) -> InpaintSdParams:
+        refiner = self._refiner
+        prompt = str(
+            kwargs.get(
+                "prompt",
+                getattr(refiner, "_prompt", StableDiffusionInpaintingStrategy.DEFAULT_PROMPT),
+            )
+        )
+        negative = str(
+            kwargs.get(
+                "negative_prompt",
+                getattr(
+                    refiner,
+                    "_negative_prompt",
+                    StableDiffusionInpaintingStrategy.DEFAULT_NEGATIVE_PROMPT,
+                ),
+            )
+        )
+        return InpaintSdParams(
+            prompt=prompt,
+            negative_prompt=negative,
+            strength=strength,
+            num_inference_steps=int(kwargs.get("num_inference_steps", 30)),
+            guidance_scale=float(kwargs.get("guidance_scale", 10.0)),
+        )
+
+    def _run_sd(self, image: np.ndarray, mask: np.ndarray, params: InpaintSdParams) -> np.ndarray:
+        return self._refiner.inpaint(
+            image,
+            mask,
+            prompt=params.prompt,
+            strength=params.strength,
+            negative_prompt=params.negative_prompt,
+            num_inference_steps=params.num_inference_steps,
+            guidance_scale=params.guidance_scale,
+        )
 
     def inpaint(self, image: np.ndarray, mask: np.ndarray, **kwargs: Any) -> np.ndarray:
         if mask.ndim == 3:
@@ -60,18 +114,36 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
         self._image_saver.save("debug_lama_output", primary_result)
 
         logger.info("--- Hybrid Pipeline Phase 2: Texture refinement (SD) ---")
-        refiner_kwargs = kwargs.copy()
         dynamic_strength = float(kwargs.get("strength", 0.35))
-        refiner_kwargs["strength"] = dynamic_strength
-        logger.info(f"Using dynamic SD strength: {dynamic_strength}")
+        params = self._snapshot_params(kwargs, dynamic_strength)
 
-        # Skip the SD pass when strength is very low - it adds smear and
-        # can hallucinate objects without contributing meaningful detail.
         if dynamic_strength <= self.SD_SKIP_THRESHOLD:
-            final_result = primary_result.copy()
+            candidate = primary_result.copy()
             logger.info("Skipping SD (strength <= 0.2); using primary result only.")
         else:
-            final_result = self._refiner.inpaint(primary_result, mask, **refiner_kwargs)
+            candidate = self._run_sd(primary_result, mask, params)
+
+        retries_left = self.INPAINT_VERIFY_MAX_RETRIES
+        while True:
+            verdict = self._verifier.verify(candidate, mask, params)
+            logger.info(
+                "Inpaint verify ok=%s retries_left=%d",
+                verdict.ok,
+                retries_left,
+            )
+            if verdict.ok:
+                break
+            if retries_left <= 0:
+                logger.warning("Inpaint verify exhausted retries; keeping last candidate.")
+                break
+            retries_left -= 1
+            try:
+                params = InpaintSdParams.from_json(verdict.param_fixes_json)
+            except (KeyError, ValueError, TypeError):
+                logger.warning("Ignoring unverifiable param JSON; replaying last params.")
+            candidate = self._run_sd(primary_result, mask, params)
+
+        final_result = candidate
 
         # Re-align result/mask before any boolean indexing.
         if final_result.shape[:2] != image.shape[:2]:

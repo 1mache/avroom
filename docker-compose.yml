@@ -1,0 +1,42 @@
+# Local dev infra only — not a deployment artifact.
+#
+# Normal workflow: `docker compose up db` (or `up -d db`), then run the
+# FastAPI server and React dev server on the host exactly as documented in
+# CLAUDE.md / run.ps1. The `api` service below is included for parity with
+# the eventual container image (see fastApi-app/Dockerfile once it exists)
+# but is not required for local development.
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: avroom
+      POSTGRES_PASSWORD: avroom
+      POSTGRES_DB: avroom
+    ports:
+      - "5432:5432"
+    volumes:
+      - avroom-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U avroom"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: fastApi-app/Dockerfile
+    profiles: ["full"]
+    env_file:
+      - fastApi-app/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://avroom:avroom@db:5432/avroom
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  avroom-db:

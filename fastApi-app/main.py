@@ -14,7 +14,7 @@ from api.debug_vision import router as debug_vision_router
 from core.inference_pool.client import init_inference_client, shutdown_inference_client
 from core.inference_pool.pool import InferencePool
 from logging_config import setup_logging
-from settings import get_inference_worker_count
+from settings import get_cors_allow_origins, get_inference_worker_count
 
 # Load fastApi-app/.env (gitignored) into os.environ before anything else runs,
 # so HF_TOKEN is available when the 3D reconstruction strategies are lazily
@@ -52,7 +52,9 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    # Env-driven via CORS_ALLOW_ORIGINS (comma-separated); defaults to the two
+    # local Vite dev origins so no env var is needed to run locally.
+    allow_origins=get_cors_allow_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

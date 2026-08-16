@@ -64,25 +64,63 @@ def get_image_storage_dir() -> Path:
     """Resolve the directory used to persist uploaded images on disk.
 
     The directory is determined as follows:
-    - If `IMAGE_STORAGE_DIR` is set here and path exists, that path is used.
+    - If the `IMAGE_STORAGE_DIR` env var is set, that path is used (created if
+      it doesn't exist yet — unlike the old behavior, a not-yet-existing
+      configured path is no longer silently ignored).
     - Otherwise, a local `tmp/images/` directory in project root is used.
+
+    Only meaningful when :func:`get_storage_backend` is ``"local"``; under the
+    ``"s3"`` backend this still backs :func:`get_scratch_dir`'s sibling
+    sidecar-free layout for any local-only callers, but blob storage itself
+    goes through ``core/storage``.
     """
 
     project_root = _project_root()
-    configured_dir = IMAGE_STORAGE_DIR.strip()
+    configured_dir = os.environ.get("IMAGE_STORAGE_DIR", IMAGE_STORAGE_DIR).strip()
     if configured_dir:
         configured_path = Path(configured_dir).expanduser()
         if not configured_path.is_absolute():
             configured_path = project_root / configured_path
-        if configured_path.exists():
-            return configured_path
+        return configured_path
 
     return project_root / DEFAULT_IMAGE_STORAGE_SUBDIR
 
 
 def get_3d_storage_dir() -> Path:
-    """Resolve the directory used to persist generated GLB models on disk."""
+    """Resolve the directory used to persist generated GLB models on disk.
+
+    Overridable via the `THREED_STORAGE_DIR` env var (relative paths are
+    resolved against the project root), mirroring :func:`get_image_storage_dir`.
+    """
+    configured_dir = os.environ.get("THREED_STORAGE_DIR", "").strip()
+    if configured_dir:
+        configured_path = Path(configured_dir).expanduser()
+        if not configured_path.is_absolute():
+            configured_path = _project_root() / configured_path
+        return configured_path
+
     return _project_root() / DEFAULT_3D_STORAGE_SUBDIR
+
+
+def get_scratch_dir() -> Path:
+    """Resolve the directory for ephemeral, node-local caches.
+
+    Mask candidates, the depth-map cache, and the camera-calibration cache are
+    all recomputable and hot; they always live on local disk here regardless
+    of `STORAGE_BACKEND`, so the API process and its inference workers must
+    share one host (see docs/backend/concurrency.md). Overridable via
+    `SCRATCH_DIR`; defaults to the same directory as
+    :func:`get_image_storage_dir` so existing local-mode behavior is
+    unchanged.
+    """
+    configured_dir = os.environ.get("SCRATCH_DIR", "").strip()
+    if configured_dir:
+        configured_path = Path(configured_dir).expanduser()
+        if not configured_path.is_absolute():
+            configured_path = _project_root() / configured_path
+        return configured_path
+
+    return get_image_storage_dir()
 
 
 def get_sessions_file() -> Path:
@@ -339,4 +377,103 @@ def get_upload_allowed_mime_types() -> frozenset[str]:
     )
     values = {part.strip() for part in raw.split(",") if part.strip()}
     return frozenset(values or {"image/jpeg", "image/png", "image/webp"})
+
+
+# --- AWS deployment prep: storage backend, database, auth, CORS -----------
+#
+# Everything below stays behind an env-driven switch so the app runs exactly
+# as before with no env vars set. See docs/deployment/aws-runbook.md.
+
+
+def get_storage_backend() -> str:
+    """Return which `core.storage.ObjectStore` backs durable blobs.
+
+    ``"local"`` (default) keeps writing under :func:`get_image_storage_dir` /
+    :func:`get_3d_storage_dir`, unchanged from today. ``"s3"`` routes the same
+    keys through an S3 bucket instead. Any other value falls back to
+    ``"local"`` rather than failing startup.
+    """
+    raw = os.environ.get("STORAGE_BACKEND", "local").strip().lower()
+    return raw if raw in {"local", "s3"} else "local"
+
+
+def get_s3_bucket() -> str:
+    """Return the S3 bucket name for durable blobs (`STORAGE_BACKEND=s3` only)."""
+    return os.environ.get("S3_BUCKET", "").strip()
+
+
+def get_s3_prefix() -> str:
+    """Return the key prefix under which all blobs are stored in the bucket."""
+    return os.environ.get("S3_PREFIX", "avroom").strip().strip("/")
+
+
+def get_s3_region() -> str:
+    """Return the AWS region for the S3 client (boto3 falls back to its own
+    default resolution — env/credentials file/instance profile — if empty)."""
+    return os.environ.get("S3_REGION", "").strip()
+
+
+def get_auth_mode() -> str:
+    """Return the auth mode: ``"single_user"`` (default, local dev) or ``"jwt"``.
+
+    In ``single_user`` mode every request is treated as one fixed,
+    auto-provisioned local user — no login, no token, identical UX to today.
+    In ``jwt`` mode requests must carry a valid ``Authorization: Bearer``
+    token. Any other value falls back to ``"single_user"``, so a typo'd env
+    var degrades to local-dev behavior rather than an unrecognized mode.
+    """
+    raw = os.environ.get("AUTH_MODE", "single_user").strip().lower()
+    return raw if raw in {"single_user", "jwt"} else "single_user"
+
+
+def get_database_url() -> str:
+    """Return the SQLAlchemy database URL.
+
+    Defaults to the docker-compose Postgres service so `docker compose up db`
+    plus an unmodified `.env` is enough to run locally with real persistence.
+    """
+    return os.environ.get(
+        "DATABASE_URL",
+        "postgresql+psycopg://avroom:avroom@localhost:5432/avroom",
+    ).strip()
+
+
+def get_jwt_secret() -> str:
+    """Return the JWT signing secret.
+
+    No safe default exists for this one: an empty/default secret would let
+    anyone forge tokens. Callers in `jwt` auth mode must fail loudly if this
+    is unset, rather than silently signing with a well-known string.
+    """
+    return os.environ.get("JWT_SECRET", "").strip()
+
+
+def get_jwt_expire_minutes() -> int:
+    """Return how long an issued JWT stays valid, in minutes."""
+    return max(1, _env_int("JWT_EXPIRE_MINUTES", 60 * 24 * 7))
+
+
+def get_cors_allow_origins() -> list[str]:
+    """Return the list of origins the API accepts CORS requests from.
+
+    Comma-separated via `CORS_ALLOW_ORIGINS`; defaults to the two local Vite
+    dev origins so local dev needs no env var, matching today's hardcoded
+    `main.py` list.
+    """
+    raw = os.environ.get(
+        "CORS_ALLOW_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    )
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+def get_debug_image_save() -> bool:
+    """Return whether the AI pipeline's per-stage debug image dumps are written.
+
+    `TestModules`' `DebugImageSaver` writes dozens of PNGs per `/segment` call
+    to a fixed local directory (`TestModules/outputs/`) that nothing ever
+    reads back. Default on (matches today's behavior everywhere); set to
+    `false` in containers, where that directory is pure waste.
+    """
+    return _env_bool("DEBUG_IMAGE_SAVE", True)
 

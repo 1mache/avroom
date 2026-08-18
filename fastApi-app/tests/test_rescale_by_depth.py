@@ -51,8 +51,9 @@ if str(_APP_ROOT) not in sys.path:
 import settings  # noqa: E402
 from core.depth_cache import get_or_compute_depth, sample_depth_at_point  # noqa: E402
 from core.image_processing import load_canvas_bytes  # noqa: E402
-from core.object_metadata import ObjectMetadata, load_object_metadata  # noqa: E402
+from core.object_metadata import ObjectMetadata, list_object_ids, load_object_metadata  # noqa: E402
 from core.object_storage import resolve_object_cutout_path  # noqa: E402
+from core.repositories.session_repo import load_session_uids  # noqa: E402
 
 logger = logging.getLogger("RescaleByDepthTest")
 
@@ -142,32 +143,25 @@ class Checklist:
 
 
 def discover_saved_objects(storage_dir: Path) -> list[SavedObject]:
-    """Return every object on disk that has both metadata and a cutout PNG.
+    """Return every object in Postgres that also has a cutout PNG on disk.
 
-    Objects are read from ``{session}_{object_id}_meta.json`` files rather than
-    the global UUID index so that orphaned index entries (session deleted, JSON
-    left behind) never produce an unusable choice.
+    Metadata now lives in the `objects` table, not `*_meta.json` sidecars —
+    this queries the *real* local Postgres (whatever `DATABASE_URL` resolves
+    to), independent of which directory `storage_dir` points at.
     """
-    if not storage_dir.is_dir():
-        logger.error(f"Image storage directory does not exist: {storage_dir}")
-        return []
-
     found: list[SavedObject] = []
-    for meta_path in sorted(storage_dir.glob("*_meta.json")):
-        try:
-            metadata = ObjectMetadata.model_validate_json(meta_path.read_text(encoding="utf-8"))
-        except ValueError:
-            logger.warning(f"Skipping malformed metadata file: {meta_path.name}")
-            continue
-
-        cutout_path = resolve_object_cutout_path(
-            storage_dir, metadata.session_id, metadata.object_id
-        )
-        if not cutout_path.exists():
-            logger.warning(f"Skipping {meta_path.name}: cutout missing at {cutout_path.name}")
-            continue
-
-        found.append(SavedObject(metadata=metadata, cutout_path=cutout_path))
+    for session_id in load_session_uids():
+        for object_id in list_object_ids(session_id):
+            metadata = load_object_metadata(session_id, object_id)
+            if metadata is None:
+                continue
+            cutout_path = resolve_object_cutout_path(storage_dir, session_id, object_id)
+            if not cutout_path.exists():
+                logger.warning(
+                    f"Skipping {session_id}#{object_id}: cutout missing at {cutout_path.name}"
+                )
+                continue
+            found.append(SavedObject(metadata=metadata, cutout_path=cutout_path))
 
     return found
 
@@ -206,12 +200,17 @@ def choose_object(
 
 
 def build_sandbox(storage_dir: Path, session_id: str) -> tuple[Path, Path]:
-    """Copy one session's artifacts into a temp workspace and return its paths.
+    """Copy one session's blob files into a temp workspace and return its paths.
 
-    The rescale endpoint overwrites the cutout PNG and rewrites metadata in
-    place, so the harness redirects all storage at a copy.  Layout mirrors the
-    real one because ``object_index.json`` is resolved as a *sibling* of the
-    image directory.
+    The rescale endpoint overwrites the cutout PNG in place, so the harness
+    redirects file storage at a copy — the cutout, GLB, and novel-view
+    caches are never touched on the real disk. Metadata (`average_depth`,
+    etc.) now lives in Postgres, not on disk, so it is *not* sandboxed: the
+    rescale call updates the real local `objects` row for this object, same
+    as it would from the live app. That only matters if you rescale the same
+    saved object twice in a row (the second run starts from the first run's
+    updated depth) — pass ``--keep`` and inspect ``summary.json`` if that
+    matters for what you're debugging.
 
     Returns:
         Tuple of ``(sandbox_root, sandbox_images_dir)``.
@@ -226,21 +225,17 @@ def build_sandbox(storage_dir: Path, session_id: str) -> tuple[Path, Path]:
             shutil.copy2(entry, images_dir / entry.name)
             copied += 1
 
-    for sidecar in ("object_index.json", "sessions.json", "names.json"):
-        source = storage_dir.parent / sidecar
-        if source.exists():
-            shutil.copy2(source, sandbox_root / sidecar)
-
     logger.info(f"Sandbox ready at {sandbox_root} ({copied} session files copied)")
     return sandbox_root, images_dir
 
 
 def activate_sandbox(images_dir: Path) -> None:
-    """Point every storage lookup at the sandbox for the rest of the process.
+    """Point file storage at the sandbox for the rest of the process.
 
     ``settings.get_image_storage_dir`` reads the module-level
-    ``IMAGE_STORAGE_DIR`` on each call, so assigning it here reroutes the router,
-    the metadata index, and the depth cache in one step.
+    ``IMAGE_STORAGE_DIR`` on each call, so assigning it here reroutes the
+    router and the depth cache. Metadata queries still hit the real local
+    Postgres regardless — see :func:`build_sandbox`.
     """
     settings.IMAGE_STORAGE_DIR = str(images_dir)
     resolved = settings.get_image_storage_dir()
@@ -462,11 +457,9 @@ def verify_persistence(
         f"path={cutout_path.name} bytes={len(after_bytes)}",
     )
 
-    reloaded = load_object_metadata(
-        images_dir, chosen.metadata.session_id, chosen.metadata.object_id
-    )
+    reloaded = load_object_metadata(chosen.metadata.session_id, chosen.metadata.object_id)
     if reloaded is None:
-        checks.record("metadata reloadable after rescale", False, "metadata file missing")
+        checks.record("metadata reloadable after rescale", False, "metadata row missing")
         return
 
     target = float(payload["target_depth"])

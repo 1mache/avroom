@@ -16,6 +16,7 @@ if str(_APP_ROOT) not in sys.path:
     sys.path.insert(0, str(_APP_ROOT))
 
 import settings  # noqa: E402
+from core.repositories import session_repo  # noqa: E402
 from core.object_metadata import (  # noqa: E402
     create_object_metadata,
     get_object_by_uuid,
@@ -55,7 +56,7 @@ def _seed_object(images_dir: Path, *, uid: str = "sess-1", object_id: int = 0) -
         source_elevation_deg=15.0,
         name="Chair",
     )
-    save_object_metadata(images_dir, meta)
+    save_object_metadata(meta)
     return meta.uuid
 
 
@@ -84,7 +85,7 @@ def test_offset_only_update_leaves_name_untouched(storage_sandbox: Path) -> None
     assert body["offset_y"] == -4.0
     assert body["name"] == "Chair"
 
-    metadata = get_object_by_uuid(storage_sandbox, object_uuid)
+    metadata = get_object_by_uuid(object_uuid)
     assert metadata is not None
     assert metadata.name == "Chair"
     assert metadata.offset_x == 12.5
@@ -139,8 +140,8 @@ def test_missing_uuid_returns_404(storage_sandbox: Path) -> None:
 
 
 def test_update_bumps_last_changed(storage_sandbox: Path) -> None:
-    settings.register_uid("sess-1")
-    before = settings.touch_session("sess-1")
+    session_repo.register_uid("sess-1")
+    before = session_repo.touch_session("sess-1")
     object_uuid = _seed_object(storage_sandbox)
 
     with _build_client() as client:
@@ -149,6 +150,6 @@ def test_update_bumps_last_changed(storage_sandbox: Path) -> None:
         )
 
     assert response.status_code == 200
-    after = settings.get_session_last_changed("sess-1")
+    after = session_repo.get_session_last_changed("sess-1")
     assert after is not None
     assert after >= before

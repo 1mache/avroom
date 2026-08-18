@@ -14,7 +14,10 @@ services:
       POSTGRES_PASSWORD: avroom
       POSTGRES_DB: avroom
     ports:
-      - "5432:5432"
+      # Host port 5433, not 5432 -- a native Postgres install may already own
+      # 5432 on the host (Windows in particular). Container-internal port
+      # stays 5432, so the `api` service's DATABASE_URL below is unaffected.
+      - "5433:5432"
     volumes:
       - avroom-db:/var/lib/postgresql/data
     healthcheck:

@@ -40,12 +40,13 @@ from core.object_metadata import (
     ObjectMetadata,
     build_clone_metadata,
     get_object_by_uuid,
+    list_object_ids,
     load_object_metadata,
+    next_object_id,
     remove_object_index_entry,
     save_object_metadata,
     set_object_name,
     set_object_offset,
-    delete_session_metadata,
 )
 from schemas.image import (
     ClickRequest,
@@ -77,8 +78,6 @@ from core.object_storage import (
     delete_object_artifact_files,
     legacy_object_cutout_path,
     legacy_object_glb_path,
-    list_object_ids,
-    next_object_id,
     object_cutout_path,
     object_glb_path,
     remove_file,
@@ -87,23 +86,22 @@ from core.object_storage import (
     session_preview_path,
 )
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
-from settings import (
-    clear_session_last_changed,
-    deregister_uid,
-    get_3d_storage_dir,
-    get_image_storage_dir,
-    get_session_last_changed,
+from core.repositories.session_repo import (
+    SessionNotFoundError,
+    delete_session as delete_session_row,
     evaluate_session_sync,
     is_session_registered,
+    list_sessions_with_names,
     load_names,
-    load_session_uids,
     register_uid,
-    remove_session_name,
-    get_upload_validation_enabled,
-    get_camera_calibration_enabled,
-    SessionNotFoundError,
     set_session_name,
     touch_session,
+)
+from settings import (
+    get_3d_storage_dir,
+    get_image_storage_dir,
+    get_upload_validation_enabled,
+    get_camera_calibration_enabled,
 )
 
 router = APIRouter(prefix="/images", tags=["images"])
@@ -114,11 +112,9 @@ logger = logging.getLogger(__name__)
 async def get_sessions() -> list[SessionInfo]:
     """Return all image UIDs registered via upload, with optional human-readable names."""
     logger.info("Sessions list requested")
-    uids = load_session_uids()
-    names = load_names()
     result = [
-        SessionInfo(uid=u, name=names.get(u), last_changed=get_session_last_changed(u))
-        for u in uids
+        SessionInfo(uid=uid, name=name, last_changed=last_changed)
+        for uid, name, last_changed in list_sessions_with_names()
     ]
     logger.info("Sessions list returned: count=%d", len(result))
     return result
@@ -394,7 +390,7 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
             raise HTTPException(status_code=500, detail=f"Inpainting failed: {exc}") from exc
 
         # Allocate next sequential object id for this session.
-        object_id = next_object_id(storage_dir, request.image_id)
+        object_id = next_object_id(request.image_id)
 
         object_metadata = build_object_metadata_for_inpaint(
             image_id=request.image_id,
@@ -402,7 +398,7 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
             object_id=object_id,
             base_dir=storage_dir,
         )
-        save_object_metadata(storage_dir, object_metadata)
+        save_object_metadata(object_metadata)
 
         # Background always written to the single cumulative canvas path (overwrites → becomes new canvas).
         background_image_path = current_background_path(storage_dir, request.image_id)
@@ -450,20 +446,20 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
 async def delete_session(uid: str) -> Response:
     """Delete a session and all its associated files from disk.
 
-    Removes the uid from sessions.json, removes its name from names.json if
-    present, and deletes every file associated with that uid: the original
-    uploaded image, processed background and cutout PNGs, candidate mask
-    files, debug overlay, and any cached 3D model.  Missing files are
-    silently ignored so the endpoint is safe to call more than once.
+    Deletes the session's DB row (cascading to every object row under it) and
+    every file associated with that uid: the original uploaded image,
+    processed background and cutout PNGs, candidate mask files, debug
+    overlay, and any cached 3D model. Missing files are silently ignored so
+    the endpoint is safe to call more than once.
     """
     logger.info("Session delete requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
     removed = 0
 
     try:
-        deregister_uid(uid)
-        remove_session_name(uid)
-        clear_session_last_changed(uid)
+        # Snapshot object ids before the DB delete cascades them away.
+        obj_ids = list_object_ids(uid)
+        delete_session_row(uid)
 
         for path in storage_dir.glob(f"{uid}.*"):
             path.unlink(missing_ok=True)
@@ -482,15 +478,12 @@ async def delete_session(uid: str) -> Response:
 
         delete_candidates(storage_dir, uid)
 
-        # Collect per-object ids before deleting files (list_object_ids scans disk).
-        obj_ids = list_object_ids(storage_dir, uid)
-
-        # Remove all numbered per-object cutouts and GLB files.
+        # Remove all numbered per-object cutouts and GLB files (metadata rows
+        # already gone via the session-delete cascade above).
         for oid in obj_ids:
             removed += remove_file(object_cutout_path(storage_dir, uid, oid))
             removed += remove_file(object_glb_path(three_d_dir, uid, oid))
 
-        delete_session_metadata(storage_dir, uid, obj_ids)
         removed += delete_session_depth_maps(storage_dir, uid)
         removed += delete_session_camera_calib(storage_dir, uid)
 
@@ -594,7 +587,7 @@ async def get_object_by_uuid_endpoint(object_uuid: str) -> ObjectMetadataRespons
     """Return metadata for one object searchable by its UUID."""
     logger.info("Object metadata requested: uuid=%s", object_uuid)
     storage_dir = get_image_storage_dir()
-    metadata = get_object_by_uuid(storage_dir, object_uuid)
+    metadata = get_object_by_uuid(object_uuid)
     if metadata is None:
         logger.warning("Object metadata not found: uuid=%s", object_uuid)
         raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
@@ -625,18 +618,18 @@ async def update_object(object_uuid: str, request: UpdateObjectRequest) -> Objec
     )
     storage_dir = get_image_storage_dir()
 
-    metadata = get_object_by_uuid(storage_dir, object_uuid)
+    metadata = get_object_by_uuid(object_uuid)
     if metadata is None:
         logger.warning("Object update failed — not found: uuid=%s", object_uuid)
         raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
 
     fields = request.model_fields_set
     if "name" in fields:
-        metadata = set_object_name(storage_dir, object_uuid, request.name)
+        metadata = set_object_name(object_uuid, request.name)
     if "offset_x" in fields or "offset_y" in fields:
         next_offset_x = request.offset_x if request.offset_x is not None else metadata.offset_x
         next_offset_y = request.offset_y if request.offset_y is not None else metadata.offset_y
-        metadata = set_object_offset(storage_dir, object_uuid, next_offset_x, next_offset_y)
+        metadata = set_object_offset(object_uuid, next_offset_x, next_offset_y)
 
     touch_session(metadata.session_id)
     response = _metadata_to_response(metadata, storage_dir, get_3d_storage_dir())
@@ -657,7 +650,7 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
     storage_dir = get_image_storage_dir()
     three_d_dir = get_3d_storage_dir()
 
-    source = get_object_by_uuid(storage_dir, object_uuid)
+    source = get_object_by_uuid(object_uuid)
     if source is None:
         logger.warning("Object duplicate failed — not found: uuid=%s", object_uuid)
         raise HTTPException(
@@ -716,8 +709,8 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
         try:
-            new_object_id = next_object_id(storage_dir, source.session_id)
-            clone_metadata = build_clone_metadata(storage_dir, source, new_object_id, source_bounds)
+            new_object_id = next_object_id(source.session_id)
+            clone_metadata = build_clone_metadata(source, new_object_id, source_bounds)
             copy_object_artifacts(
                 base_dir=storage_dir,
                 glb_dir=three_d_dir,
@@ -725,7 +718,7 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
                 source_object_id=source.object_id,
                 dest_object_id=new_object_id,
             )
-            save_object_metadata(storage_dir, clone_metadata)
+            save_object_metadata(clone_metadata)
             touch_session(source.session_id)
         finally:
             release_canvas_writer(source.session_id)
@@ -758,8 +751,8 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
 def delete_object(object_uuid: str) -> Response:
     """Permanently delete one object and all its per-object artifacts.
 
-    Removes the cutout, any GLB, all novel-view / preview caches, the
-    metadata JSON, and the UUID index entry. Session-level artifacts —
+    Removes the cutout, any GLB, all novel-view / preview caches, and the
+    metadata row. Session-level artifacts —
     background canvas, depth cache, camera calibration, the original upload,
     and the dashboard preview thumbnail — are shared with surviving objects
     and are never touched here. In particular the background canvas already
@@ -773,7 +766,7 @@ def delete_object(object_uuid: str) -> Response:
     storage_dir = get_image_storage_dir()
     three_d_dir = get_3d_storage_dir()
 
-    target = get_object_by_uuid(storage_dir, object_uuid)
+    target = get_object_by_uuid(object_uuid)
     if target is None:
         logger.warning("Object delete failed — not found: uuid=%s", object_uuid)
         raise HTTPException(
@@ -797,7 +790,6 @@ def delete_object(object_uuid: str) -> Response:
                 glb_dir=three_d_dir,
                 uid=target.session_id,
                 object_id=target.object_id,
-                include_metadata=True,
             )
             if target.object_id == 0:
                 removed += delete_legacy_object_artifacts(
@@ -883,9 +875,9 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
     """
     logger.info("Objects list requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
-    # TODO: validate uid against sessions.json and return 404 for unknown sessions.
+    # TODO: validate uid against the sessions table and return 404 for unknown sessions.
     # Currently returns 200 + empty list for unknown UIDs, consistent with /{uid}/cache.
-    obj_ids = list_object_ids(storage_dir, uid)
+    obj_ids = list_object_ids(uid)
     three_d_dir = get_3d_storage_dir()
 
     # TODO: this loop performs blocking I/O per object synchronously on the async event loop.
@@ -909,7 +901,7 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
             has_3d = resolve_object_glb_path(three_d_dir, uid, oid).exists()
             # Metadata is absent for objects created before it was introduced;
             # those fall back to nulls plus an unmoved (0, 0) offset.
-            meta = load_object_metadata(storage_dir, uid, oid)
+            meta = load_object_metadata(uid, oid)
             objects_list.append(
                 ObjectInfo(
                     object_id=oid,
@@ -944,7 +936,7 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     """Return which processed artifacts are cached on disk for the given UID."""
     logger.info("Cache status requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
-    obj_ids = list_object_ids(storage_dir, uid)
+    obj_ids = list_object_ids(uid)
 
     # Derive cutout bounds from the latest (highest-id) object.
     latest_object_id = max(obj_ids) if obj_ids else None
@@ -1005,7 +997,7 @@ async def get_cutout(uid: str) -> FileResponse:
     """
     logger.info("Cutout requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
-    obj_ids = list_object_ids(storage_dir, uid)
+    obj_ids = list_object_ids(uid)
     if not obj_ids:
         logger.warning("Cutout not found: uid=%s (no object ids)", uid)
         raise HTTPException(status_code=404, detail="Cutout not found")

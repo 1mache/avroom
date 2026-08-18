@@ -10,7 +10,8 @@ from pydantic import BaseModel, Field
 
 from core.inference_pool.client import get_inference_client
 from core.object_storage import object_glb_path, resolve_object_cutout_path, resolve_object_glb_path
-from settings import get_3d_storage_dir, get_image_storage_dir, touch_session
+from core.repositories.session_repo import touch_session
+from settings import get_3d_storage_dir, get_image_storage_dir
 
 router = APIRouter(prefix="/3d", tags=["3d"])
 logger = logging.getLogger(__name__)

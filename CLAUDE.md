@@ -22,9 +22,13 @@ avroom/
 ├── fastApi-app/          # FastAPI microservice (the IPE - Image Processing Engine)
 │   ├── api/routes.py     # upload, segment, inpaint, legacy click endpoints
 │   ├── core/             # image_processing.py - bridges API to ObjectRemover
+│   │   ├── repositories/ # session_repo.py - Postgres-backed session registry
+│   │   └── auth/         # single_user.py - fixed local dev user (AUTH_MODE=single_user)
+│   ├── db/                # SQLAlchemy models (users/sessions/objects) + engine/session
+│   ├── alembic/           # Postgres schema migrations (`alembic upgrade head`)
 │   ├── schemas/          # Pydantic request/response models
-│   ├── settings.py       # Image storage dir config
-│   └── tmp               # Runtime temp object storage (gitignored)
+│   ├── settings.py       # Storage dirs, DATABASE_URL, auth mode, CORS, etc.
+│   └── tmp               # Runtime blob storage — cutouts/GLBs/caches (gitignored; metadata is in Postgres, not here)
 └── react-front/          # React/TypeScript frontend (MVP state)
     └── src/
         ├── api/images.ts  # uploadImage(), segmentImage(), inpaintMask() fetch calls
@@ -40,8 +44,12 @@ avroom/
 # Install all Python deps (includes editable TestModules install)
 pip install -r requirements.txt
 
-# Run FastAPI server (from fastApi-app/)
+# Start local Postgres (session/object metadata) — required before the app or its tests will run
+docker compose up -d db          # from repo root; host port 5433, not 5432 (see Session & Object Metadata below)
 cd fastApi-app
+alembic upgrade head             # create/update schema
+
+# Run FastAPI server (from fastApi-app/)
 uvicorn main:app --reload
 # Runs on http://127.0.0.1:8000
 
@@ -97,6 +105,20 @@ Reuse these instead of re-implementing them per module:
 - `core/object_storage.py` — all `{uid}_{object_id}_…` path construction, plus `legacy_object_cutout_path` / `legacy_object_glb_path` for pre-numbering names and `remove_file(path) -> int` for "delete if present, count it" loops.
 - `core/depth_cache.py` — `memory_image_key(bytes)` builds the `memory://<sha256>` key the AI pipeline caches model state under.
 - `settings.py` — `_read_json` / `_write_json` / `load_session_uids` back every JSON sidecar (sessions, names, timestamps); `_env_int` / `_env_float` / `_env_bool` back every env-var getter.
+
+## Session & Object Metadata (Postgres)
+
+Session and object metadata (previously four JSON sidecars — `sessions.json`, `names.json`, `session_timestamps.json`, `object_index.json` — plus one `{uid}_{id}_meta.json` per object) now lives in Postgres. Blob artifacts (cutout PNGs, GLBs, novel-view caches) are unaffected and still live on local disk under `core/object_storage.py`'s path helpers — only *metadata* moved.
+
+- **`db/models.py`** — `User`, `SessionRow` (table `sessions`, the `uid` used everywhere else), `ObjectRow` (table `objects`). `db/session.py` exposes `get_engine()` (per-process lazy singleton) and `session_scope()`.
+- **`core/repositories/session_repo.py`** — replaces the old sidecar functions 1:1 by name (`register_uid`, `touch_session`, `set_session_name`, `evaluate_session_sync`, `SessionNotFoundError`, `delete_session`, …), now DB-backed.
+- **`core/object_metadata.py`** — same public functions as before (`save_object_metadata`, `get_object_by_uuid`, `list_object_ids`, `build_clone_metadata`, …) but each opens its own short DB session instead of reading/writing a JSON file; `base_dir`/`storage_dir` parameters were dropped since metadata no longer lives under the image storage dir. `list_object_ids` / `next_object_id` moved here from `core/object_storage.py` (they used to scan the filesystem; now they query the `objects` table — the real fix for a `next_object_id` dir-scan race described below).
+- **Local dev user**: `AUTH_MODE=single_user` (the default — see `settings.get_auth_mode()`) auto-provisions one fixed user (`local@avroom.dev`, `core/auth/single_user.py::LOCAL_USER_ID`) that every session is attached to. No login, no token, identical UX to before. `AUTH_MODE=jwt` (real per-user auth, ownership checks on every route) is not implemented yet — the schema already supports it (`sessions.user_id` FK), only route-level "who is asking" resolution is still hardcoded to the local user.
+- **Local Postgres runs via `docker-compose.yml`** (repo root): `docker compose up -d db`. Host port is **5433**, not 5432 — a native Postgres install may already own 5432 on the host (this bit us during development on Windows). `DATABASE_URL` defaults to `postgresql+psycopg://avroom:avroom@localhost:5433/avroom` accordingly (`settings.get_database_url()`).
+- **Schema is managed by Alembic**, not `Base.metadata.create_all()` in application code — run `alembic upgrade head` from `fastApi-app/` after `docker compose up -d db` (both locally and once hosted against RDS) before starting the app. `alembic/env.py` resolves its target DB from `settings.get_database_url()`, the same URL the app itself uses, so there is exactly one place that decides which database this points at. `fastApi-app/tests/conftest.py`'s `_clean_database` fixture is the one exception: it calls `Base.metadata.create_all()` directly and truncates every table before each test, since tests want a schema-matches-models guarantee and per-test isolation, not migration history.
+- `save_object_metadata` auto-provisions its session row (owned by the local user) if the session hasn't been registered yet, matching the old sidecars' decoupled behavior where object metadata and session registration were independent files.
+
+Three races the old filesystem/JSON approach had are now closed: `next_object_id` (used to be a dir-scan max, now a DB query — still relies on the existing canvas-writer lock to serialize concurrent inpaint/duplicate per session on a single instance, see `docs/backend/concurrency.md`, rather than a row lock); `count_clones_of_root` (used to be an O(n) per-file JSON read, now `COUNT(*)`); `PATCH /images/objects/{uuid}` (still a read-then-write, but against one row under the object's own uuid rather than a shared JSON file).
 
 ## Python Code Style
 
@@ -210,7 +232,7 @@ The backend (`docs/backend/concurrency.md`) allows a second non-overlapping inpa
 
 Per the spec, the following are planned but absent from the codebase:
 - Java SpringBoot core server (auth, project management, DB)
-- PostgreSQL + S3 storage
+- S3 blob storage (Postgres metadata is implemented — see "Session & Object Metadata (Postgres)" above; blobs are still local disk only)
 - Collaboration (Spectator/Partner/CoAdmin roles, Operational Transformation)
 - Drag-and-drop / Smart Paste
 - Depth adjustment

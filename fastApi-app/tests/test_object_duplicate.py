@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 import time
@@ -19,14 +18,15 @@ if str(_APP_ROOT) not in sys.path:
     sys.path.insert(0, str(_APP_ROOT))
 
 import settings  # noqa: E402
+from core.repositories import session_repo  # noqa: E402
 from core.object_metadata import (  # noqa: E402
     create_object_metadata,
     format_clone_name,
     get_object_by_uuid,
+    list_object_ids,
     save_object_metadata,
 )
 from core.object_storage import (  # noqa: E402
-    list_object_ids,
     list_object_novel_view_paths,
     object_cutout_path,
     object_glb_path,
@@ -95,7 +95,7 @@ def _seed_object(
         source_elevation_deg=18.0,
         name=name,
     )
-    save_object_metadata(images_dir, meta)
+    save_object_metadata(meta)
     assert cutout_bytes
     return meta.uuid
 
@@ -120,8 +120,8 @@ def test_format_clone_name() -> None:
 def test_duplicate_copies_all_artifacts_and_returns_new_uuid(
     storage_sandbox: Path, glb_dir: Path
 ) -> None:
-    settings.register_uid("sess-1")
-    before = settings.touch_session("sess-1")
+    session_repo.register_uid("sess-1")
+    before = session_repo.touch_session("sess-1")
     source_uuid = _seed_object(storage_sandbox, glb_dir)
 
     with _build_client() as client:
@@ -132,7 +132,7 @@ def test_duplicate_copies_all_artifacts_and_returns_new_uuid(
     clone_uuid = body["object_uuid"]
     assert clone_uuid != source_uuid
 
-    clone = get_object_by_uuid(storage_sandbox, clone_uuid)
+    clone = get_object_by_uuid(clone_uuid)
     assert clone is not None
     assert clone.object_id == 1
     assert clone.name == "Chair-copy"
@@ -157,7 +157,7 @@ def test_duplicate_copies_all_artifacts_and_returns_new_uuid(
         == b"preview-bytes"
     )
 
-    after = settings.get_session_last_changed("sess-1")
+    after = session_repo.get_session_last_changed("sess-1")
     assert after is not None
     assert after >= before
 
@@ -172,7 +172,7 @@ def test_duplicate_without_optional_artifacts(storage_sandbox: Path, glb_dir: Pa
 
     assert response.status_code == 200
     clone_uuid = response.json()["object_uuid"]
-    clone = get_object_by_uuid(storage_sandbox, clone_uuid)
+    clone = get_object_by_uuid(clone_uuid)
     assert clone is not None
     assert object_cutout_path(storage_sandbox, "sess-1", 1).exists()
     assert not object_glb_path(glb_dir, "sess-1", 1).exists()
@@ -206,10 +206,10 @@ def test_copy_naming_sequence_and_unnamed_fallback(
     assert third_from_clone.status_code == 200
     assert unnamed_copy.status_code == 200
 
-    first_meta = get_object_by_uuid(storage_sandbox, first.json()["object_uuid"])
-    second_meta = get_object_by_uuid(storage_sandbox, second.json()["object_uuid"])
-    third_meta = get_object_by_uuid(storage_sandbox, third_from_clone.json()["object_uuid"])
-    unnamed_meta = get_object_by_uuid(storage_sandbox, unnamed_copy.json()["object_uuid"])
+    first_meta = get_object_by_uuid(first.json()["object_uuid"])
+    second_meta = get_object_by_uuid(second.json()["object_uuid"])
+    third_meta = get_object_by_uuid(third_from_clone.json()["object_uuid"])
+    unnamed_meta = get_object_by_uuid(unnamed_copy.json()["object_uuid"])
 
     assert first_meta is not None and first_meta.name == "Chair-copy"
     assert second_meta is not None and second_meta.name == "Chair-copy1"
@@ -237,7 +237,7 @@ def test_renamed_clone_keeps_root_label_for_next_copy(
         second = client.post(f"/images/objects/{first_uuid}/duplicate")
 
     assert second.status_code == 200
-    second_meta = get_object_by_uuid(storage_sandbox, second.json()["object_uuid"])
+    second_meta = get_object_by_uuid(second.json()["object_uuid"])
     assert second_meta is not None
     assert second_meta.name == "Chair-copy1"
     assert second_meta.clone_root_label == "Chair"
@@ -259,7 +259,10 @@ def test_missing_cutout_returns_404(storage_sandbox: Path, glb_dir: Path) -> Non
         response = client.post(f"/images/objects/{source_uuid}/duplicate")
 
     assert response.status_code == 404
-    assert list_object_ids(storage_sandbox, "sess-1") == []
+    # Metadata now lives in Postgres, decoupled from the (missing) cutout file:
+    # the source object row still legitimately exists at id 0. What matters
+    # here is that no orphan clone (id 1) got created.
+    assert list_object_ids("sess-1") == [0]
 
 
 def test_failed_copy_rolls_back_partial_files(
@@ -278,16 +281,10 @@ def test_failed_copy_rolls_back_partial_files(
             response = client.post(f"/images/objects/{source_uuid}/duplicate")
 
     assert response.status_code == 500
-    assert list_object_ids(storage_sandbox, "sess-1") == [0]
+    assert list_object_ids("sess-1") == [0]
     assert not object_cutout_path(storage_sandbox, "sess-1", 1).exists()
-    assert not (storage_sandbox / "sess-1_1_meta.json").exists()
     assert not object_glb_path(glb_dir, "sess-1", 1).exists()
-
-    index_path = settings.get_image_storage_dir().parent / "object_index.json"
-    if index_path.exists():
-        index = json.loads(index_path.read_text(encoding="utf-8"))
-        assert source_uuid in index
-        assert all(entry["object_id"] == 0 for entry in index.values())
+    assert get_object_by_uuid(source_uuid) is not None
 
 
 def test_shared_depth_cache_not_duplicated(storage_sandbox: Path, glb_dir: Path) -> None:
@@ -304,7 +301,7 @@ def test_shared_depth_cache_not_duplicated(storage_sandbox: Path, glb_dir: Path)
     assert depth_path.stat().st_mtime == depth_mtime
     assert len(list(storage_sandbox.glob("sess-1_depth_*.npy"))) == 1
 
-    clone = get_object_by_uuid(storage_sandbox, response.json()["object_uuid"])
+    clone = get_object_by_uuid(response.json()["object_uuid"])
     assert clone is not None
     assert clone.content_hash == "depth-hash"
 
@@ -372,7 +369,7 @@ def _seed_object_with_canvas(
         offset_x=offset_x,
         offset_y=offset_y,
     )
-    save_object_metadata(images_dir, meta)
+    save_object_metadata(meta)
     return meta.uuid
 
 
@@ -385,7 +382,7 @@ def test_duplicate_nudges_clone_left_when_room(storage_sandbox: Path, glb_dir: P
         response = client.post(f"/images/objects/{source_uuid}/duplicate")
 
     assert response.status_code == 200
-    clone = get_object_by_uuid(storage_sandbox, response.json()["object_uuid"])
+    clone = get_object_by_uuid(response.json()["object_uuid"])
     assert clone is not None
     assert clone.offset_x == -12.0
     assert clone.offset_y == 0.0
@@ -402,7 +399,7 @@ def test_duplicate_nudges_clone_right_when_no_room_on_left(
         response = client.post(f"/images/objects/{source_uuid}/duplicate")
 
     assert response.status_code == 200
-    clone = get_object_by_uuid(storage_sandbox, response.json()["object_uuid"])
+    clone = get_object_by_uuid(response.json()["object_uuid"])
     assert clone is not None
     assert clone.offset_x == -28.0
     assert clone.offset_y == 5.0
@@ -421,7 +418,7 @@ def test_duplicate_keeps_source_offset_when_no_room_either_side(
         response = client.post(f"/images/objects/{source_uuid}/duplicate")
 
     assert response.status_code == 200
-    clone = get_object_by_uuid(storage_sandbox, response.json()["object_uuid"])
+    clone = get_object_by_uuid(response.json()["object_uuid"])
     assert clone is not None
     assert clone.offset_x == 3.0
     assert clone.offset_y == -2.0

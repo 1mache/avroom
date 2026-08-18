@@ -6,9 +6,7 @@ This module centralizes configuration such as the image storage directory so tha
 both the API layer and core logic can share the same behavior.
 """
 
-import json
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -121,167 +119,6 @@ def get_scratch_dir() -> Path:
         return configured_path
 
     return get_image_storage_dir()
-
-
-def get_sessions_file() -> Path:
-    """Return path to tmp/sessions.json, one level above the image storage dir."""
-    return get_image_storage_dir().parent / "sessions.json"
-
-
-def get_names_file() -> Path:
-    """Return path to tmp/names.json, a uid->name mapping sibling of sessions.json."""
-    return get_image_storage_dir().parent / "names.json"
-
-
-def get_session_timestamps_file() -> Path:
-    """Return path to tmp/session_timestamps.json, sibling of sessions.json."""
-    return get_image_storage_dir().parent / "session_timestamps.json"
-
-
-def _read_json(path: Path) -> object | None:
-    """Read one JSON sidecar file, returning ``None`` when absent or malformed.
-
-    Every sidecar here is regenerable state, so a corrupted file is treated as
-    "no data" rather than an error the caller has to handle.
-    """
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, ValueError):
-        return None
-
-
-def _write_json(path: Path, payload: object) -> None:
-    """Write one JSON sidecar file, creating its parent directory if needed."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
-def _read_str_mapping(path: Path) -> dict[str, str]:
-    """Read a JSON sidecar known to hold a flat ``str -> str`` mapping."""
-    data = _read_json(path)
-    if not isinstance(data, dict):
-        return {}
-    return {str(key): str(value) for key, value in data.items()}
-
-
-def load_session_uids() -> list[str]:
-    """Load all registered session uids from sessions.json, newest last."""
-    data = _read_json(get_sessions_file())
-    if not isinstance(data, list):
-        return []
-    return data
-
-
-def load_names() -> dict[str, str]:
-    """Load the uid->name mapping from names.json.
-
-    Returns an empty dict if the file is absent or malformed so callers never
-    have to handle missing-names specially.
-    """
-    return _read_str_mapping(get_names_file())
-
-
-def set_session_name(uid: str, name: str) -> None:
-    """Persist a human-readable name for a session uid.
-
-    Names are unique across sessions.  If `name` is already assigned to a
-    *different* uid, raises ValueError so the caller can surface a 409 to the
-    client without knowing the storage details.
-    """
-    names = load_names()
-
-    existing_uid = next((k for k, v in names.items() if v == name), None)
-    if existing_uid is not None and existing_uid != uid:
-        raise ValueError(f"Name '{name}' is already used by another session.")
-
-    names[uid] = name
-    _write_json(get_names_file(), names)
-
-
-def deregister_uid(uid: str) -> None:
-    """Remove uid from sessions.json. No-op if uid is not present."""
-    uids = load_session_uids()
-    filtered = [u for u in uids if u != uid]
-    if len(filtered) == len(uids):
-        return
-
-    _write_json(get_sessions_file(), filtered)
-
-
-def remove_session_name(uid: str) -> None:
-    """Remove uid's name entry from names.json. No-op if uid has no name."""
-    names = load_names()
-    if names.pop(uid, None) is None:
-        return
-
-    _write_json(get_names_file(), names)
-
-
-def _load_session_timestamps() -> dict[str, str]:
-    """Load uid->last_changed ISO timestamps from session_timestamps.json."""
-    return _read_str_mapping(get_session_timestamps_file())
-
-
-def _save_session_timestamps(timestamps: dict[str, str]) -> None:
-    """Persist the uid->last_changed mapping to session_timestamps.json."""
-    _write_json(get_session_timestamps_file(), timestamps)
-
-
-def touch_session(uid: str) -> str:
-    """Record a fresh last-changed timestamp for one session and return it."""
-    timestamps = _load_session_timestamps()
-    now = datetime.now(UTC).isoformat()
-    timestamps[uid] = now
-    _save_session_timestamps(timestamps)
-    return now
-
-
-def get_session_last_changed(uid: str) -> str | None:
-    """Return the persisted last-changed timestamp for a session, if any."""
-    return _load_session_timestamps().get(uid)
-
-
-def clear_session_last_changed(uid: str) -> None:
-    """Remove one session's last-changed entry. No-op when absent."""
-    timestamps = _load_session_timestamps()
-    if timestamps.pop(uid, None) is None:
-        return
-    _save_session_timestamps(timestamps)
-
-
-def is_session_registered(uid: str) -> bool:
-    """Return whether ``uid`` appears in sessions.json."""
-    return uid in load_session_uids()
-
-
-class SessionNotFoundError(LookupError):
-    """Raised when a sync-check targets a uid absent from sessions.json."""
-
-
-def evaluate_session_sync(uid: str, client_last_changed: str | None) -> tuple[str, bool]:
-    """Compare client and server session timestamps.
-
-    Returns:
-        Tuple of ``(server_last_changed, needs_refresh)``. ``server_last_changed``
-        is an empty string when the session exists but has no recorded timestamp.
-    """
-    if not is_session_registered(uid):
-        raise SessionNotFoundError(uid)
-    server_last_changed = get_session_last_changed(uid) or ""
-    needs_refresh = client_last_changed != server_last_changed
-    return server_last_changed, needs_refresh
-
-
-def register_uid(uid: str) -> None:
-    """Append uid to sessions.json, creating the file if absent."""
-
-    uids = load_session_uids()
-    if uid not in uids:
-        uids.append(uid)
-
-    _write_json(get_sessions_file(), uids)
 
 
 def get_inference_worker_count() -> int:
@@ -431,10 +268,13 @@ def get_database_url() -> str:
 
     Defaults to the docker-compose Postgres service so `docker compose up db`
     plus an unmodified `.env` is enough to run locally with real persistence.
+    Host port 5433 (not 5432): a native Postgres install may already own 5432
+    on the host, and `docker-compose.yml` maps the container's 5432 there to
+    avoid the conflict.
     """
     return os.environ.get(
         "DATABASE_URL",
-        "postgresql+psycopg://avroom:avroom@localhost:5432/avroom",
+        "postgresql+psycopg://avroom:avroom@localhost:5433/avroom",
     ).strip()
 
 

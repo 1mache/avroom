@@ -20,13 +20,14 @@ from core.object_storage import (
     resolve_object_glb_path,
 )
 from core.object_metadata import load_object_metadata
+from core.repositories.session_repo import touch_session
 from schemas.image import (
     DEFAULT_SOURCE_ELEVATION_DEG,
     NovelViewPreviewCacheRequest,
     NovelViewRequest,
     NovelViewResponse,
 )
-from settings import get_3d_storage_dir, get_image_storage_dir, touch_session
+from settings import get_3d_storage_dir, get_image_storage_dir
 
 router = APIRouter(prefix="/images", tags=["images"])
 logger = logging.getLogger(__name__)
@@ -147,7 +148,7 @@ def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
     )
 
     storage_dir = get_image_storage_dir()
-    object_meta = load_object_metadata(storage_dir, request.uid, request.object_id)
+    object_meta = load_object_metadata(request.uid, request.object_id)
     source_elevation_deg = (
         object_meta.source_elevation_deg
         if object_meta is not None

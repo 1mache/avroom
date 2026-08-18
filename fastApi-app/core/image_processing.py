@@ -493,7 +493,7 @@ def rescale_cutout_by_depth(
         y,
     )
 
-    metadata = get_object_by_uuid(base_dir, object_uuid)
+    metadata = get_object_by_uuid(object_uuid)
     if metadata is None:
         raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
 
@@ -537,7 +537,7 @@ def rescale_cutout_by_depth(
 
     write_path = object_cutout_path(base_dir, metadata.session_id, metadata.object_id)
     write_path.write_bytes(cutout_bytes)
-    set_object_average_depth(base_dir, object_uuid, target_depth)
+    set_object_average_depth(object_uuid, target_depth)
 
     logger.info(
         "Rescale by depth complete: object_uuid=%s session_id=%s object_id=%d path=%s shape=%s",

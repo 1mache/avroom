@@ -9,7 +9,7 @@
 
 ## Gemini
 
-REST `generateContent` on `gemini-2.0-flash`. Key: `GEMINI_API_KEY` in `fastApi-app/.env` (placeholder until a real key is set). Inject `complete_fn` in tests; do not call the network in unit tests.
+REST `generateContent`. Model id comes from `GEMINI_MODEL` in `fastApi-app/.env` on every verify (default `gemini-2.5-flash-lite`; `gemini-2.0-flash` is shut down). Auth: `x-goog-api-key` header. Key: `GEMINI_API_KEY`. Unrestricted Cloud keys return 403 as of June 2026 — restrict the key to the Generative Language API or mint one in AI Studio. Inject `complete_fn` in tests; do not call the network in unit tests.
 
 ## CLIP fallback
 

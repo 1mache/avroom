@@ -24,4 +24,4 @@ Source: [`TestModules/src/ai_engines/inpainting_verification/`](../../../../Test
 | Strategy | Role |
 |----------|------|
 | `GeminiInpaintingVerificationStrategy` | Sends pad-crop PNG + params JSON to Gemini REST. Fail JSON carries rewritten knobs. Placeholder key / HTTP / bad JSON → CLIP. |
-| `ClipLabelInpaintingVerificationStrategy` | CLIP softmax over `photorealistic room` vs smear/unrealistic labels. Reuses `ClipZeroShotContentValidationStrategy.score_labels`. Fail JSON echoes input params. |
+| `ClipLabelInpaintingVerificationStrategy` | CLIP softmax over clean texture vs leftover-shadow / smear labels. Fail JSON bumps strength and appends shadow-avoidance prompt text. |

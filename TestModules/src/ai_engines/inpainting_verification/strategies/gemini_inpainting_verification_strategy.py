@@ -22,7 +22,7 @@ from .clip_label_inpainting_verification_strategy import (
 logger = logging.getLogger(__name__)
 
 PLACEHOLDER_API_KEY: str = "placeholder"
-DEFAULT_MODEL_ID: str = "gemini-2.0-flash"
+DEFAULT_MODEL_ID: str = "gemini-2.5-flash-lite"
 _GENERATE_URL: str = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 )
@@ -30,12 +30,15 @@ _GENERATE_URL: str = (
 CompleteFn = Callable[[np.ndarray, InpaintSdParams], str]
 
 _SYSTEM_PROMPT: str = (
-    "You judge a room-photo inpaint crop. Current Stable Diffusion knobs are "
-    "in the JSON below. Reply with JSON only: ok (bool), winner_label (string), "
-    "prompt, negative_prompt, strength (float), num_inference_steps (int), "
-    "guidance_scale (float). If ok is true, copy the input knobs. If ok is "
-    "false, rewrite prompt/negative_prompt and optionally the numeric knobs "
-    "so a retry is more likely to fill the hole with photorealistic background."
+    "You judge ONLY the inpainted hole in this crop, not the rest of the room. "
+    "Fail (ok=false) if you see a leftover object shadow, dark oval, ghost stain, "
+    "blur, or texture that does not match the surrounding floor/wall. "
+    "Pass only if the hole is a seamless continuation of the surrounding surface. "
+    "Current Stable Diffusion knobs are in the JSON below. Reply with JSON only: "
+    "ok (bool), winner_label (string), prompt, negative_prompt, strength (float), "
+    "num_inference_steps (int), guidance_scale (float). If ok is true, copy the "
+    "input knobs. If ok is false, rewrite prompt/negative_prompt to demand matching "
+    "floor/wall texture and to forbid leftover shadows, and raise strength toward 0.6."
 )
 
 
@@ -52,7 +55,7 @@ class GeminiInpaintingVerificationStrategy(InpaintingVerificationStrategy):
         self,
         *,
         api_key: str | None = None,
-        model_id: str = DEFAULT_MODEL_ID,
+        model_id: str | None = None,
         complete_fn: CompleteFn | None = None,
         clip_fallback: ClipLabelInpaintingVerificationStrategy | None = None,
     ) -> None:
@@ -61,14 +64,22 @@ class GeminiInpaintingVerificationStrategy(InpaintingVerificationStrategy):
             if api_key is not None
             else os.environ.get("GEMINI_API_KEY", PLACEHOLDER_API_KEY)
         )
-        self._model_id = model_id
+        self._model_id_override = model_id
         self._complete_fn = complete_fn
         self._clip = clip_fallback or ClipLabelInpaintingVerificationStrategy()
         logger.info(
             "GeminiInpaintingVerificationStrategy configured (model=%s key_set=%s)",
-            model_id,
+            self._resolve_model_id(),
             self._has_real_key(),
         )
+
+    def _resolve_model_id(self) -> str:
+        """Return the model id from constructor override or ``GEMINI_MODEL`` env."""
+        if self._model_id_override is not None:
+            override = self._model_id_override.strip()
+            return override or DEFAULT_MODEL_ID
+        raw = (os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL_ID).strip()
+        return raw or DEFAULT_MODEL_ID
 
     def _has_real_key(self) -> bool:
         key = (self._api_key or "").strip()
@@ -120,18 +131,22 @@ class GeminiInpaintingVerificationStrategy(InpaintingVerificationStrategy):
             ],
             "generationConfig": {"responseMimeType": "application/json"},
         }
-        url = _GENERATE_URL.format(model=self._model_id) + f"?key={self._api_key}"
+        url = _GENERATE_URL.format(model=self._resolve_model_id())
         request = urllib.request.Request(
             url,
             data=json.dumps(body).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self._api_key,
+            },
             method="POST",
         )
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
-            raise OSError(f"Gemini HTTP {exc.code}") from exc
+            detail = exc.read().decode("utf-8", errors="replace")[:400]
+            raise OSError(f"Gemini HTTP {exc.code}: {detail}") from exc
         return _extract_text(payload)
 
 
@@ -158,7 +173,10 @@ def _parse_gemini_payload(
     if not isinstance(data, dict):
         raise ValueError("Gemini JSON must be an object")
     ok = bool(data["ok"])
-    winner = str(data.get("winner_label") or ("photorealistic room" if ok else "unrealistic shaped object"))
+    winner = str(
+        data.get("winner_label")
+        or ("clean texture" if ok else "leftover shadow")
+    )
     merged = {
         "prompt": data.get("prompt", fallback.prompt),
         "negative_prompt": data.get("negative_prompt", fallback.negative_prompt),

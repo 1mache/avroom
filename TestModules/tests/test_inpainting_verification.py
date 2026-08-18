@@ -110,16 +110,18 @@ def test_clip_verify_pass_when_good_label_wins() -> None:
     assert result.scores[GOOD_LABEL] == 1.0
 
 
-def test_clip_verify_fail_echoes_input_params() -> None:
+def test_clip_verify_fail_rewrites_retry_params() -> None:
     def score_fn(_img: Image.Image, labels: tuple[str, ...]) -> dict[str, float]:
-        return {label: (1.0 if label == "smeared blob" else 0.0) for label in labels}
+        return {label: (1.0 if "shadow" in label else 0.0) for label in labels}
 
     strategy = ClipLabelInpaintingVerificationStrategy(score_fn=score_fn)
     image, mask = _scene()
     params = _params()
     result = strategy.verify(image, mask, params)
     assert result.ok is False
-    assert result.param_fixes_json == params.to_json()
+    fixed = InpaintSdParams.from_json(result.param_fixes_json)
+    assert "leftover shadow" in fixed.prompt
+    assert fixed.strength > params.strength
 
 
 def test_hybrid_fail_then_pass_uses_second_sd() -> None:
@@ -214,7 +216,7 @@ def test_gemini_bad_json_falls_back_to_clip() -> None:
         return "not-json"
 
     def score_fn(_img: Image.Image, labels: tuple[str, ...]) -> dict[str, float]:
-        return {label: (1.0 if label == "smeared blob" else 0.0) for label in labels}
+        return {label: (1.0 if "shadow" in label else 0.0) for label in labels}
 
     strategy = GeminiInpaintingVerificationStrategy(
         api_key="test-key",
@@ -225,7 +227,19 @@ def test_gemini_bad_json_falls_back_to_clip() -> None:
     params = _params()
     result = strategy.verify(image, mask, params)
     assert result.ok is False
-    assert result.param_fixes_json == params.to_json()
+    fixed = InpaintSdParams.from_json(result.param_fixes_json)
+    assert "leftover shadow" in fixed.prompt
+
+
+def test_gemini_model_id_reads_env(monkeypatch: Any) -> None:
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-flash")
+    strategy = GeminiInpaintingVerificationStrategy(
+        api_key="placeholder",
+        complete_fn=lambda _crop, _params: '{"ok":true}',
+    )
+    assert strategy._resolve_model_id() == "gemini-2.5-flash"
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+    assert strategy._resolve_model_id() == "gemini-2.5-flash-lite"
 
 
 def test_hybrid_skip_sd_then_verify_fail_starts_sd() -> None:

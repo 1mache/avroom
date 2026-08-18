@@ -17,12 +17,18 @@ from ..inpainting_verification_strategy import InpaintingVerificationStrategy
 
 logger = logging.getLogger(__name__)
 
-GOOD_LABEL: str = "photorealistic room"
+GOOD_LABEL: str = "a photo of clean seamless floor or wall texture with even lighting"
 BAD_LABELS: tuple[str, ...] = (
-    "smeared blob",
-    "unrealistic shaped object",
+    "a photo of a dark blurry leftover shadow or ghost stain on the floor",
+    "a photo of a smeared inpainting blob",
 )
 VERIFY_LABELS: tuple[str, ...] = (GOOD_LABEL, *BAD_LABELS)
+_RETRY_PROMPT_SUFFIX: str = (
+    ", seamless matching surrounding texture, even lighting, no leftover shadow"
+)
+_RETRY_NEGATIVE_SUFFIX: str = ", leftover shadow, ghost stain, dark oval, blurry smudge"
+_RETRY_STRENGTH_BUMP: float = 0.2
+_RETRY_STRENGTH_CAP: float = 0.75
 
 ScoreFn = Callable[[Image.Image, tuple[str, ...]], dict[str, float]]
 
@@ -30,8 +36,8 @@ ScoreFn = Callable[[Image.Image, tuple[str, ...]], dict[str, float]]
 class ClipLabelInpaintingVerificationStrategy(InpaintingVerificationStrategy):
     """Zero-shot CLIP labels on a padded mask crop.
 
-    Pass when the good label has the highest softmax score. On fail, echo the
-    input :class:`InpaintSdParams` as JSON (v1 does not invent new knobs).
+    Pass when the good (clean texture) label wins. On fail, bump strength and
+    append shadow-avoidance text so Hybrid's retry is not a no-op replay.
     """
 
     def __init__(
@@ -72,9 +78,27 @@ class ClipLabelInpaintingVerificationStrategy(InpaintingVerificationStrategy):
             winner,
             scores,
         )
+        fixes = params if ok else _retry_params(params)
         return InpaintingVerificationResult(
             ok=ok,
-            param_fixes_json=params.to_json(),
+            param_fixes_json=fixes.to_json(),
             scores=scores,
             winner_label=winner,
         )
+
+
+def _retry_params(params: InpaintSdParams) -> InpaintSdParams:
+    """Nudge SD knobs toward filling leftover shadows on the next pass."""
+    prompt = params.prompt
+    if _RETRY_PROMPT_SUFFIX not in prompt:
+        prompt = prompt + _RETRY_PROMPT_SUFFIX
+    negative = params.negative_prompt
+    if _RETRY_NEGATIVE_SUFFIX not in negative:
+        negative = negative + _RETRY_NEGATIVE_SUFFIX
+    return InpaintSdParams(
+        prompt=prompt,
+        negative_prompt=negative,
+        strength=min(_RETRY_STRENGTH_CAP, params.strength + _RETRY_STRENGTH_BUMP),
+        num_inference_steps=params.num_inference_steps,
+        guidance_scale=params.guidance_scale,
+    )

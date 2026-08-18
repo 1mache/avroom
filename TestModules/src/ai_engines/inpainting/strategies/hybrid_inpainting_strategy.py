@@ -88,6 +88,14 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
         )
 
     def _run_sd(self, image: np.ndarray, mask: np.ndarray, params: InpaintSdParams) -> np.ndarray:
+        logger.info(
+            "Hybrid SD pass: strength=%s steps=%s guidance=%s prompt=%r negative=%r",
+            params.strength,
+            params.num_inference_steps,
+            params.guidance_scale,
+            params.prompt,
+            params.negative_prompt,
+        )
         return self._refiner.inpaint(
             image,
             mask,

@@ -111,7 +111,14 @@ class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
         num_inference_steps = int(kwargs.get("num_inference_steps", 30))
         guidance_scale = float(kwargs.get("guidance_scale", 10.0))
 
-        logger.info(f"Running inference with prompt: '{prompt}'")
+        logger.info(
+            "SD inference: strength=%s steps=%s guidance=%s prompt=%r negative=%r",
+            strength,
+            num_inference_steps,
+            guidance_scale,
+            prompt,
+            negative_prompt,
+        )
         pipe = _load_stable_diffusion_pipe(self._model_id, self._device)
         result = pipe(
             prompt=prompt,

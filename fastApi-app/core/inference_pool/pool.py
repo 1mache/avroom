@@ -80,6 +80,12 @@ class InferencePool:
         self._job_queue.put(job)
 
         timeout_sec = get_inference_job_timeout_sec()
+        if timeout_sec is None:
+            logger.info(
+                "Inference job waiting without timeout: job_id=%s kind=%s",
+                job.job_id,
+                job.kind,
+            )
         if not event.wait(timeout=timeout_sec):
             self._events.pop(job.job_id, None)
             raise TimeoutError(

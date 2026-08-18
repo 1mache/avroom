@@ -23,7 +23,7 @@ At most **one inpaint GPU + commit** may run per `image_id` at a time. A second 
 
 - Acquired in [`api/routes.py`](../../fastApi-app/api/routes.py) `inpaint_mask` before `run_inpaint`.
 - Held through GPU work, metadata build, background/cutout writes, and per-mask candidate delete. Batch peels acquire the writer **one object at a time** so overlapping sibling masks queue instead of 409.
-- Writer wait timeout reuses `INFERENCE_JOB_TIMEOUT_SEC` (default 600). On timeout → HTTP **409** with a clear detail.
+- Writer wait timeout reuses `INFERENCE_JOB_TIMEOUT_SEC` (default 600) when `INFERENCE_JOB_TIMEOUT` is true (default). `INFERENCE_JOB_TIMEOUT=false` waits until the job finishes. On timeout → HTTP **409** with a clear detail.
 
 ### Region leases
 
@@ -121,7 +121,7 @@ Segment does **not** acquire the canvas writer. It may read a pre-commit canvas 
 | [`core/inference_pool/session_lock.py`](../../fastApi-app/core/inference_pool/session_lock.py) | Thin wrapper around canvas writer for tests |
 | [`core/mask_cache.py`](../../fastApi-app/core/mask_cache.py) | Per-mask delete, exclude pins on wipe |
 | [`core/inference_lock.py`](../../fastApi-app/core/inference_lock.py) | Process-wide GPU lock (inline mode) |
-| [`settings.py`](../../fastApi-app/settings.py) | `INFERENCE_WORKERS`, `INFERENCE_JOB_TIMEOUT_SEC` |
+| [`settings.py`](../../fastApi-app/settings.py) | `INFERENCE_WORKERS`, `INFERENCE_JOB_TIMEOUT`, `INFERENCE_JOB_TIMEOUT_SEC` |
 
 ## Tests
 

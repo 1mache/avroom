@@ -119,6 +119,10 @@ def acquire_canvas_writer(image_id: str, timeout_sec: int | None = None) -> None
 
     timeout = get_inference_job_timeout_sec() if timeout_sec is None else timeout_sec
     state = _get_session(image_id)
+    if timeout is None:
+        state.canvas_writer.acquire()
+        logger.debug("Canvas writer acquired: image_id=%s (no timeout)", image_id)
+        return
     acquired = state.canvas_writer.acquire(timeout=timeout)
     if not acquired:
         raise SessionConflictError(

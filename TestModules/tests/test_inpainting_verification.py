@@ -51,8 +51,9 @@ class _SequenceInpaintStrategy(ImageInpaintingStrategy):
 
 
 class _ScriptedVerifier(InpaintingVerificationStrategy):
-    def __init__(self, oks: list[bool]) -> None:
+    def __init__(self, oks: list[bool], fixes_json: list[str] | None = None) -> None:
         self._oks = oks
+        self._fixes_json = fixes_json
         self.calls = 0
 
     def verify(
@@ -62,13 +63,29 @@ class _ScriptedVerifier(InpaintingVerificationStrategy):
         params: InpaintSdParams,
     ) -> InpaintingVerificationResult:
         ok = self._oks[min(self.calls, len(self._oks) - 1)]
+        idx = min(self.calls, len(self._oks) - 1)
+        fixes = (
+            self._fixes_json[idx]
+            if self._fixes_json is not None and idx < len(self._fixes_json)
+            else params.to_json()
+        )
         self.calls += 1
         return InpaintingVerificationResult(
             ok=ok,
-            param_fixes_json=params.to_json(),
+            param_fixes_json=fixes,
             scores={},
             winner_label="",
         )
+
+
+class _CountingPrimary(ImageInpaintingStrategy):
+    def __init__(self, color: tuple[int, int, int]) -> None:
+        self._color = np.array(color, dtype=np.uint8)
+        self.calls = 0
+
+    def inpaint(self, image: np.ndarray, mask: np.ndarray, **kwargs: Any) -> np.ndarray:
+        self.calls += 1
+        return np.full_like(image, self._color)
 
 
 def _params() -> InpaintSdParams:
@@ -78,6 +95,8 @@ def _params() -> InpaintSdParams:
         strength=0.35,
         num_inference_steps=30,
         guidance_scale=10.0,
+        mask_dilate_pixels=0,
+        compose_dilate_pixels=0,
     )
 
 
@@ -122,6 +141,79 @@ def test_clip_verify_fail_rewrites_retry_params() -> None:
     fixed = InpaintSdParams.from_json(result.param_fixes_json)
     assert "leftover shadow" in fixed.prompt
     assert fixed.strength > params.strength
+    assert fixed.mask_dilate_pixels == 10
+    assert fixed.compose_dilate_pixels == 8
+
+
+def test_inpaint_sd_params_round_trips_dilate_fields() -> None:
+    params = InpaintSdParams(
+        prompt="p",
+        negative_prompt="n",
+        strength=0.4,
+        num_inference_steps=25,
+        guidance_scale=9.0,
+        mask_dilate_pixels=12,
+        compose_dilate_pixels=8,
+    )
+    restored = InpaintSdParams.from_json(params.to_json())
+    assert restored == params
+
+
+def test_gemini_fail_parses_dilate_fields() -> None:
+    params = _params()
+
+    def complete_fn(_crop: np.ndarray, received: InpaintSdParams) -> str:
+        assert received.prompt == params.prompt
+        return (
+            '{"ok":false,"winner_label":"shadow ring","prompt":"fixed wall",'
+            '"negative_prompt":"blob","strength":0.5,"num_inference_steps":40,'
+            '"guidance_scale":8.0,"mask_dilate_pixels":12,"compose_dilate_pixels":6}'
+        )
+
+    strategy = GeminiInpaintingVerificationStrategy(
+        api_key="placeholder",
+        complete_fn=complete_fn,
+    )
+    image, mask = _scene()
+    result = strategy.verify(image, mask, params)
+    fixed = InpaintSdParams.from_json(result.param_fixes_json)
+    assert fixed.mask_dilate_pixels == 12
+    assert fixed.compose_dilate_pixels == 6
+
+
+def test_hybrid_fail_with_mask_dilate_reruns_lama() -> None:
+    retry = InpaintSdParams(
+        prompt="retry",
+        negative_prompt="n",
+        strength=0.5,
+        num_inference_steps=30,
+        guidance_scale=10.0,
+        mask_dilate_pixels=4,
+        compose_dilate_pixels=6,
+    )
+    primary = _CountingPrimary((1, 1, 1))
+    sd = _SequenceInpaintStrategy([(10, 10, 10), (20, 20, 20)])
+    hybrid = HybridInpaintingStrategy(
+        primary=primary,
+        refiner=sd,
+        verifier=InpaintingVerificationFacade(
+            strategy=_ScriptedVerifier([False, True], [retry.to_json(), retry.to_json()])
+        ),
+    )
+    hybrid.SHARPEN_AMOUNT = 0.0
+    image, mask = _scene()
+    mask_before = int(np.count_nonzero(mask > 127))
+    trace: list[dict[str, Any]] = []
+    inpaint_out: dict[str, Any] = {}
+    hybrid.inpaint(image, mask, strength=0.35, verify_trace=trace, inpaint_out=inpaint_out)
+    assert primary.calls == 2
+    assert len(sd.calls) == 2
+    assert trace[0]["mask_dilate_pixels"] == 4
+    assert trace[0]["compose_dilate_pixels"] == 6
+    assert trace[0]["mask_pixel_count"] == mask_before
+    assert trace[1]["mask_pixel_count"] > mask_before
+    assert inpaint_out["compose_dilate_pixels"] == 6
+    assert inpaint_out["verification_ok"] is True
 
 
 def test_hybrid_fail_then_pass_uses_second_sd() -> None:

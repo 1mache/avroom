@@ -396,6 +396,7 @@ def inpaint_selected_mask_on_image(
             original_image=source_bgr,
             mask=refined_mask,
             compose_mask=compose_mask,
+            inpaint_out={},
         )
         logger.info("BackgroundInpainter finished: image_id=%s mask_id=%s bg_shape=%s", image_id, mask_id, background_bgr.shape)
 

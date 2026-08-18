@@ -5,10 +5,6 @@ from contextlib import contextmanager
 
 from core.inference_pool.session_runtime import acquire_canvas_writer, release_canvas_writer
 
-# Long enough that a queued GPU job is never mistaken for a deadlock; this
-# wrapper is only used where the caller is willing to wait out the queue.
-_SESSION_LOCK_TIMEOUT_SEC = 600
-
 
 @contextmanager
 def session_lock(session_id: str) -> Iterator[None]:
@@ -16,10 +12,11 @@ def session_lock(session_id: str) -> Iterator[None]:
 
     Prefer the explicit admit/acquire/release helpers in ``session_runtime`` for
     inpaint. This context manager remains for tests and legacy call sites that
-    only need exclusive canvas access.
+    only need exclusive canvas access. Wait timeout follows
+    ``INFERENCE_JOB_TIMEOUT`` / ``INFERENCE_JOB_TIMEOUT_SEC``.
     """
 
-    acquire_canvas_writer(session_id, timeout_sec=_SESSION_LOCK_TIMEOUT_SEC)
+    acquire_canvas_writer(session_id)
     try:
         yield
     finally:

@@ -50,11 +50,18 @@ def _load_attr(name: str, module: str = "avroom_object_removal"):
         return lambda _cutout: None
     if name == "_pil_rgb_to_bgr":
         return lambda _pil: np.zeros((4, 4, 3), dtype=np.uint8)
-    if name == "HybridInpaintingStrategy":
-        class _FakeHybrid:
-            def inpaint(self, image: np.ndarray, mask: np.ndarray, **kwargs: object) -> np.ndarray:
-                trace = kwargs.get("verify_trace")
-                if isinstance(trace, list):
+    if name == "BackgroundInpainter":
+        class _FakeInpainter:
+            def cut_mask_from_image(
+                self,
+                original_image: np.ndarray,
+                mask: np.ndarray,
+                compose_mask: np.ndarray | None = None,
+                *,
+                inpaint_out: dict[str, object] | None = None,
+                verify_trace: list[dict[str, object]] | None = None,
+            ) -> np.ndarray:
+                if isinstance(trace := verify_trace, list):
                     trace.append(
                         {
                             "attempt_index": 0,
@@ -68,16 +75,25 @@ def _load_attr(name: str, module: str = "avroom_object_removal"):
                                 "strength": 0.35,
                                 "num_inference_steps": 30,
                                 "guidance_scale": 10.0,
+                                "mask_dilate_pixels": 0,
+                                "compose_dilate_pixels": 0,
                             },
                             "param_fixes_json": "{}",
-                            "candidate_bgr": image.copy(),
-                            "clip_crop_bgr": image[4:16, 4:16].copy(),
-                            "lama_bgr": image.copy(),
+                            "mask_dilate_pixels": 0,
+                            "compose_dilate_pixels": 0,
+                            "mask_pixel_count": 144,
+                            "next_params": None,
+                            "candidate_bgr": original_image.copy(),
+                            "clip_crop_bgr": original_image[4:16, 4:16].copy(),
+                            "lama_bgr": original_image.copy(),
                         }
                     )
-                return image
+                if inpaint_out is not None:
+                    inpaint_out["verification_ok"] = True
+                    inpaint_out["compose_dilate_pixels"] = 0
+                return original_image
 
-        return _FakeHybrid
+        return _FakeInpainter
     raise KeyError(name)
 
 

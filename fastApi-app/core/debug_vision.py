@@ -316,7 +316,6 @@ def run_inpaint_verify(
     _validate_click(bgr, x, y)
 
     select_best_cutout = load_avroom_attr("select_best_cutout")
-    HybridInpaintingStrategy = load_avroom_attr("HybridInpaintingStrategy")
 
     pairs = _segment_click(image_bytes, bgr, x, y)
     if not pairs:
@@ -334,10 +333,23 @@ def run_inpaint_verify(
     if chosen < 0 or chosen >= len(pairs):
         raise ValueError(f"mask_index {chosen} is out of range (0..{len(pairs) - 1}).")
 
-    refined_mask, _cutout = pairs[chosen]
+    refined_mask, cutout = pairs[chosen]
+    if cutout.ndim == 3 and cutout.shape[2] >= 4:
+        compose_mask = cutout[:, :, 3]
+    else:
+        compose_mask = refined_mask
+
     verify_trace: list[dict[str, Any]] = []
-    hybrid = HybridInpaintingStrategy()
-    final_bgr = hybrid.inpaint(bgr, refined_mask, verify_trace=verify_trace)
+    inpaint_out: dict[str, Any] = {}
+    BackgroundInpainter = load_avroom_attr("BackgroundInpainter")
+    inpainter = BackgroundInpainter()
+    final_bgr = inpainter.cut_mask_from_image(
+        bgr,
+        refined_mask,
+        compose_mask=compose_mask,
+        inpaint_out=inpaint_out,
+        verify_trace=verify_trace,
+    )
 
     attempts: list[dict[str, Any]] = []
     lama_b64: str | None = None
@@ -354,6 +366,10 @@ def run_inpaint_verify(
                 "winner_label": entry["winner_label"],
                 "params": params,
                 "param_fixes_json": entry["param_fixes_json"],
+                "mask_dilate_pixels": entry.get("mask_dilate_pixels", 0),
+                "compose_dilate_pixels": entry.get("compose_dilate_pixels", 0),
+                "mask_pixel_count": entry.get("mask_pixel_count", 0),
+                "next_params": entry.get("next_params"),
                 "candidate_b64": _png_b64(entry["candidate_bgr"], f"candidate {entry['attempt_index']}"),
                 "clip_crop_b64": _png_b64(entry["clip_crop_bgr"], f"clip crop {entry['attempt_index']}"),
             }

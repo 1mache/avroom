@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from ....utils.debug_image_saver import DebugImageSaver
+from ....utils.mask_refiner import MaskRefiner
 from ...inpainting_verification.crop import (
     INPAINT_VERIFY_CROP_PAD_RATIO as _CROP_PAD_RATIO,
     crop_around_mask,
@@ -59,7 +60,28 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
             else InpaintingVerificationFacade(strategy=verifier)
         )
         self._image_saver = DebugImageSaver()
+        self._mask_refiner = MaskRefiner()
         logger.info("Hybrid Pipeline initialized successfully.")
+
+    @staticmethod
+    def _params_trace(params: InpaintSdParams) -> dict[str, Any]:
+        return {
+            "prompt": params.prompt,
+            "negative_prompt": params.negative_prompt,
+            "strength": params.strength,
+            "num_inference_steps": params.num_inference_steps,
+            "guidance_scale": params.guidance_scale,
+            "mask_dilate_pixels": params.mask_dilate_pixels,
+            "compose_dilate_pixels": params.compose_dilate_pixels,
+        }
+
+    @staticmethod
+    def _mask_pixel_count(mask: np.ndarray) -> int:
+        if mask.ndim == 3:
+            mask = mask[:, :, 0]
+        if mask.dtype == np.uint8 or (mask.size and float(mask.max()) > 1.0):
+            return int(np.count_nonzero(mask > 127))
+        return int(np.count_nonzero(mask > 0.5))
 
     def _snapshot_params(self, kwargs: dict[str, Any], strength: float) -> InpaintSdParams:
         refiner = self._refiner
@@ -108,6 +130,7 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
 
     def inpaint(self, image: np.ndarray, mask: np.ndarray, **kwargs: Any) -> np.ndarray:
         verify_trace = kwargs.pop("verify_trace", None)
+        inpaint_out = kwargs.pop("inpaint_out", None)
         if mask.ndim == 3:
             mask = mask[:, :, 0]
 
@@ -119,6 +142,10 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
             )
             thresh = 0.5 if mask.max() <= 1.0 else 127
             mask = (mask > thresh).astype(np.uint8) * 255
+
+        cumulative_mask_dilate = 0
+        cumulative_compose_dilate = 0
+        last_verdict_ok = False
 
         logger.info("--- Hybrid Pipeline Phase 1: Structural removal (LaMa) ---")
         primary_result = self._primary.inpaint(image, mask)
@@ -139,11 +166,18 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
         attempt_index = 0
         while True:
             verdict = self._verifier.verify(candidate, mask, params)
+            last_verdict_ok = verdict.ok
             logger.info(
                 "Inpaint verify ok=%s retries_left=%d",
                 verdict.ok,
                 retries_left,
             )
+            next_params: InpaintSdParams | None = None
+            if not verdict.ok:
+                try:
+                    next_params = InpaintSdParams.from_json(verdict.param_fixes_json)
+                except (KeyError, ValueError, TypeError):
+                    next_params = None
             if verify_trace is not None:
                 verify_trace.append(
                     {
@@ -152,14 +186,12 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
                         "scores": dict(verdict.scores),
                         "winner_label": verdict.winner_label,
                         "sd_skipped": sd_skipped and attempt_index == 0,
-                        "params": {
-                            "prompt": params.prompt,
-                            "negative_prompt": params.negative_prompt,
-                            "strength": params.strength,
-                            "num_inference_steps": params.num_inference_steps,
-                            "guidance_scale": params.guidance_scale,
-                        },
+                        "params": self._params_trace(params),
                         "param_fixes_json": verdict.param_fixes_json,
+                        "mask_dilate_pixels": next_params.mask_dilate_pixels if next_params else 0,
+                        "compose_dilate_pixels": next_params.compose_dilate_pixels if next_params else 0,
+                        "mask_pixel_count": self._mask_pixel_count(mask),
+                        "next_params": self._params_trace(next_params) if next_params else None,
                         "candidate_bgr": candidate.copy(),
                         "clip_crop_bgr": crop_around_mask(candidate, mask).copy(),
                         "lama_bgr": primary_result.copy() if attempt_index == 0 else None,
@@ -173,9 +205,35 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
             retries_left -= 1
             attempt_index += 1
             try:
-                params = InpaintSdParams.from_json(verdict.param_fixes_json)
+                retry_params = InpaintSdParams.from_json(verdict.param_fixes_json)
             except (KeyError, ValueError, TypeError):
                 logger.warning("Ignoring unverifiable param JSON; replaying last params.")
+                retry_params = params
+            retry_params = retry_params.clamp_dilate_fields(
+                cumulative_mask_dilate=cumulative_mask_dilate,
+            )
+            cumulative_compose_dilate += retry_params.compose_dilate_pixels
+            if retry_params.mask_dilate_pixels > 0:
+                mask_before = self._mask_pixel_count(mask)
+                mask = self._mask_refiner.dilate_mask(mask, pixels=retry_params.mask_dilate_pixels)
+                cumulative_mask_dilate += retry_params.mask_dilate_pixels
+                mask_after = self._mask_pixel_count(mask)
+                logger.info(
+                    "Hybrid mask dilate: +%d px cumulative=%d pixels %d->%d",
+                    retry_params.mask_dilate_pixels,
+                    cumulative_mask_dilate,
+                    mask_before,
+                    mask_after,
+                )
+                primary_result = self._primary.inpaint(image, mask)
+                self._image_saver.save("debug_lama_output", primary_result)
+            params = InpaintSdParams(
+                prompt=retry_params.prompt,
+                negative_prompt=retry_params.negative_prompt,
+                strength=retry_params.strength,
+                num_inference_steps=retry_params.num_inference_steps,
+                guidance_scale=retry_params.guidance_scale,
+            )
             candidate = self._run_sd(primary_result, mask, params)
             sd_skipped = False
 
@@ -223,5 +281,11 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
                 final_result = out.astype(np.uint8)
 
         self._image_saver.save("debug_sd_output", final_result)
+        if inpaint_out is not None:
+            inpaint_out["verification_ok"] = last_verdict_ok
+            inpaint_out["compose_dilate_pixels"] = cumulative_compose_dilate
+            inpaint_out["final_inpaint_mask"] = mask.copy()
+        if not last_verdict_ok:
+            logger.warning("Inpaint verify finished with verification_ok=False")
         logger.info("Hybrid Pipeline completed successfully.")
         return final_result

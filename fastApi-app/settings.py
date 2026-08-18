@@ -256,8 +256,19 @@ def get_inference_worker_count() -> int:
     return max(0, min(_env_int("INFERENCE_WORKERS", 0), MAX_INFERENCE_WORKERS))
 
 
-def get_inference_job_timeout_sec() -> int:
-    """Maximum seconds the API waits for one inference worker job to finish."""
+def get_inference_job_timeout_enabled() -> bool:
+    """Return whether inference jobs may be aborted after a wall-clock timeout.
+
+    ``INFERENCE_JOB_TIMEOUT=false`` waits until the job finishes. Default is
+    enabled so existing ``INFERENCE_JOB_TIMEOUT_SEC`` behavior is unchanged.
+    """
+    return _env_bool("INFERENCE_JOB_TIMEOUT", True)
+
+
+def get_inference_job_timeout_sec() -> int | None:
+    """Seconds to wait for one inference job, or ``None`` when timeouts are off."""
+    if not get_inference_job_timeout_enabled():
+        return None
     return max(1, _env_int("INFERENCE_JOB_TIMEOUT_SEC", DEFAULT_INFERENCE_JOB_TIMEOUT_SEC))
 
 

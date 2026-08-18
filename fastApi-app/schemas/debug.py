@@ -77,20 +77,26 @@ class DebugSdParams(BaseModel):
     strength: Annotated[float, Field(description="Denoising strength.")]
     num_inference_steps: Annotated[int, Field(description="Diffusion steps.")]
     guidance_scale: Annotated[float, Field(description="CFG scale.")]
+    mask_dilate_pixels: Annotated[int, Field(default=0, description="Verifier mask expansion for next retry.")]
+    compose_dilate_pixels: Annotated[int, Field(default=0, description="Verifier compose expansion for next retry.")]
 
 
 class DebugInpaintAttempt(BaseModel):
-    """One CLIP verify loop iteration after an SD (or skipped-SD) candidate."""
+    """One verify loop iteration after an SD (or skipped-SD) candidate."""
 
     attempt_index: Annotated[int, Field(description="0-based verify attempt.")]
-    ok: Annotated[bool, Field(description="Whether CLIP passed this candidate.")]
+    ok: Annotated[bool, Field(description="Whether the verifier passed this candidate.")]
     sd_skipped: Annotated[bool, Field(description="True if this attempt used LaMa only.")]
-    scores: Annotated[dict[str, float], Field(description="CLIP label scores.")]
-    winner_label: Annotated[str, Field(description="Argmax CLIP label.")]
+    scores: Annotated[dict[str, float], Field(description="CLIP label scores when fallback ran.")]
+    winner_label: Annotated[str, Field(description="Verifier winner label.")]
     params: Annotated[DebugSdParams, Field(description="Params sent into this SD/verify pass.")]
     param_fixes_json: Annotated[str, Field(description="JSON returned by the verifier.")]
+    mask_dilate_pixels: Annotated[int, Field(default=0, description="AI mask dilate for next retry.")]
+    compose_dilate_pixels: Annotated[int, Field(default=0, description="AI compose dilate for next retry.")]
+    mask_pixel_count: Annotated[int, Field(default=0, description="Inpaint mask pixel count at verify time.")]
+    next_params: Annotated[DebugSdParams | None, Field(default=None, description="Parsed retry recipe on fail.")]
     candidate_b64: Annotated[str, Field(description="Full-image candidate PNG, base64.")]
-    clip_crop_b64: Annotated[str, Field(description="Padded mask crop sent to CLIP, base64.")]
+    clip_crop_b64: Annotated[str, Field(description="Padded mask crop sent to verifier, base64.")]
 
 
 class DebugInpaintVerifyResponse(BaseModel):

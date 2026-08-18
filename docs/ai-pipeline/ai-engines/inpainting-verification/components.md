@@ -13,7 +13,7 @@ Source: [`TestModules/src/ai_engines/inpainting_verification/`](../../../../Test
 ## Result and params
 
 - **`InpaintingVerificationResult`** — `ok`, `param_fixes_json`, `scores`, `winner_label`.
-- **`InpaintSdParams`** — `prompt`, `negative_prompt`, `strength`, `num_inference_steps`, `guidance_scale` with `to_json` / `from_json` (unknown keys dropped).
+- **`InpaintSdParams`** — SD knobs plus verifier retry directives `mask_dilate_pixels` / `compose_dilate_pixels` (AI-decided on fail, `0` on pass). `to_json` / `from_json` with safety caps via `clamp_dilate_fields`.
 
 ## Crop helper
 
@@ -23,5 +23,5 @@ Source: [`TestModules/src/ai_engines/inpainting_verification/`](../../../../Test
 
 | Strategy | Role |
 |----------|------|
-| `GeminiInpaintingVerificationStrategy` | Sends pad-crop PNG + params JSON to Gemini REST. Fail JSON carries rewritten knobs. Placeholder key / HTTP / bad JSON → CLIP. |
-| `ClipLabelInpaintingVerificationStrategy` | CLIP softmax over clean texture vs leftover-shadow / smear labels. Fail JSON bumps strength and appends shadow-avoidance prompt text. |
+| `GeminiInpaintingVerificationStrategy` | Sends wider pad-crop PNG + params JSON to Gemini REST. Fail JSON carries rewritten knobs plus AI-decided dilate fields. Placeholder key / HTTP / bad JSON → CLIP. |
+| `ClipLabelInpaintingVerificationStrategy` | CLIP softmax over clean texture vs leftover-shadow / smear labels. Fail JSON bumps strength, appends shadow-avoidance text, and uses fixed dilate heuristics. |

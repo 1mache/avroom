@@ -71,6 +71,8 @@ export interface DebugSdParams {
   strength: number;
   num_inference_steps: number;
   guidance_scale: number;
+  mask_dilate_pixels?: number;
+  compose_dilate_pixels?: number;
 }
 
 export interface DebugInpaintAttempt {
@@ -81,6 +83,10 @@ export interface DebugInpaintAttempt {
   winner_label: string;
   params: DebugSdParams;
   param_fixes_json: string;
+  mask_dilate_pixels?: number;
+  compose_dilate_pixels?: number;
+  mask_pixel_count?: number;
+  next_params?: DebugSdParams | null;
   candidate_b64: string;
   clip_crop_b64: string;
 }

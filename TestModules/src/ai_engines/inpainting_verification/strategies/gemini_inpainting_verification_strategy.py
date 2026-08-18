@@ -32,14 +32,20 @@ CompleteFn = Callable[[np.ndarray, InpaintSdParams], str]
 _SYSTEM_PROMPT: str = (
     "You judge ONLY the inpainted hole in this crop, not the rest of the room. "
     "Fail (ok=false) if you see a leftover object shadow, dark oval, ghost stain, "
-    "blur, or texture that does not match the surrounding floor/wall. "
+    "blur, grain mismatch, or texture that does not match the surrounding floor/wall. "
     "Pass only if the hole is a seamless continuation of the surrounding surface. "
     "Current Stable Diffusion knobs are in the JSON below. Reply with JSON only: "
     "ok (bool), winner_label (string), prompt, negative_prompt, strength (float), "
-    "num_inference_steps (int), guidance_scale (float). If ok is true, copy the "
-    "input knobs. If ok is false, rewrite prompt/negative_prompt to demand matching "
-    "floor/wall texture and to forbid leftover shadows, and raise strength toward 0.6."
+    "num_inference_steps (int), guidance_scale (float), mask_dilate_pixels (int), "
+    "compose_dilate_pixels (int). If ok is true, copy the input knobs and set both "
+    "dilate fields to 0. If ok is false, rewrite prompt/negative_prompt to demand "
+    "matching floor/wall texture and forbid leftover shadows; raise strength toward "
+    "0.6. Decide mask_dilate_pixels: 0 if the hole size is fine; 4-16 if shadow or "
+    "leftover edges sit outside the current mask. Decide compose_dilate_pixels: 0 if "
+    "paste boundary is fine; 4-12 if fixes must be committed wider than the cutout."
 )
+
+GEMINI_CROP_PAD_RATIO: float = 0.35
 
 
 class GeminiInpaintingVerificationStrategy(InpaintingVerificationStrategy):
@@ -91,7 +97,7 @@ class GeminiInpaintingVerificationStrategy(InpaintingVerificationStrategy):
         mask: np.ndarray,
         params: InpaintSdParams,
     ) -> InpaintingVerificationResult:
-        crop = crop_around_mask(image, mask)
+        crop = crop_around_mask(image, mask, pad_ratio=GEMINI_CROP_PAD_RATIO)
         if self._complete_fn is None and not self._has_real_key():
             logger.warning("GEMINI_API_KEY is placeholder; falling back to CLIP verify.")
             return self._clip.verify(image, mask, params)
@@ -183,6 +189,18 @@ def _parse_gemini_payload(
         "strength": data.get("strength", fallback.strength),
         "num_inference_steps": data.get("num_inference_steps", fallback.num_inference_steps),
         "guidance_scale": data.get("guidance_scale", fallback.guidance_scale),
+        "mask_dilate_pixels": data.get("mask_dilate_pixels", 0),
+        "compose_dilate_pixels": data.get("compose_dilate_pixels", 0),
     }
     fixed = InpaintSdParams.from_json(json.dumps(merged))
+    if ok:
+        fixed = InpaintSdParams(
+            prompt=fixed.prompt,
+            negative_prompt=fixed.negative_prompt,
+            strength=fixed.strength,
+            num_inference_steps=fixed.num_inference_steps,
+            guidance_scale=fixed.guidance_scale,
+            mask_dilate_pixels=0,
+            compose_dilate_pixels=0,
+        )
     return ok, winner, fixed

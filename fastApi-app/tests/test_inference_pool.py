@@ -16,13 +16,28 @@ if str(_APP_ROOT) not in sys.path:
 
 from core.inference_pool.session_lock import session_lock
 from core.inference_pool.types import JobKind, JobRequest, JobResult
-from settings import get_inference_worker_count
+from settings import get_inference_job_timeout_sec, get_inference_worker_count
 
 
 def test_default_worker_count_is_zero() -> None:
     """Pool mode stays opt-in; default preserves inline execution."""
     with patch.dict(os.environ, {"INFERENCE_WORKERS": "0"}, clear=False):
         assert get_inference_worker_count() == 0
+
+
+def test_job_timeout_flag_off_returns_none() -> None:
+    """INFERENCE_JOB_TIMEOUT=false disables the wait cutoff so jobs can finish."""
+    with patch.dict(os.environ, {"INFERENCE_JOB_TIMEOUT": "false"}, clear=False):
+        assert get_inference_job_timeout_sec() is None
+
+
+def test_job_timeout_flag_on_uses_seconds() -> None:
+    with patch.dict(
+        os.environ,
+        {"INFERENCE_JOB_TIMEOUT": "true", "INFERENCE_JOB_TIMEOUT_SEC": "90"},
+        clear=False,
+    ):
+        assert get_inference_job_timeout_sec() == 90
 
 
 def test_job_request_pickle_round_trip() -> None:
@@ -160,6 +175,8 @@ def test_session_lock_serializes_same_session() -> None:
 
 if __name__ == "__main__":
     test_default_worker_count_is_zero()
+    test_job_timeout_flag_off_returns_none()
+    test_job_timeout_flag_on_uses_seconds()
     test_job_request_pickle_round_trip()
     test_job_result_pickle_round_trip()
     test_inline_client_delegates_to_dispatch()

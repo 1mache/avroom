@@ -937,7 +937,18 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
                       guidance={attempt.params.guidance_scale}
                       {"\n"}prompt: {attempt.params.prompt}
                       {"\n"}negative: {attempt.params.negative_prompt}
+                      {attempt.mask_pixel_count != null ? `\nmask pixels: ${attempt.mask_pixel_count}` : ""}
                     </p>
+                    {!attempt.ok && attempt.next_params ? (
+                      <p className="debug-kv">
+                        Next retry: strength={attempt.next_params.strength} steps=
+                        {attempt.next_params.num_inference_steps} guidance={attempt.next_params.guidance_scale}
+                        {"\n"}mask dilate: {attempt.next_params.mask_dilate_pixels ?? 0} compose dilate:{" "}
+                        {attempt.next_params.compose_dilate_pixels ?? 0}
+                        {"\n"}prompt: {attempt.next_params.prompt}
+                        {"\n"}negative: {attempt.next_params.negative_prompt}
+                      </p>
+                    ) : null}
                     <p className="debug-kv">verifier JSON: {attempt.param_fixes_json}</p>
                   </div>
                 ))}

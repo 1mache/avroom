@@ -29,6 +29,8 @@ _RETRY_PROMPT_SUFFIX: str = (
 _RETRY_NEGATIVE_SUFFIX: str = ", leftover shadow, ghost stain, dark oval, blurry smudge"
 _RETRY_STRENGTH_BUMP: float = 0.2
 _RETRY_STRENGTH_CAP: float = 0.75
+_CLIP_FALLBACK_MASK_DILATE: int = 10
+_CLIP_FALLBACK_COMPOSE_DILATE: int = 8
 
 ScoreFn = Callable[[Image.Image, tuple[str, ...]], dict[str, float]]
 
@@ -101,4 +103,6 @@ def _retry_params(params: InpaintSdParams) -> InpaintSdParams:
         strength=min(_RETRY_STRENGTH_CAP, params.strength + _RETRY_STRENGTH_BUMP),
         num_inference_steps=params.num_inference_steps,
         guidance_scale=params.guidance_scale,
+        mask_dilate_pixels=_CLIP_FALLBACK_MASK_DILATE,
+        compose_dilate_pixels=_CLIP_FALLBACK_COMPOSE_DILATE,
     )

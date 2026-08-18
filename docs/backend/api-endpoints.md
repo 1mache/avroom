@@ -78,7 +78,7 @@ Runs inpainting for the one mask selected by user. Request field `verify` is acc
 Behavior:
 
 1. **Admit** inpaint: load selected mask, register region lease, pin `mask_id` on disk. Returns **409** if mask overlaps an in-flight removal.
-2. **Acquire canvas writer** for this session (blocks until free; **409** on timeout via `INFERENCE_JOB_TIMEOUT_SEC`).
+2. **Acquire canvas writer** for this session (blocks until free; **409** on timeout via `INFERENCE_JOB_TIMEOUT_SEC` unless `INFERENCE_JOB_TIMEOUT=false`).
 3. Load the current canvas: `{uid}_background.png` if it exists (prior removals already applied), otherwise the original upload.
 4. Load selected cached `{uid}_mask_{mask_id}_refined.npy`.
 5. Load matching cached `{uid}_mask_{mask_id}_cutout.png`.

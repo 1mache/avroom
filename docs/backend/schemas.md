@@ -223,6 +223,6 @@ Defined in [`fastApi-app/schemas/debug.py`](../../fastApi-app/schemas/debug.py) 
 
 `DebugAutoMaskPickResponse` is returned by `POST /debug/auto-mask-pick`: `click_xy`, `threshold`, `winner_index`, `candidates` (`index`, `score`, `reason`, `preview_b64`, `clip_crop_b64`, `cutout_b64`), `elapsed_ms`.
 
-`DebugInpaintVerifyResponse` is returned by `POST /debug/inpaint-verify`: `click_xy`, `mask_index`, `passed`, `retries_exhausted`, `lama_b64`, `final_b64`, `attempts` (each with `ok`, CLIP `scores`/`winner_label`, `params` as `DebugSdParams`, `param_fixes_json`, candidate and crop PNGs), `elapsed_ms`.
+`DebugInpaintVerifyResponse` is returned by `POST /debug/inpaint-verify`: `click_xy`, `mask_index`, `passed`, `retries_exhausted`, `lama_b64`, `final_b64`, `attempts` (each with `ok`, verifier `scores`/`winner_label`, `params` as `DebugSdParams` including optional dilate fields, `param_fixes_json`, `mask_dilate_pixels`, `compose_dilate_pixels`, `mask_pixel_count`, optional `next_params`, candidate and crop PNGs), `elapsed_ms`. Uses the production `BackgroundInpainter` compose path.
 
 Frontend mirrors these types in [`react-front/src/types/debug.ts`](../../react-front/src/types/debug.ts).

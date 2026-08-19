@@ -334,6 +334,11 @@ def run_inpaint_verify(
         raise ValueError(f"mask_index {chosen} is out of range (0..{len(pairs) - 1}).")
 
     refined_mask, cutout = pairs[chosen]
+    _cutout_preview_bgr = load_avroom_attr(
+        "_cutout_preview_bgr", module="avroom_object_removal.core.cutout_selector"
+    )
+    preview_b64 = _png_b64(_cutout_preview_bgr(cutout, (x, y)), f"preview {chosen}")
+    cutout_b64 = _png_b64(cutout, f"cutout {chosen}")
     if cutout.ndim == 3 and cutout.shape[2] >= 4:
         compose_mask = cutout[:, :, 3]
     else:
@@ -393,6 +398,8 @@ def run_inpaint_verify(
     return {
         "click_xy": [x, y],
         "mask_index": chosen,
+        "preview_b64": preview_b64,
+        "cutout_b64": cutout_b64,
         "passed": passed,
         "retries_exhausted": not passed,
         "lama_b64": lama_b64,

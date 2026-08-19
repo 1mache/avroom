@@ -43,15 +43,35 @@ _SYSTEM_PROMPT: str = (
     "Fail (ok=false) if you see a leftover object shadow, dark oval, ghost stain, blur, "
     "grain mismatch, smeared blob, or invented furniture/table inside the outline. "
     "Pass only if the filled region is a seamless continuation of the surrounding "
-    "floor/wall. Current Stable Diffusion knobs are in the JSON below. Reply with JSON "
-    "only: ok (bool), winner_label (string), prompt, negative_prompt, strength (float), "
+    "floor/wall. "
+    "Estimate smearyness_score (float 0.0-1.0): 0.0 = perfectly sharp, crisp texture "
+    "matching the surroundings; 1.0 = completely blurred, blotchy, or smeared fill. "
+    "Current Stable Diffusion knobs are in the JSON below. Reply with JSON only, "
+    "always include ALL of these fields: ok (bool), winner_label (string), "
+    "smearyness_score (float 0.0-1.0), prompt, negative_prompt, strength (float), "
     "num_inference_steps (int), guidance_scale (float), mask_dilate_pixels (int), "
-    "compose_dilate_pixels (int). If ok is true, copy the input knobs and set both "
-    "dilate fields to 0. If ok is false, rewrite prompt/negative_prompt to demand "
-    "matching floor/wall texture and forbid leftover shadows; raise strength toward "
-    "0.6. Decide mask_dilate_pixels: 0 if the hole size is fine; 4-16 if shadow or "
-    "leftover edges sit outside the current mask. Decide compose_dilate_pixels: 0 if "
-    "paste boundary is fine; 4-12 if fixes must be committed wider than the cutout."
+    "compose_dilate_pixels (int). "
+    "If ok is true, copy the input knobs and set both dilate fields to 0. "
+    "If ok is false, rewrite prompt/negative_prompt to demand matching floor/wall "
+    "texture and forbid leftover shadows. Then tune SD knobs based on the PRIMARY CAUSE: "
+    "IMPORTANT — strength multiplies the effective step count (actual steps = "
+    "int(num_inference_steps * strength)), so very low strength means very few "
+    "denoising steps regardless of num_inference_steps. "
+    "If smearyness_score > 0.5 (blurred/blotchy fill is the main issue): "
+    "RAISE strength toward 0.45-0.6 (more denoising redrawing over the blurry base), "
+    "RAISE num_inference_steps by 10-20 (more refinement budget), and optionally "
+    "RAISE guidance_scale by 1-2 (sharper adherence to prompt). "
+    "Set mask_dilate_pixels = 0 — expanding the hole cannot fix blurriness and only "
+    "adds more area to smear. "
+    "If smearyness_score <= 0.5 and hallucinated furniture/objects appear: "
+    "LOWER strength toward 0.2-0.3 (preserve more of the structural base) and "
+    "strengthen negative_prompt to forbid the hallucinated content. "
+    "If smearyness_score <= 0.5 and shadow/edge/grain mismatch is the failure: "
+    "keep strength near current value; "
+    "decide mask_dilate_pixels: 0 if hole size is fine, 4-16 if shadow or leftover "
+    "edges sit outside the current mask; "
+    "decide compose_dilate_pixels: 0 if paste boundary is fine, 4-12 if fixes must "
+    "be committed wider than the cutout."
 )
 
 
@@ -147,7 +167,7 @@ class GeminiInpaintingVerificationStrategy(InpaintingVerificationStrategy):
             logger.warning("Gemini inpaint verify failed (%s); falling back to CLIP.", exc)
             return self._clip_fallback(image, mask, params, reason=str(exc))
 
-        ok, winner, fixed = parsed
+        ok, winner, fixed, smearyness_score = parsed
         crop_h, crop_w = outlined_crop.shape[:2]
         mask_px = (
             mask_pixels_in_window(mask, window)
@@ -165,6 +185,7 @@ class GeminiInpaintingVerificationStrategy(InpaintingVerificationStrategy):
             window=window,
             mask_px=mask_px,
             dual_crop=dual_crop,
+            smearyness_score=smearyness_score,
         )
         return InpaintingVerificationResult(
             ok=ok,
@@ -266,7 +287,7 @@ def _extract_text(payload: dict[str, Any]) -> str:
 
 def _parse_gemini_payload(
     raw: str, fallback: InpaintSdParams
-) -> tuple[bool, str, InpaintSdParams]:
+) -> tuple[bool, str, InpaintSdParams, float | None]:
     data: Any = json.loads(raw)
     if not isinstance(data, dict):
         raise ValueError("Gemini JSON must be an object")
@@ -275,13 +296,20 @@ def _parse_gemini_payload(
         data.get("winner_label")
         or ("clean texture" if ok else "leftover shadow")
     )
+    raw_smear = data.get("smearyness_score")
+    smearyness_score: float | None = (
+        float(raw_smear) if raw_smear is not None else None
+    )
+    # High smearyness means the fill is blurry — expanding the hole adds more area
+    # to smear and cannot fix the root cause, so force the dilation to zero.
+    smear_dominant = smearyness_score is not None and smearyness_score > 0.5
     merged = {
         "prompt": data.get("prompt", fallback.prompt),
         "negative_prompt": data.get("negative_prompt", fallback.negative_prompt),
         "strength": data.get("strength", fallback.strength),
         "num_inference_steps": data.get("num_inference_steps", fallback.num_inference_steps),
         "guidance_scale": data.get("guidance_scale", fallback.guidance_scale),
-        "mask_dilate_pixels": data.get("mask_dilate_pixels", 0),
+        "mask_dilate_pixels": 0 if smear_dominant else data.get("mask_dilate_pixels", 0),
         "compose_dilate_pixels": data.get("compose_dilate_pixels", 0),
     }
     fixed = InpaintSdParams.from_json(json.dumps(merged))
@@ -295,7 +323,7 @@ def _parse_gemini_payload(
             mask_dilate_pixels=0,
             compose_dilate_pixels=0,
         )
-    return ok, winner, fixed
+    return ok, winner, fixed, smearyness_score
 
 
 def _log_gemini_verify(
@@ -310,6 +338,7 @@ def _log_gemini_verify(
     window: CropWindow | None,
     mask_px: int,
     dual_crop: bool,
+    smearyness_score: float | None = None,
 ) -> None:
     window_text = (
         f"({window.y0},{window.y1})-({window.x0},{window.x1})"
@@ -319,15 +348,17 @@ def _log_gemini_verify(
     strength = params.strength if ok else fixed.strength
     mask_dilate = 0 if ok else fixed.mask_dilate_pixels
     compose_dilate = 0 if ok else fixed.compose_dilate_pixels
+    smear_text = f"{smearyness_score:.2f}" if smearyness_score is not None else "n/a"
     base = (
-        "Inpaint Gemini verify ok=%s winner=%s model=%s crop=%dx%d window=%s "
-        "mask_px=%d dual_crop=%s strength=%s mask_dilate=%s compose_dilate=%s"
+        "Inpaint Gemini verify ok=%s winner=%s smearyness_score=%s model=%s crop=%dx%d "
+        "window=%s mask_px=%d dual_crop=%s strength=%s mask_dilate=%s compose_dilate=%s"
     )
     if ok:
         logger.info(
             base,
             ok,
             winner,
+            smear_text,
             model,
             crop_w,
             crop_h,
@@ -341,9 +372,12 @@ def _log_gemini_verify(
         return
     prompt_snip = fixed.prompt[:80]
     logger.info(
-        base + " next_strength=%s next_mask_dilate=%s next_compose_dilate=%s next_prompt=%r",
+        base
+        + " next_strength=%s next_steps=%s next_guidance=%s "
+          "next_mask_dilate=%s next_compose_dilate=%s next_prompt=%r",
         ok,
         winner,
+        smear_text,
         model,
         crop_w,
         crop_h,
@@ -354,6 +388,8 @@ def _log_gemini_verify(
         mask_dilate,
         compose_dilate,
         fixed.strength,
+        fixed.num_inference_steps,
+        fixed.guidance_scale,
         fixed.mask_dilate_pixels,
         fixed.compose_dilate_pixels,
         prompt_snip,

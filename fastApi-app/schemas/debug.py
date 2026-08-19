@@ -108,6 +108,8 @@ class DebugInpaintVerifyResponse(BaseModel):
 
     click_xy: Annotated[list[int], Field(description="Natural-image click [x, y].")]
     mask_index: Annotated[int, Field(description="Candidate index that was inpainted.")]
+    preview_b64: Annotated[str, Field(description="PNG preview with click marker, base64.")]
+    cutout_b64: Annotated[str, Field(description="BGRA cutout PNG for the chosen mask, base64.")]
     passed: Annotated[bool, Field(description="True if the last attempt passed CLIP.")]
     retries_exhausted: Annotated[bool, Field(description="True if CLIP never passed.")]
     lama_b64: Annotated[str | None, Field(description="LaMa-only PNG, if captured.")]

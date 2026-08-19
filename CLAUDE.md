@@ -123,6 +123,7 @@ Reuse these instead of re-implementing them per module:
 - **SAM receives depth map, not RGB.** RGB causes over-segmentation on fabric creases and shadows. The adapter exists for this reason.
 - **Near-Far blending is alpha compositing, not averaging.** V2 depth values serve as the alpha weight. Do not simplify to a mean.
 - **Mask dilation prevents LaMa halo.** LaMa bleeds object pixels into background with tight masks. Always dilate before inpainting.
+- **SD runs on a native-resolution crop, never the squashed full frame.** `StableDiffusionInpaintingStrategy` crops around the mask with `mask_crop_window`, generates at /8-snapped native dims, and pastes only mask pixels back. Squashing a 1600×1200 frame to 512×512 causes a 3× upscale smear and a paste seam that no SD knob can fix. Only mask pixels are written back; surroundings stay byte-identical so Gemini's dual-crop verifier sees an uncorrupted reference.
 
 ## FastAPI ↔ TestModules Integration
 

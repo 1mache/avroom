@@ -95,6 +95,8 @@ export interface DebugInpaintAttempt {
 export interface DebugInpaintVerifyResponse {
   click_xy: [number, number] | number[];
   mask_index: number;
+  preview_b64: string;
+  cutout_b64: string;
   passed: boolean;
   retries_exhausted: boolean;
   lama_b64: string | null;

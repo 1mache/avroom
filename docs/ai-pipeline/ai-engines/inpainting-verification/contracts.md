@@ -46,7 +46,23 @@ Hybrid applies exactly what the verifier returns; safety caps (`MAX_MASK_DILATE_
 
 ## Gemini JSON
 
-Required: `ok`. Optional: `winner_label`, SD knobs, `mask_dilate_pixels`, `compose_dilate_pixels`. Missing knobs copy the input params; missing dilate fields default to `0`.
+Required: `ok`. Expected (but treated as optional for backward compat): `winner_label`, `smearyness_score`, SD knobs (`strength`, `num_inference_steps`, `guidance_scale`, `prompt`, `negative_prompt`), `mask_dilate_pixels`, `compose_dilate_pixels`. Missing knobs copy the input params; missing dilate fields default to `0`; missing `smearyness_score` is logged as `n/a`.
+
+### `smearyness_score` (float, 0.0–1.0)
+
+Gemini's explicit smear estimate for the inpainted region:
+
+| Value | Primary failure | SD knob direction | `mask_dilate_pixels` |
+|-------|----------------|-------------------|----------------------|
+| > 0.5 | Blurred / blotchy fill | **Raise** `strength` (→ 0.45–0.6), **raise** `num_inference_steps` (+10–20), optionally raise `guidance_scale` by 1–2 | Always **0** — expanding the hole adds more area to smear |
+| ≤ 0.5, hallucination | Invented furniture / objects | **Lower** `strength` (→ 0.2–0.3), strengthen `negative_prompt` | 0 |
+| ≤ 0.5, shadow/edge | Leftover shadow or grain mismatch | Keep `strength` near current; use dilate fields as appropriate | 0–16 depending on how far outside the mask the shadow sits |
+
+Note: `strength` multiplies the effective step count in diffusers (`int(steps * strength)`), so very low strength means very few denoising steps regardless of `num_inference_steps`.
+
+The dilation gate is **enforced in code** (`_parse_gemini_payload` zeroes `mask_dilate_pixels` when `smearyness_score > 0.5`) so a repeated Gemini directive cannot enlarge the hole during smear failures.
+
+The score appears in every Gemini INFO log line as `smearyness_score=<value>` (or `n/a` if Gemini omitted it).
 
 Dual-crop input: original crop + outlined candidate crop of the **same** window. The cyan outline marks the inpaint region on image 2. Minimum crop size is enforced via `MIN_VERIFY_CROP_PX` / `MIN_VERIFY_CROP_FRAC`.
 

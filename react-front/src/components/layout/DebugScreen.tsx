@@ -887,6 +887,31 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
                 <p className="debug-panel-hint">
                   Mask {inpaintVerify.data.mask_index}. LaMa once, then each verify retry with SD params in and verifier JSON out.
                 </p>
+                <p className="debug-panel-hint">Chosen mask #{inpaintVerify.data.mask_index}</p>
+                <div className="debug-attempt-images">
+                  <img
+                    src={pngSrc(inpaintVerify.data.preview_b64)}
+                    alt={`Chosen mask preview ${inpaintVerify.data.mask_index}`}
+                    title="Preview with click marker"
+                    onClick={() =>
+                      setLightboxSrc({
+                        src: pngSrc(inpaintVerify.data.preview_b64),
+                        alt: `Chosen mask preview ${inpaintVerify.data.mask_index}`,
+                      })
+                    }
+                  />
+                  <img
+                    src={pngSrc(inpaintVerify.data.cutout_b64)}
+                    alt={`Chosen cutout ${inpaintVerify.data.mask_index}`}
+                    title="Cutout alpha"
+                    onClick={() =>
+                      setLightboxSrc({
+                        src: pngSrc(inpaintVerify.data.cutout_b64),
+                        alt: `Chosen cutout ${inpaintVerify.data.mask_index}`,
+                      })
+                    }
+                  />
+                </div>
                 {inpaintVerify.data.lama_b64 ? (
                   <img
                     className="debug-trace-image"

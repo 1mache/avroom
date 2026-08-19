@@ -484,6 +484,119 @@ def test_gemini_fail_logs_retry_fields(caplog: Any) -> None:
     assert "crop=" in joined
 
 
+def test_gemini_smearyness_score_parsed_and_logged(caplog: Any) -> None:
+    """Gemini JSON with smearyness_score is parsed and appears in the INFO log."""
+    import logging
+
+    params = _params()
+
+    def complete_fn(
+        _original: np.ndarray,
+        _outlined: np.ndarray,
+        _received: InpaintSdParams,
+    ) -> str:
+        return (
+            '{"ok":false,"winner_label":"smear blob","smearyness_score":0.82,'
+            '"prompt":"crisp floor","negative_prompt":"blur","strength":0.22,'
+            '"num_inference_steps":50,"guidance_scale":7.0,'
+            '"mask_dilate_pixels":0,"compose_dilate_pixels":0}'
+        )
+
+    strategy = GeminiInpaintingVerificationStrategy(
+        api_key="placeholder",
+        complete_fn=complete_fn,
+    )
+    image, mask = _scene()
+    with caplog.at_level(logging.INFO):
+        strategy.verify(image, mask, params, original_image=image)
+    joined = "\n".join(record.message for record in caplog.records)
+    assert "smearyness_score=0.82" in joined
+
+
+def test_gemini_smearyness_knob_rewrite_on_high_smear() -> None:
+    """When smearyness_score > 0.5 Gemini returns RAISED strength & more steps."""
+    params = _params()
+
+    def complete_fn(
+        _original: np.ndarray,
+        _outlined: np.ndarray,
+        _received: InpaintSdParams,
+    ) -> str:
+        # Gemini raises strength toward 0.5 and raises steps for high smear.
+        return (
+            '{"ok":false,"winner_label":"smear","smearyness_score":0.75,'
+            '"prompt":"sharp tile","negative_prompt":"smear","strength":0.50,'
+            '"num_inference_steps":50,"guidance_scale":9.0,'
+            '"mask_dilate_pixels":0,"compose_dilate_pixels":0}'
+        )
+
+    strategy = GeminiInpaintingVerificationStrategy(
+        api_key="placeholder",
+        complete_fn=complete_fn,
+    )
+    image, mask = _scene()
+    result = strategy.verify(image, mask, params, original_image=image)
+    assert result.ok is False
+    fixed = InpaintSdParams.from_json(result.param_fixes_json)
+    # high smear → RAISED strength (more denoising to overdraw the blurry base)
+    assert fixed.strength > params.strength
+    assert fixed.num_inference_steps > params.num_inference_steps
+
+
+def test_gemini_high_smearyness_gates_mask_dilation() -> None:
+    """High smearyness_score forces mask_dilate_pixels to 0 even when Gemini asks for 8."""
+    params = _params()
+
+    def complete_fn(
+        _original: np.ndarray,
+        _outlined: np.ndarray,
+        _received: InpaintSdParams,
+    ) -> str:
+        return (
+            '{"ok":false,"winner_label":"smear","smearyness_score":0.85,'
+            '"prompt":"floor","negative_prompt":"blur","strength":0.50,'
+            '"num_inference_steps":50,"guidance_scale":9.0,'
+            '"mask_dilate_pixels":8,"compose_dilate_pixels":4}'
+        )
+
+    strategy = GeminiInpaintingVerificationStrategy(
+        api_key="placeholder",
+        complete_fn=complete_fn,
+    )
+    image, mask = _scene()
+    result = strategy.verify(image, mask, params, original_image=image)
+    fixed = InpaintSdParams.from_json(result.param_fixes_json)
+    # Code gate must zero this out despite Gemini asking for 8.
+    assert fixed.mask_dilate_pixels == 0
+    # compose_dilate_pixels is not gated by smearyness, so it passes through.
+    assert fixed.compose_dilate_pixels == 4
+
+
+def test_gemini_smearyness_missing_is_backward_compatible() -> None:
+    """JSON without smearyness_score still parses correctly (backward compat)."""
+    params = _params()
+
+    def complete_fn(
+        _original: np.ndarray,
+        _outlined: np.ndarray,
+        _received: InpaintSdParams,
+    ) -> str:
+        # No smearyness_score key at all
+        return (
+            '{"ok":true,"winner_label":"clean","prompt":"floor","negative_prompt":"",'
+            '"strength":0.35,"num_inference_steps":40,"guidance_scale":8.5,'
+            '"mask_dilate_pixels":0,"compose_dilate_pixels":0}'
+        )
+
+    strategy = GeminiInpaintingVerificationStrategy(
+        api_key="placeholder",
+        complete_fn=complete_fn,
+    )
+    image, mask = _scene()
+    result = strategy.verify(image, mask, params, original_image=image)
+    assert result.ok is True  # no exception raised
+
+
 def test_hybrid_passes_original_image_to_verifier() -> None:
     verifier = _ScriptedVerifier([True])
     hybrid = HybridInpaintingStrategy(

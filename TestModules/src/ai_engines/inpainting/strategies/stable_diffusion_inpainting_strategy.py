@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from ...inpainting_verification.crop import crop_with_window, mask_crop_window
 from ..image_inpainting_strategy import ImageInpaintingStrategy
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,33 @@ _DEFAULT_NEGATIVE_PROMPT = (
     "object, item, thing, decor, shadow, 3d, person, animal, clutter, "
     "artifact, pedestal, box, blurry, smeared, ghost"
 )
+
+# SD 1.5 was trained at 512px; this is the minimum crop context even for tiny masks.
+SD_MIN_CROP_PX: int = 512
+# Match Gemini's pad ratio so SD and the verifier reason about the same window.
+SD_CROP_PAD_RATIO: float = 0.35
+# ponytail: OOM guard only — never engages at typical 528x734 windows.
+# Upgrade path: bump or remove when running on 24+ GB VRAM.
+SD_MAX_GEN_SIDE: int = 1024
+
+
+def _snap_to_multiple_of_8(
+    width: int, height: int, max_side: int = SD_MAX_GEN_SIDE
+) -> tuple[int, int]:
+    """Round dims to the VAE's /8 grid, capped for OOM safety.
+
+    Snaps each dimension independently (no aspect-ratio distortion beyond one
+    grid step). Scales both dims down proportionally when the long side would
+    exceed ``max_side`` after snapping.
+    """
+    w = max(8, (width + 7) // 8 * 8)
+    h = max(8, (height + 7) // 8 * 8)
+    long_side = max(w, h)
+    if long_side > max_side:
+        scale = max_side / long_side
+        w = max(8, int(w * scale) // 8 * 8)
+        h = max(8, int(h * scale) // 8 * 8)
+    return w, h
 
 
 @functools.lru_cache(maxsize=1)
@@ -91,19 +119,39 @@ class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
         strength: float = 0.35,
         **kwargs: Any,
     ) -> np.ndarray:
+        """Inpaint the masked region and return a full-frame BGR array.
+
+        SD runs on a native-resolution crop around the mask rather than the
+        squashed full frame, preventing the 3x upscale smear and paste seam.
+        Only pixels inside the mask are written back; surrounding pixels are
+        byte-identical to ``image`` so Gemini's dual-crop verification sees
+        an uncorrupted reference on both sides of the outline.
+        """
         logger.info("Starting Stable Diffusion inpainting process...")
 
-        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        pil_image = Image.fromarray(img_rgb)
-
-        # Hard-binarize the mask so SD sees crisp boundaries.
+        # Hard-binarize before computing the crop window.
         mask_uint8 = (mask * 255).astype(np.uint8) if mask.max() <= 1 else mask.astype(np.uint8)
+        if mask_uint8.ndim == 3:
+            mask_uint8 = mask_uint8[:, :, 0]
         mask_binary = (mask_uint8 > 127).astype(np.uint8) * 255
-        pil_mask = Image.fromarray(mask_binary).convert("L")
 
-        original_size = pil_image.size
-        pil_image_resized = pil_image.resize((512, 512))
-        pil_mask_resized = pil_mask.resize((512, 512), Image.NEAREST)
+        window = mask_crop_window(
+            mask_binary,
+            pad_ratio=SD_CROP_PAD_RATIO,
+            min_side_px=SD_MIN_CROP_PX,
+            min_side_frac=0.0,
+        )
+
+        crop_bgr = crop_with_window(image, window)
+        crop_mask = crop_with_window(mask_binary, window)
+
+        gen_w, gen_h = _snap_to_multiple_of_8(window.width, window.height)
+
+        crop_rgb = cv2.cvtColor(crop_bgr, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(crop_rgb).resize((gen_w, gen_h), Image.LANCZOS)
+        pil_mask = Image.fromarray(crop_mask).convert("L").resize(
+            (gen_w, gen_h), Image.NEAREST
+        )
 
         if prompt is None:
             prompt = self._prompt
@@ -112,26 +160,42 @@ class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
         guidance_scale = float(kwargs.get("guidance_scale", 10.0))
 
         logger.info(
-            "SD inference: strength=%s steps=%s guidance=%s prompt=%r negative=%r",
+            "SD inference: strength=%s steps=%s guidance=%s gen_size=%dx%d "
+            "window=(%d,%d)-(%d,%d) prompt=%r negative=%r",
             strength,
             num_inference_steps,
             guidance_scale,
+            gen_w,
+            gen_h,
+            window.y0,
+            window.y1,
+            window.x0,
+            window.x1,
             prompt,
             negative_prompt,
         )
         pipe = _load_stable_diffusion_pipe(self._model_id, self._device)
-        result = pipe(
+        result_pil = pipe(
             prompt=prompt,
             negative_prompt=negative_prompt,
-            image=pil_image_resized,
-            mask_image=pil_mask_resized,
+            image=pil_image,
+            mask_image=pil_mask,
             num_inference_steps=num_inference_steps,
             guidance_scale=guidance_scale,
             strength=strength,
         ).images[0]
 
-        result = result.resize(original_size, Image.LANCZOS)
-        result_cv2 = cv2.cvtColor(np.array(result), cv2.COLOR_RGB2BGR)
-        logger.info("Stable Diffusion inpainting completed.")
+        # Resize back to the window's native dimensions before pasting.
+        if result_pil.size != (window.width, window.height):
+            result_pil = result_pil.resize((window.width, window.height), Image.LANCZOS)
 
-        return result_cv2
+        result_crop_bgr = cv2.cvtColor(np.array(result_pil), cv2.COLOR_RGB2BGR)
+
+        # Paste only the mask pixels; all surroundings stay byte-identical.
+        out = image.copy()
+        crop_mask_bool = crop_mask > 127
+        out_crop = out[window.y0 : window.y1, window.x0 : window.x1]
+        out_crop[crop_mask_bool] = result_crop_bgr[crop_mask_bool]
+
+        logger.info("Stable Diffusion inpainting completed.")
+        return out

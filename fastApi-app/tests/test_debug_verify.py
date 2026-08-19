@@ -122,6 +122,8 @@ def test_inpaint_verify_payload_validates() -> None:
     model = DebugInpaintVerifyResponse.model_validate(payload)
     assert model.passed is True
     assert model.mask_index == 0
+    assert model.preview_b64
+    assert model.cutout_b64
     assert len(model.attempts) == 1
     assert model.attempts[0].params.strength == 0.35
 

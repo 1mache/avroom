@@ -374,6 +374,12 @@ def run_inpaint_verify(
                 "clip_crop_b64": _png_b64(entry["clip_crop_bgr"], f"clip crop {entry['attempt_index']}"),
             }
         )
+        original_crop = entry.get("verify_original_crop_bgr")
+        if original_crop is not None:
+            attempts[-1]["verify_original_crop_b64"] = _png_b64(
+                original_crop,
+                f"original crop {entry['attempt_index']}",
+            )
 
     passed = bool(attempts) and bool(attempts[-1]["ok"])
     elapsed_ms = (time.monotonic() - start) * 1000

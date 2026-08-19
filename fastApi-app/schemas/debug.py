@@ -96,7 +96,11 @@ class DebugInpaintAttempt(BaseModel):
     mask_pixel_count: Annotated[int, Field(default=0, description="Inpaint mask pixel count at verify time.")]
     next_params: Annotated[DebugSdParams | None, Field(default=None, description="Parsed retry recipe on fail.")]
     candidate_b64: Annotated[str, Field(description="Full-image candidate PNG, base64.")]
-    clip_crop_b64: Annotated[str, Field(description="Padded mask crop sent to verifier, base64.")]
+    clip_crop_b64: Annotated[str, Field(description="Outlined candidate crop sent to verifier, base64.")]
+    verify_original_crop_b64: Annotated[
+        str | None,
+        Field(default=None, description="Original scene crop in the same window, base64."),
+    ] = None
 
 
 class DebugInpaintVerifyResponse(BaseModel):

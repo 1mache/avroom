@@ -885,7 +885,7 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
             {inpaintVerify.status === "done" ? (
               <>
                 <p className="debug-panel-hint">
-                  Mask {inpaintVerify.data.mask_index}. LaMa once, then each CLIP retry with SD params in and verifier JSON out.
+                  Mask {inpaintVerify.data.mask_index}. LaMa once, then each verify retry with SD params in and verifier JSON out.
                 </p>
                 {inpaintVerify.data.lama_b64 ? (
                   <img
@@ -914,13 +914,27 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
                           })
                         }
                       />
+                      {attempt.verify_original_crop_b64 ? (
+                        <img
+                          src={pngSrc(attempt.verify_original_crop_b64)}
+                          alt={`Original crop attempt ${attempt.attempt_index}`}
+                          title="Gemini in: original"
+                          onClick={() =>
+                            setLightboxSrc({
+                              src: pngSrc(attempt.verify_original_crop_b64 as string),
+                              alt: `Original crop attempt ${attempt.attempt_index}`,
+                            })
+                          }
+                        />
+                      ) : null}
                       <img
                         src={pngSrc(attempt.clip_crop_b64)}
-                        alt={`CLIP crop attempt ${attempt.attempt_index}`}
+                        alt={`Outlined candidate crop attempt ${attempt.attempt_index}`}
+                        title="Gemini in: outlined candidate"
                         onClick={() =>
                           setLightboxSrc({
                             src: pngSrc(attempt.clip_crop_b64),
-                            alt: `CLIP crop attempt ${attempt.attempt_index}`,
+                            alt: `Outlined candidate crop attempt ${attempt.attempt_index}`,
                           })
                         }
                       />

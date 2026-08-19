@@ -22,6 +22,12 @@ class InpaintingVerificationStrategy(ABC):
         image: np.ndarray,
         mask: np.ndarray,
         params: InpaintSdParams,
+        *,
+        original_image: np.ndarray | None = None,
     ) -> InpaintingVerificationResult:
-        """Return pass/fail plus a JSON object of params to replay or tweak."""
+        """Return pass/fail plus a JSON object of params to replay or tweak.
+
+        ``image`` is the inpaint candidate. ``original_image`` is the pre-inpaint
+        scene; Gemini uses it for dual-crop comparison when provided.
+        """
         raise NotImplementedError

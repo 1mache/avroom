@@ -11,7 +11,13 @@ from typing import Any, Callable
 import cv2
 import numpy as np
 
-from ..crop import crop_around_mask
+from ..crop import (
+    GEMINI_CROP_PAD_RATIO,
+    CropWindow,
+    build_verify_crops,
+    crop_around_mask,
+    mask_pixels_in_window,
+)
 from ..inpaint_sd_params import InpaintSdParams
 from ..inpainting_verification_result import InpaintingVerificationResult
 from ..inpainting_verification_strategy import InpaintingVerificationStrategy
@@ -27,15 +33,18 @@ _GENERATE_URL: str = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 )
 
-CompleteFn = Callable[[np.ndarray, InpaintSdParams], str]
+CompleteFn = Callable[[np.ndarray, np.ndarray, InpaintSdParams], str]
 
 _SYSTEM_PROMPT: str = (
-    "You judge ONLY the inpainted hole in this crop, not the rest of the room. "
-    "Fail (ok=false) if you see a leftover object shadow, dark oval, ghost stain, "
-    "blur, grain mismatch, or texture that does not match the surrounding floor/wall. "
-    "Pass only if the hole is a seamless continuation of the surrounding surface. "
-    "Current Stable Diffusion knobs are in the JSON below. Reply with JSON only: "
-    "ok (bool), winner_label (string), prompt, negative_prompt, strength (float), "
+    "You compare two crops of the same window. Image 1 is the original scene before "
+    "inpainting. Image 2 is the inpainted result; the cyan outline marks the inpaint "
+    "region. Judge ONLY pixels INSIDE the cyan outline on image 2 against the "
+    "surrounding surface visible in image 1 just OUTSIDE the outline. "
+    "Fail (ok=false) if you see a leftover object shadow, dark oval, ghost stain, blur, "
+    "grain mismatch, smeared blob, or invented furniture/table inside the outline. "
+    "Pass only if the filled region is a seamless continuation of the surrounding "
+    "floor/wall. Current Stable Diffusion knobs are in the JSON below. Reply with JSON "
+    "only: ok (bool), winner_label (string), prompt, negative_prompt, strength (float), "
     "num_inference_steps (int), guidance_scale (float), mask_dilate_pixels (int), "
     "compose_dilate_pixels (int). If ok is true, copy the input knobs and set both "
     "dilate fields to 0. If ok is false, rewrite prompt/negative_prompt to demand "
@@ -45,16 +54,14 @@ _SYSTEM_PROMPT: str = (
     "paste boundary is fine; 4-12 if fixes must be committed wider than the cutout."
 )
 
-GEMINI_CROP_PAD_RATIO: float = 0.35
-
 
 class GeminiInpaintingVerificationStrategy(InpaintingVerificationStrategy):
     """Gemini generateContent judge for one inpaint candidate.
 
-    Sends a padded mask crop plus the current :class:`InpaintSdParams`. On
-    fail, ``param_fixes_json`` carries Gemini's rewritten knobs for Hybrid
-    replay. Missing/placeholder key, HTTP errors, and unparseable JSON fall
-    back to :class:`ClipLabelInpaintingVerificationStrategy`.
+    Sends original + outlined candidate crops of the same window plus the current
+    :class:`InpaintSdParams`. On fail, ``param_fixes_json`` carries Gemini's rewritten
+    knobs for Hybrid replay. Missing/placeholder key, HTTP errors, and unparseable JSON
+    fall back to :class:`ClipLabelInpaintingVerificationStrategy`.
     """
 
     def __init__(
@@ -96,24 +103,69 @@ class GeminiInpaintingVerificationStrategy(InpaintingVerificationStrategy):
         image: np.ndarray,
         mask: np.ndarray,
         params: InpaintSdParams,
+        *,
+        original_image: np.ndarray | None = None,
     ) -> InpaintingVerificationResult:
-        crop = crop_around_mask(image, mask, pad_ratio=GEMINI_CROP_PAD_RATIO)
+        dual_crop = original_image is not None
+        window: CropWindow | None = None
+        outlined_crop: np.ndarray
+        original_crop: np.ndarray | None = None
+
+        if dual_crop:
+            assert original_image is not None
+            original_crop, outlined_crop, window = build_verify_crops(
+                original_image,
+                image,
+                mask,
+                pad_ratio=GEMINI_CROP_PAD_RATIO,
+            )
+        else:
+            logger.warning(
+                "Gemini verify missing original_image; falling back to single-crop."
+            )
+            outlined_crop = crop_around_mask(image, mask, pad_ratio=GEMINI_CROP_PAD_RATIO)
+            original_crop = None
+
         if self._complete_fn is None and not self._has_real_key():
             logger.warning("GEMINI_API_KEY is placeholder; falling back to CLIP verify.")
-            return self._clip.verify(image, mask, params)
+            return self._clip_fallback(image, mask, params, reason="placeholder key")
+
         try:
-            raw = (
-                self._complete_fn(crop, params)
-                if self._complete_fn is not None
-                else self._call_gemini(crop, params)
-            )
+            if self._complete_fn is not None:
+                if dual_crop:
+                    assert original_crop is not None
+                    raw = self._complete_fn(original_crop, outlined_crop, params)
+                else:
+                    raw = self._complete_fn(outlined_crop, outlined_crop, params)
+            elif dual_crop:
+                assert original_crop is not None
+                raw = self._call_gemini(original_crop, outlined_crop, params)
+            else:
+                raw = self._call_gemini_legacy(outlined_crop, params)
             parsed = _parse_gemini_payload(raw, params)
         except (ValueError, KeyError, TypeError, json.JSONDecodeError, OSError) as exc:
             logger.warning("Gemini inpaint verify failed (%s); falling back to CLIP.", exc)
-            return self._clip.verify(image, mask, params)
+            return self._clip_fallback(image, mask, params, reason=str(exc))
 
         ok, winner, fixed = parsed
-        logger.info("Inpaint Gemini verify ok=%s winner=%s", ok, winner)
+        crop_h, crop_w = outlined_crop.shape[:2]
+        mask_px = (
+            mask_pixels_in_window(mask, window)
+            if window is not None
+            else int(np.count_nonzero(_mask_bool_slice(mask)))
+        )
+        _log_gemini_verify(
+            ok=ok,
+            winner=winner,
+            params=params,
+            fixed=fixed,
+            model=self._resolve_model_id(),
+            crop_w=crop_w,
+            crop_h=crop_h,
+            window=window,
+            mask_px=mask_px,
+            dual_crop=dual_crop,
+        )
         return InpaintingVerificationResult(
             ok=ok,
             param_fixes_json=params.to_json() if ok else fixed.to_json(),
@@ -121,39 +173,79 @@ class GeminiInpaintingVerificationStrategy(InpaintingVerificationStrategy):
             winner_label=winner,
         )
 
-    def _call_gemini(self, crop_bgr: np.ndarray, params: InpaintSdParams) -> str:
-        ok_flag, buf = cv2.imencode(".png", crop_bgr)
-        if not ok_flag:
-            raise ValueError("Failed to encode inpaint crop as PNG")
-        b64 = base64.b64encode(bytes(buf)).decode("ascii")
-        body: dict[str, Any] = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": _SYSTEM_PROMPT + "\n" + params.to_json()},
-                        {"inline_data": {"mime_type": "image/png", "data": b64}},
-                    ]
-                }
-            ],
-            "generationConfig": {"responseMimeType": "application/json"},
-        }
-        url = _GENERATE_URL.format(model=self._resolve_model_id())
-        request = urllib.request.Request(
-            url,
-            data=json.dumps(body).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "x-goog-api-key": self._api_key,
-            },
-            method="POST",
+    def _clip_fallback(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray,
+        params: InpaintSdParams,
+        *,
+        reason: str,
+    ) -> InpaintingVerificationResult:
+        result = self._clip.verify(image, mask, params)
+        top_label = result.winner_label
+        top_score = result.scores.get(top_label, 0.0) if result.scores else 0.0
+        logger.warning(
+            "Gemini verify CLIP fallback reason=%s clip_ok=%s clip_winner=%s top_score=%.3f",
+            reason,
+            result.ok,
+            top_label,
+            top_score,
         )
-        try:
-            with urllib.request.urlopen(request, timeout=30) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:400]
-            raise OSError(f"Gemini HTTP {exc.code}: {detail}") from exc
-        return _extract_text(payload)
+        return result
+
+    def _call_gemini(
+        self,
+        original_crop_bgr: np.ndarray,
+        outlined_crop_bgr: np.ndarray,
+        params: InpaintSdParams,
+    ) -> str:
+        parts: list[dict[str, Any]] = [
+            {"text": _SYSTEM_PROMPT},
+            {"text": "Image 1: original before inpainting."},
+            {"inline_data": {"mime_type": "image/png", "data": _encode_png_b64(original_crop_bgr)}},
+            {"text": "Image 2: inpainted result; cyan outline = inpaint region."},
+            {"inline_data": {"mime_type": "image/png", "data": _encode_png_b64(outlined_crop_bgr)}},
+            {"text": params.to_json()},
+        ]
+        return _post_gemini(parts, api_key=self._api_key, model_id=self._resolve_model_id())
+
+    def _call_gemini_legacy(self, crop_bgr: np.ndarray, params: InpaintSdParams) -> str:
+        parts: list[dict[str, Any]] = [
+            {"text": _SYSTEM_PROMPT + "\n" + params.to_json()},
+            {"inline_data": {"mime_type": "image/png", "data": _encode_png_b64(crop_bgr)}},
+        ]
+        return _post_gemini(parts, api_key=self._api_key, model_id=self._resolve_model_id())
+
+
+def _encode_png_b64(crop_bgr: np.ndarray) -> str:
+    ok_flag, buf = cv2.imencode(".png", crop_bgr)
+    if not ok_flag:
+        raise ValueError("Failed to encode inpaint crop as PNG")
+    return base64.b64encode(bytes(buf)).decode("ascii")
+
+
+def _post_gemini(parts: list[dict[str, Any]], *, api_key: str, model_id: str) -> str:
+    body: dict[str, Any] = {
+        "contents": [{"parts": parts}],
+        "generationConfig": {"responseMimeType": "application/json"},
+    }
+    url = _GENERATE_URL.format(model=model_id)
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "x-goog-api-key": api_key,
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:400]
+        raise OSError(f"Gemini HTTP {exc.code}: {detail}") from exc
+    return _extract_text(payload)
 
 
 def _extract_text(payload: dict[str, Any]) -> str:
@@ -204,3 +296,73 @@ def _parse_gemini_payload(
             compose_dilate_pixels=0,
         )
     return ok, winner, fixed
+
+
+def _log_gemini_verify(
+    *,
+    ok: bool,
+    winner: str,
+    params: InpaintSdParams,
+    fixed: InpaintSdParams,
+    model: str,
+    crop_w: int,
+    crop_h: int,
+    window: CropWindow | None,
+    mask_px: int,
+    dual_crop: bool,
+) -> None:
+    window_text = (
+        f"({window.y0},{window.y1})-({window.x0},{window.x1})"
+        if window is not None
+        else "n/a"
+    )
+    strength = params.strength if ok else fixed.strength
+    mask_dilate = 0 if ok else fixed.mask_dilate_pixels
+    compose_dilate = 0 if ok else fixed.compose_dilate_pixels
+    base = (
+        "Inpaint Gemini verify ok=%s winner=%s model=%s crop=%dx%d window=%s "
+        "mask_px=%d dual_crop=%s strength=%s mask_dilate=%s compose_dilate=%s"
+    )
+    if ok:
+        logger.info(
+            base,
+            ok,
+            winner,
+            model,
+            crop_w,
+            crop_h,
+            window_text,
+            mask_px,
+            dual_crop,
+            strength,
+            mask_dilate,
+            compose_dilate,
+        )
+        return
+    prompt_snip = fixed.prompt[:80]
+    logger.info(
+        base + " next_strength=%s next_mask_dilate=%s next_compose_dilate=%s next_prompt=%r",
+        ok,
+        winner,
+        model,
+        crop_w,
+        crop_h,
+        window_text,
+        mask_px,
+        dual_crop,
+        strength,
+        mask_dilate,
+        compose_dilate,
+        fixed.strength,
+        fixed.mask_dilate_pixels,
+        fixed.compose_dilate_pixels,
+        prompt_snip,
+    )
+
+
+def _mask_bool_slice(mask: np.ndarray) -> np.ndarray:
+    if mask.ndim == 3:
+        mask = mask[:, :, 0]
+    if mask.dtype == np.uint8 or (mask.size and float(mask.max()) > 1.0):
+        return mask > 127
+    return mask > 0.5

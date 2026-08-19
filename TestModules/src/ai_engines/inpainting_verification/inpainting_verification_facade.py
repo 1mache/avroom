@@ -39,6 +39,8 @@ class InpaintingVerificationFacade:
         image: np.ndarray,
         mask: np.ndarray,
         params: InpaintSdParams,
+        *,
+        original_image: np.ndarray | None = None,
     ) -> InpaintingVerificationResult:
         """Run verification on a BGR inpaint candidate."""
-        return self._strategy.verify(image, mask, params)
+        return self._strategy.verify(image, mask, params, original_image=original_image)

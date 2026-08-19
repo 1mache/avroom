@@ -9,7 +9,9 @@ import numpy as np
 from ....utils.debug_image_saver import DebugImageSaver
 from ....utils.mask_refiner import MaskRefiner
 from ...inpainting_verification.crop import (
+    GEMINI_CROP_PAD_RATIO,
     INPAINT_VERIFY_CROP_PAD_RATIO as _CROP_PAD_RATIO,
+    build_verify_crops,
     crop_around_mask,
 )
 from ...inpainting_verification.inpaint_sd_params import InpaintSdParams
@@ -165,20 +167,52 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
         retries_left = self.INPAINT_VERIFY_MAX_RETRIES
         attempt_index = 0
         while True:
-            verdict = self._verifier.verify(candidate, mask, params)
-            last_verdict_ok = verdict.ok
-            logger.info(
-                "Inpaint verify ok=%s retries_left=%d",
-                verdict.ok,
-                retries_left,
+            verdict = self._verifier.verify(
+                candidate,
+                mask,
+                params,
+                original_image=image,
             )
+            last_verdict_ok = verdict.ok
             next_params: InpaintSdParams | None = None
             if not verdict.ok:
                 try:
                     next_params = InpaintSdParams.from_json(verdict.param_fixes_json)
                 except (KeyError, ValueError, TypeError):
                     next_params = None
+            mask_px = self._mask_pixel_count(mask)
+            if not verdict.ok and next_params is not None:
+                logger.info(
+                    "Inpaint verify ok=%s attempt=%d retries_left=%d mask_px=%d "
+                    "next_strength=%s next_mask_dilate=%s next_compose_dilate=%s",
+                    verdict.ok,
+                    attempt_index,
+                    retries_left,
+                    mask_px,
+                    next_params.strength,
+                    next_params.mask_dilate_pixels,
+                    next_params.compose_dilate_pixels,
+                )
+            else:
+                logger.info(
+                    "Inpaint verify ok=%s attempt=%d retries_left=%d mask_px=%d",
+                    verdict.ok,
+                    attempt_index,
+                    retries_left,
+                    mask_px,
+                )
             if verify_trace is not None:
+                verify_original_crop: np.ndarray | None = None
+                clip_crop = crop_around_mask(candidate, mask)
+                try:
+                    verify_original_crop, clip_crop, _window = build_verify_crops(
+                        image,
+                        candidate,
+                        mask,
+                        pad_ratio=GEMINI_CROP_PAD_RATIO,
+                    )
+                except (ValueError, IndexError):
+                    verify_original_crop = None
                 verify_trace.append(
                     {
                         "attempt_index": attempt_index,
@@ -190,10 +224,15 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
                         "param_fixes_json": verdict.param_fixes_json,
                         "mask_dilate_pixels": next_params.mask_dilate_pixels if next_params else 0,
                         "compose_dilate_pixels": next_params.compose_dilate_pixels if next_params else 0,
-                        "mask_pixel_count": self._mask_pixel_count(mask),
+                        "mask_pixel_count": mask_px,
                         "next_params": self._params_trace(next_params) if next_params else None,
                         "candidate_bgr": candidate.copy(),
-                        "clip_crop_bgr": crop_around_mask(candidate, mask).copy(),
+                        "verify_original_crop_bgr": (
+                            verify_original_crop.copy()
+                            if verify_original_crop is not None
+                            else None
+                        ),
+                        "clip_crop_bgr": clip_crop.copy(),
                         "lama_bgr": primary_result.copy() if attempt_index == 0 else None,
                     }
                 )

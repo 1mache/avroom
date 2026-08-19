@@ -8,20 +8,29 @@ Source: [`TestModules/src/ai_engines/inpainting_verification/`](../../../../Test
 
 ## Strategy ABC
 
-- **`InpaintingVerificationStrategy`** — `verify(image, mask, params) -> InpaintingVerificationResult`
+- **`InpaintingVerificationStrategy`** — `verify(image, mask, params, *, original_image=None) -> InpaintingVerificationResult`
 
 ## Result and params
 
 - **`InpaintingVerificationResult`** — `ok`, `param_fixes_json`, `scores`, `winner_label`.
 - **`InpaintSdParams`** — SD knobs plus verifier retry directives `mask_dilate_pixels` / `compose_dilate_pixels` (AI-decided on fail, `0` on pass). `to_json` / `from_json` with safety caps via `clamp_dilate_fields`.
 
-## Crop helper
+## Crop helpers
 
-- **`crop_around_mask`** — bbox of the mask, padded by `INPAINT_VERIFY_CROP_PAD_RATIO` (0.25) on each side, clamped to the image.
+| Symbol | Role |
+|--------|------|
+| `CropWindow` | Frozen `(y0, y1, x0, x1)` slice |
+| `mask_crop_window` | Mask bbox + pad, optional minimum side |
+| `crop_with_window` | Slice BGR array |
+| `draw_mask_outline` | Cyan contour on candidate crop |
+| `build_verify_crops` | Original + outlined candidate in one window |
+| `crop_around_mask` | CLIP path; pad only, no minimum size |
+| `MIN_VERIFY_CROP_PX` / `MIN_VERIFY_CROP_FRAC` | Gemini minimum crop (256 px / 25%) |
+| `GEMINI_CROP_PAD_RATIO` | 0.35 pad for Gemini |
 
 ## Concrete strategies
 
 | Strategy | Role |
 |----------|------|
-| `GeminiInpaintingVerificationStrategy` | Sends wider pad-crop PNG + params JSON to Gemini REST. Fail JSON carries rewritten knobs plus AI-decided dilate fields. Placeholder key / HTTP / bad JSON → CLIP. |
-| `ClipLabelInpaintingVerificationStrategy` | CLIP softmax over clean texture vs leftover-shadow / smear labels. Fail JSON bumps strength, appends shadow-avoidance text, and uses fixed dilate heuristics. |
+| `GeminiInpaintingVerificationStrategy` | Sends original + outlined candidate PNGs + params JSON to Gemini REST. Fail JSON carries rewritten knobs plus AI-decided dilate fields. Logs crop/window/retry recipe at INFO. Placeholder key / HTTP / bad JSON → CLIP. |
+| `ClipLabelInpaintingVerificationStrategy` | CLIP softmax over clean texture vs leftover-shadow / smear labels. Fail JSON bumps strength, appends shadow-avoidance text, and uses fixed dilate heuristics. Ignores `original_image`. |

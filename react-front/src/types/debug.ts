@@ -89,6 +89,7 @@ export interface DebugInpaintAttempt {
   next_params?: DebugSdParams | null;
   candidate_b64: string;
   clip_crop_b64: string;
+  verify_original_crop_b64?: string | null;
 }
 
 export interface DebugInpaintVerifyResponse {

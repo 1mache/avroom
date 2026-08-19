@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 sys.modules.setdefault("torch", MagicMock())
 sys.modules.setdefault("transformers", MagicMock())
@@ -20,6 +20,12 @@ from avroom_object_removal import (  # noqa: E402
     InpaintingVerificationFacade,
     InpaintingVerificationResult,
     crop_around_mask,
+)
+from avroom_object_removal.ai_engines.inpainting_verification.crop import (  # noqa: E402
+    MIN_VERIFY_CROP_PX,
+    build_verify_crops,
+    draw_mask_outline,
+    mask_crop_window,
 )
 from avroom_object_removal.ai_engines.inpainting_verification.inpainting_verification_strategy import (
     InpaintingVerificationStrategy,
@@ -55,13 +61,17 @@ class _ScriptedVerifier(InpaintingVerificationStrategy):
         self._oks = oks
         self._fixes_json = fixes_json
         self.calls = 0
+        self.last_original_image: np.ndarray | None = None
 
     def verify(
         self,
         image: np.ndarray,
         mask: np.ndarray,
         params: InpaintSdParams,
+        *,
+        original_image: np.ndarray | None = None,
     ) -> InpaintingVerificationResult:
+        self.last_original_image = original_image
         ok = self._oks[min(self.calls, len(self._oks) - 1)]
         idx = min(self.calls, len(self._oks) - 1)
         fixes = (
@@ -162,7 +172,11 @@ def test_inpaint_sd_params_round_trips_dilate_fields() -> None:
 def test_gemini_fail_parses_dilate_fields() -> None:
     params = _params()
 
-    def complete_fn(_crop: np.ndarray, received: InpaintSdParams) -> str:
+    def complete_fn(
+        _original: np.ndarray,
+        _outlined: np.ndarray,
+        received: InpaintSdParams,
+    ) -> str:
         assert received.prompt == params.prompt
         return (
             '{"ok":false,"winner_label":"shadow ring","prompt":"fixed wall",'
@@ -175,7 +189,7 @@ def test_gemini_fail_parses_dilate_fields() -> None:
         complete_fn=complete_fn,
     )
     image, mask = _scene()
-    result = strategy.verify(image, mask, params)
+    result = strategy.verify(image, mask, params, original_image=image)
     fixed = InpaintSdParams.from_json(result.param_fixes_json)
     assert fixed.mask_dilate_pixels == 12
     assert fixed.compose_dilate_pixels == 6
@@ -267,7 +281,11 @@ def test_hybrid_skip_sd_when_verify_passes() -> None:
 def test_gemini_fail_returns_rewritten_prompt() -> None:
     params = _params()
 
-    def complete_fn(_crop: np.ndarray, received: InpaintSdParams) -> str:
+    def complete_fn(
+        _original: np.ndarray,
+        _outlined: np.ndarray,
+        received: InpaintSdParams,
+    ) -> str:
         assert received.prompt == params.prompt
         return (
             '{"ok":false,"winner_label":"smeared blob","prompt":"fixed wall",'
@@ -280,7 +298,7 @@ def test_gemini_fail_returns_rewritten_prompt() -> None:
         complete_fn=complete_fn,
     )
     image, mask = _scene()
-    result = strategy.verify(image, mask, params)
+    result = strategy.verify(image, mask, params, original_image=image)
     assert result.ok is False
     assert result.winner_label == "smeared blob"
     fixed = InpaintSdParams.from_json(result.param_fixes_json)
@@ -304,7 +322,11 @@ def test_gemini_placeholder_key_uses_clip_fallback() -> None:
 
 
 def test_gemini_bad_json_falls_back_to_clip() -> None:
-    def complete_fn(_crop: np.ndarray, _params: InpaintSdParams) -> str:
+    def complete_fn(
+        _original: np.ndarray,
+        _outlined: np.ndarray,
+        _params: InpaintSdParams,
+    ) -> str:
         return "not-json"
 
     def score_fn(_img: Image.Image, labels: tuple[str, ...]) -> dict[str, float]:
@@ -317,7 +339,7 @@ def test_gemini_bad_json_falls_back_to_clip() -> None:
     )
     image, mask = _scene()
     params = _params()
-    result = strategy.verify(image, mask, params)
+    result = strategy.verify(image, mask, params, original_image=image)
     assert result.ok is False
     fixed = InpaintSdParams.from_json(result.param_fixes_json)
     assert "leftover shadow" in fixed.prompt
@@ -327,7 +349,7 @@ def test_gemini_model_id_reads_env(monkeypatch: Any) -> None:
     monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-flash")
     strategy = GeminiInpaintingVerificationStrategy(
         api_key="placeholder",
-        complete_fn=lambda _crop, _params: '{"ok":true}',
+        complete_fn=lambda _orig, _out, _params: '{"ok":true}',
     )
     assert strategy._resolve_model_id() == "gemini-2.5-flash"
     monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
@@ -346,3 +368,146 @@ def test_hybrid_skip_sd_then_verify_fail_starts_sd() -> None:
     result = hybrid.inpaint(image, mask, strength=0.1)
     assert len(sd.calls) == 1
     assert np.all(result == np.array((8, 8, 8), dtype=np.uint8))
+
+
+def test_mask_crop_window_enforces_min_size() -> None:
+    image = np.zeros((1200, 1600, 3), dtype=np.uint8)
+    mask = np.zeros((1200, 1600), dtype=np.uint8)
+    mask[600:602, 800:802] = 255
+    window = mask_crop_window(mask)
+    assert window.width >= MIN_VERIFY_CROP_PX
+    assert window.height >= MIN_VERIFY_CROP_PX
+    crop = image[window.y0 : window.y1, window.x0 : window.x1]
+    assert crop.shape[0] >= MIN_VERIFY_CROP_PX
+    assert crop.shape[1] >= MIN_VERIFY_CROP_PX
+
+
+def test_build_verify_crops_same_window_shapes() -> None:
+    original = np.zeros((64, 64, 3), dtype=np.uint8)
+    candidate = np.full((64, 64, 3), 40, dtype=np.uint8)
+    mask = np.zeros((64, 64), dtype=np.uint8)
+    mask[20:30, 20:30] = 255
+    orig_crop, outlined_crop, window = build_verify_crops(original, candidate, mask)
+    assert orig_crop.shape == outlined_crop.shape
+    assert orig_crop.shape[0] == window.height
+    assert orig_crop.shape[1] == window.width
+
+
+def test_draw_mask_outline_changes_boundary_pixels() -> None:
+    candidate = np.full((32, 32, 3), 50, dtype=np.uint8)
+    mask = np.zeros((32, 32), dtype=np.uint8)
+    mask[10:20, 10:20] = 255
+    window = mask_crop_window(mask, min_side_px=0, min_side_frac=0.0)
+    plain = candidate[window.y0 : window.y1, window.x0 : window.x1].copy()
+    outlined = draw_mask_outline(plain, mask, window)
+    assert not np.array_equal(plain, outlined)
+
+
+def test_gemini_dual_crop_complete_fn_receives_two_arrays() -> None:
+    params = _params()
+    seen: list[np.ndarray] = []
+
+    def complete_fn(
+        original_crop: np.ndarray,
+        outlined_crop: np.ndarray,
+        _received: InpaintSdParams,
+    ) -> str:
+        seen.append(original_crop)
+        seen.append(outlined_crop)
+        assert original_crop.shape == outlined_crop.shape
+        assert not np.array_equal(original_crop, outlined_crop)
+        return '{"ok":true,"winner_label":"clean texture"}'
+
+    strategy = GeminiInpaintingVerificationStrategy(
+        api_key="placeholder",
+        complete_fn=complete_fn,
+    )
+    image, mask = _scene()
+    image[:, :, 0] = 10
+    candidate = image.copy()
+    candidate[4:8, 4:8] = 200
+    result = strategy.verify(candidate, mask, params, original_image=image)
+    assert result.ok is True
+    assert len(seen) == 2
+
+
+def test_gemini_call_gemini_sends_two_png_parts() -> None:
+    params = _params()
+    posted: list[dict[str, Any]] = []
+
+    def fake_post(parts: list[dict[str, Any]], *, api_key: str, model_id: str) -> str:
+        del api_key, model_id
+        posted.append({"parts": parts})
+        return '{"ok":true,"winner_label":"clean texture"}'
+
+    strategy = GeminiInpaintingVerificationStrategy(api_key="test-key")
+    original = np.zeros((16, 16, 3), dtype=np.uint8)
+    outlined = np.full((16, 16, 3), 30, dtype=np.uint8)
+    from avroom_object_removal.ai_engines.inpainting_verification.strategies import (
+        gemini_inpainting_verification_strategy as gemini_mod,
+    )
+
+    with patch.object(gemini_mod, "_post_gemini", side_effect=fake_post):
+        strategy._call_gemini(original, outlined, params)
+    parts = posted[0]["parts"]
+    inline_parts = [part for part in parts if "inline_data" in part]
+    assert len(inline_parts) == 2
+
+
+def test_gemini_fail_logs_retry_fields(caplog: Any) -> None:
+    import logging
+
+    params = _params()
+
+    def complete_fn(
+        _original: np.ndarray,
+        _outlined: np.ndarray,
+        _received: InpaintSdParams,
+    ) -> str:
+        return (
+            '{"ok":false,"winner_label":"shadow ring","prompt":"fixed wall texture",'
+            '"negative_prompt":"blob","strength":0.55,"num_inference_steps":40,'
+            '"guidance_scale":8.0,"mask_dilate_pixels":8,"compose_dilate_pixels":4}'
+        )
+
+    strategy = GeminiInpaintingVerificationStrategy(
+        api_key="placeholder",
+        complete_fn=complete_fn,
+    )
+    image, mask = _scene()
+    with caplog.at_level(logging.INFO):
+        strategy.verify(image, mask, params, original_image=image)
+    joined = "\n".join(record.message for record in caplog.records)
+    assert "next_strength=0.55" in joined
+    assert "next_mask_dilate=8" in joined
+    assert "next_compose_dilate=4" in joined
+    assert "crop=" in joined
+
+
+def test_hybrid_passes_original_image_to_verifier() -> None:
+    verifier = _ScriptedVerifier([True])
+    hybrid = HybridInpaintingStrategy(
+        primary=_SolidColorInpaintStrategy((1, 1, 1)),
+        refiner=_SolidColorInpaintStrategy((2, 2, 2)),
+        verifier=InpaintingVerificationFacade(strategy=verifier),
+    )
+    hybrid.SHARPEN_AMOUNT = 0.0
+    image, mask = _scene()
+    hybrid.inpaint(image, mask, strength=0.35)
+    assert verifier.last_original_image is not None
+    assert np.array_equal(verifier.last_original_image, image)
+
+
+def test_hybrid_verify_trace_includes_original_crop() -> None:
+    hybrid = HybridInpaintingStrategy(
+        primary=_SolidColorInpaintStrategy((1, 1, 1)),
+        refiner=_SolidColorInpaintStrategy((2, 2, 2)),
+        verifier=InpaintingVerificationFacade(strategy=_ScriptedVerifier([True])),
+    )
+    hybrid.SHARPEN_AMOUNT = 0.0
+    image, mask = _scene()
+    trace: list[dict[str, Any]] = []
+    hybrid.inpaint(image, mask, strength=0.35, verify_trace=trace)
+    assert trace[0]["verify_original_crop_bgr"] is not None
+    assert trace[0]["clip_crop_bgr"] is not None
+    assert trace[0]["verify_original_crop_bgr"].shape == trace[0]["clip_crop_bgr"].shape

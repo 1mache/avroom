@@ -65,7 +65,10 @@ class ClipLabelInpaintingVerificationStrategy(InpaintingVerificationStrategy):
         image: np.ndarray,
         mask: np.ndarray,
         params: InpaintSdParams,
+        *,
+        original_image: np.ndarray | None = None,
     ) -> InpaintingVerificationResult:
+        del original_image
         crop = crop_around_mask(image, mask) if self._pad_ratio is None else crop_around_mask(
             image, mask, pad_ratio=self._pad_ratio
         )

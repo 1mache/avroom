@@ -52,6 +52,7 @@ export interface DebugMaskCandidate {
   index: number;
   score: number;
   reason: string;
+  clip_checks: Record<string, number> | null;
   preview_b64: string;
   clip_crop_b64: string | null;
   cutout_b64: string;
@@ -61,6 +62,9 @@ export interface DebugAutoMaskPickResponse {
   click_xy: [number, number] | number[];
   threshold: number;
   winner_index: number | null;
+  finalist_indices: number[];
+  tiebreak_method: string;
+  tiebreak_reason: string | null;
   candidates: DebugMaskCandidate[];
   elapsed_ms: number;
 }

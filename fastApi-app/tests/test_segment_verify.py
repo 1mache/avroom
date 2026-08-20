@@ -79,6 +79,7 @@ def test_auto_verify_returns_only_winner(tmp_path: Path) -> None:
         _patch_segmentor(_six_pairs()),
         patch("core.image_processing.get_or_compute_depth", return_value=(depth, "cache")),
         patch("core.image_processing._get_cutout_clip_scorer", return_value=MagicMock()),
+        patch("core.image_processing._get_cutout_tiebreaker", return_value=None),
         patch("avroom_object_removal.select_best_cutout", return_value=selection) as select_mock,
     ):
         results = segment_candidates_on_image(
@@ -92,6 +93,10 @@ def test_auto_verify_returns_only_winner(tmp_path: Path) -> None:
     assert len(results) == 1
     assert results[0][0] == "2"
     select_mock.assert_called_once()
+    kwargs = select_mock.call_args.kwargs
+    assert kwargs["refined_masks"] is not None
+    assert kwargs["scene_bgr"] is not None
+    assert "tiebreaker" in kwargs
 
 
 def test_auto_verify_raises_when_no_winner(tmp_path: Path) -> None:
@@ -108,6 +113,7 @@ def test_auto_verify_raises_when_no_winner(tmp_path: Path) -> None:
         _patch_segmentor(_six_pairs()),
         patch("core.image_processing.get_or_compute_depth", return_value=(depth, "cache")),
         patch("core.image_processing._get_cutout_clip_scorer", return_value=MagicMock()),
+        patch("core.image_processing._get_cutout_tiebreaker", return_value=None),
         patch("avroom_object_removal.select_best_cutout", return_value=selection),
     ):
         with pytest.raises(ValueError, match="no viable mask"):

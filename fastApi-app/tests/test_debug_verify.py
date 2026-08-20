@@ -102,6 +102,7 @@ def test_auto_mask_pick_payload_validates() -> None:
         patch("core.debug_vision._segment_click", return_value=(_pair(),)),
         patch("core.debug_vision.load_avroom_attr", side_effect=_load_attr),
         patch("core.debug_vision._get_cutout_clip_scorer", return_value=MagicMock()),
+        patch("core.debug_vision._get_cutout_tiebreaker", return_value=None),
     ):
         payload = run_auto_mask_pick(_png_bytes(), x=8, y=8)
 
@@ -109,6 +110,7 @@ def test_auto_mask_pick_payload_validates() -> None:
     assert model.winner_index == 0
     assert model.candidates[0].reason == "winner"
     assert model.candidates[0].clip_crop_b64 is None
+    assert model.tiebreak_method == "none"
 
 
 def test_inpaint_verify_payload_validates() -> None:
@@ -116,6 +118,7 @@ def test_inpaint_verify_payload_validates() -> None:
         patch("core.debug_vision._segment_click", return_value=(_pair(),)),
         patch("core.debug_vision.load_avroom_attr", side_effect=_load_attr),
         patch("core.debug_vision._get_cutout_clip_scorer", return_value=MagicMock()),
+        patch("core.debug_vision._get_cutout_tiebreaker", return_value=None),
     ):
         payload = run_inpaint_verify(_png_bytes(), x=8, y=8, mask_index=None)
 

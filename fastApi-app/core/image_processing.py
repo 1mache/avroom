@@ -61,6 +61,28 @@ def _get_cutout_clip_scorer():
     return ClipZeroShotContentValidationStrategy()
 
 
+@functools.lru_cache(maxsize=1)
+def _get_cutout_tiebreaker():
+    """Lazy Gemini picker when ``GEMINI_API_KEY`` is configured.
+
+    All-candidates mode: heuristic scores cannot rank thin-structure
+    completeness (chair legs), so every consensus-cluster candidate goes to
+    Gemini instead of only the tie-band top scorers.
+    """
+    import os
+
+    from avroom_object_removal import GeminiCutoutAllCandidatesTiebreakStrategy
+    from avroom_object_removal.ai_engines.gemini.gemini_client import (
+        PLACEHOLDER_API_KEY,
+        has_real_api_key,
+    )
+
+    key = os.environ.get("GEMINI_API_KEY", PLACEHOLDER_API_KEY)
+    if not has_real_api_key(key):
+        return None
+    return GeminiCutoutAllCandidatesTiebreakStrategy()
+
+
 def _create_debug_click_image(
     source_image: Image.Image,
     x: int,
@@ -351,16 +373,42 @@ def segment_candidates_on_image(
         if verify_mode is VerifyMode.AUTO:
             from avroom_object_removal import select_best_cutout
 
+            refined_masks = [pair[0] for pair in candidate_pairs]
+            source_bgr = _decode_original_bgr(image_bytes, image_id)
             selection = select_best_cutout(
                 cutouts_bgra,
                 click_xy=(x, y),
-                scorer=_get_cutout_clip_scorer(),
+                refined_masks=refined_masks,
+                scene_bgr=source_bgr,
+                depth_map=depth_map,
+                tiebreaker=_get_cutout_tiebreaker(),
             )
+            for index, reason in enumerate(selection.reasons):
+                checks = (
+                    selection.clip_checks[index]
+                    if index < len(selection.clip_checks)
+                    else None
+                )
+                avg = (
+                    selection.scores[index] if index < len(selection.scores) else 0.0
+                )
+                passed = reason in ("scored", "ranked", "winner")
+                logger.info(
+                    "Auto mask pick candidate %d image_id=%s: %s avg=%.3f checks=%s reason=%s",
+                    index,
+                    image_id,
+                    "PASS" if passed else "FAIL",
+                    avg,
+                    checks,
+                    reason,
+                )
             logger.info(
-                "Auto mask pick: image_id=%s winner=%s scores=%s",
+                "Auto mask pick: image_id=%s winner=%s scores=%s finalists=%s tiebreak=%s",
                 image_id,
                 selection.winner_index,
                 selection.scores,
+                selection.finalist_indices,
+                selection.tiebreak_method,
             )
             if selection.winner_index is None:
                 raise ValueError("no viable mask")

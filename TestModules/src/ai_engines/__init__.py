@@ -42,6 +42,14 @@ from .inpainting_verification import (
     InpaintingVerificationStrategy,
     crop_around_mask,
 )
+from .mask_selection import (
+    AbsoluteClipGateStrategy,
+    GeminiCutoutAllCandidatesTiebreakStrategy,
+    GeminiCutoutTiebreakStrategy,
+    MaskSelectionStrategy,
+    MaskSelectionTiebreakStrategy,
+    RelativeClipRankingStrategy,
+)
 from .novel_view import (
     NovelViewFacade,
     NovelViewStrategy,
@@ -83,6 +91,8 @@ __all__ = [
     "DepthMappingStrategy",
     "ClipLabelInpaintingVerificationStrategy",
     "GeminiInpaintingVerificationStrategy",
+    "GeminiCutoutTiebreakStrategy",
+    "GeminiCutoutAllCandidatesTiebreakStrategy",
     "INPAINT_VERIFY_CROP_PAD_RATIO",
     "InpaintSdParams",
     "InpaintingVerificationFacade",
@@ -95,6 +105,10 @@ __all__ = [
     "ImageSegmentationFacade",
     "ImageSegmentationStrategy",
     "LamaInpaintingStrategy",
+    "MaskSelectionTiebreakStrategy",
+    "MaskSelectionStrategy",
+    "AbsoluteClipGateStrategy",
+    "RelativeClipRankingStrategy",
     "NearFarBlendedDepthMappingStrategy",
     "NovelViewFacade",
     "NovelViewStrategy",

@@ -50,8 +50,12 @@ class DebugMaskCandidate(BaseModel):
     """One SAM cutout scored by auto mask pick."""
 
     index: Annotated[int, Field(description="Candidate index in SAM order.")]
-    score: Annotated[float, Field(description="CLIP P(good); 0.0 when pre-filtered.")]
-    reason: Annotated[str, Field(description="Prefilter or score tag, e.g. winner / click_miss.")]
+    score: Annotated[float, Field(description="Mean CLIP check score; 0.0 when pre-filtered.")]
+    reason: Annotated[str, Field(description="Prefilter, clip_fail, scored, or winner tag.")]
+    clip_checks: Annotated[
+        dict[str, float] | None,
+        Field(default=None, description="Per-check P(positive), or null when not scored."),
+    ]
     preview_b64: Annotated[str, Field(description="PNG preview with click marker, base64.")]
     clip_crop_b64: Annotated[
         str | None, Field(default=None, description="Gray-composited CLIP crop PNG, or null if not scored.")
@@ -63,8 +67,20 @@ class DebugAutoMaskPickResponse(BaseModel):
     """All SAM candidates plus CLIP ranking for one click. No session writes."""
 
     click_xy: Annotated[list[int], Field(description="Natural-image click [x, y].")]
-    threshold: Annotated[float, Field(description="Minimum P(good) to become winner.")]
+    threshold: Annotated[float, Field(description="Legacy threshold field; gating uses per-check 0.55.")]
     winner_index: Annotated[int | None, Field(description="Chosen candidate, or null.")]
+    finalist_indices: Annotated[
+        list[int],
+        Field(default_factory=list, description="Indices within CLIP tie band of the top score."),
+    ]
+    tiebreak_method: Annotated[
+        str,
+        Field(default="none", description="none, gemini, or clip_fallback."),
+    ]
+    tiebreak_reason: Annotated[
+        str | None,
+        Field(default=None, description="Gemini or fallback explanation when finalists tied."),
+    ]
     candidates: Annotated[list[DebugMaskCandidate], Field(description="Every SAM candidate.")]
     elapsed_ms: Annotated[float, Field(description="Wall time for segment + rank.")]
 

@@ -809,6 +809,13 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
                 <p className="debug-panel-hint">
                   Threshold {maskPick.data.threshold.toFixed(2)}. Click a card to send that mask to inpaint verify.
                 </p>
+                {maskPick.data.finalist_indices.length > 1 ? (
+                  <p className="debug-panel-hint">
+                    Tiebreak: {maskPick.data.tiebreak_method}
+                    {maskPick.data.tiebreak_reason ? ` — ${maskPick.data.tiebreak_reason}` : ""}
+                    {" "}(finalists {maskPick.data.finalist_indices.join(", ")})
+                  </p>
+                ) : null}
                 <div className="debug-candidate-grid">
                   {maskPick.data.candidates.map((candidate) => {
                     const isWinner = candidate.index === maskPick.data.winner_index;

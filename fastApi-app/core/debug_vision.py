@@ -18,7 +18,7 @@ import numpy as np
 from core.avroom_package import load_avroom_attr
 from core.depth_cache import memory_image_key
 from core.image_codec import encode_png, to_base64_ascii
-from core.image_processing import _get_cutout_clip_scorer
+from core.image_processing import _get_cutout_clip_scorer, _get_cutout_tiebreaker
 
 logger = logging.getLogger(__name__)
 
@@ -262,10 +262,14 @@ def run_auto_mask_pick(image_bytes: bytes, *, x: int, y: int) -> dict[str, Any]:
 
     pairs = _segment_click(image_bytes, bgr, x, y)
     cutouts = [cutout for _mask, cutout in pairs]
+    refined_masks = [mask for mask, _cutout in pairs]
     selection = select_best_cutout(
         cutouts,
         click_xy=(x, y),
-        scorer=_get_cutout_clip_scorer(),
+        refined_masks=refined_masks,
+        scene_bgr=bgr,
+        depth_map=None,
+        tiebreaker=_get_cutout_tiebreaker(),
     )
 
     candidates: list[dict[str, Any]] = []
@@ -276,11 +280,17 @@ def run_auto_mask_pick(image_bytes: bytes, *, x: int, y: int) -> dict[str, Any]:
         )
         reason = selection.reasons[index] if index < len(selection.reasons) else "unknown"
         score = float(selection.scores[index]) if index < len(selection.scores) else 0.0
+        clip_checks = (
+            selection.clip_checks[index]
+            if index < len(selection.clip_checks)
+            else None
+        )
         candidates.append(
             {
                 "index": index,
                 "score": round(score, 4),
                 "reason": reason,
+                "clip_checks": clip_checks,
                 "preview_b64": _png_b64(_cutout_preview_bgr(cutout, (x, y)), f"preview {index}"),
                 "clip_crop_b64": clip_b64,
                 "cutout_b64": _png_b64(cutout, f"cutout {index}"),
@@ -288,16 +298,37 @@ def run_auto_mask_pick(image_bytes: bytes, *, x: int, y: int) -> dict[str, Any]:
         )
 
     elapsed_ms = (time.monotonic() - start) * 1000
+    for candidate in candidates:
+        passed = candidate["reason"] in (
+            "scored",
+            "ranked",
+            "winner",
+            "consensus_ranked",
+        )
+        logger.info(
+            "Auto mask pick debug candidate %d: %s avg=%.3f checks=%s reason=%s",
+            candidate["index"],
+            "PASS" if passed else "FAIL",
+            candidate["score"],
+            candidate["clip_checks"],
+            candidate["reason"],
+        )
     logger.info(
-        "Auto mask pick debug complete: candidates=%d winner=%s elapsed_ms=%.1f",
+        "Auto mask pick debug complete: candidates=%d winner=%s finalists=%s "
+        "tiebreak=%s elapsed_ms=%.1f",
         len(candidates),
         selection.winner_index,
+        selection.finalist_indices,
+        selection.tiebreak_method,
         elapsed_ms,
     )
     return {
         "click_xy": [x, y],
         "threshold": float(DEFAULT_THRESHOLD),
         "winner_index": selection.winner_index,
+        "finalist_indices": list(selection.finalist_indices),
+        "tiebreak_method": selection.tiebreak_method,
+        "tiebreak_reason": selection.tiebreak_reason,
         "candidates": candidates,
         "elapsed_ms": elapsed_ms,
     }
@@ -322,10 +353,14 @@ def run_inpaint_verify(
         raise ValueError("Segmentation returned no candidates.")
 
     cutouts = [cutout for _mask, cutout in pairs]
+    refined_masks = [mask for mask, _cutout in pairs]
     selection = select_best_cutout(
         cutouts,
         click_xy=(x, y),
-        scorer=_get_cutout_clip_scorer(),
+        refined_masks=refined_masks,
+        scene_bgr=bgr,
+        depth_map=None,
+        tiebreaker=_get_cutout_tiebreaker(),
     )
     chosen = mask_index if mask_index is not None else selection.winner_index
     if chosen is None:

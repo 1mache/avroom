@@ -447,7 +447,7 @@ def test_gemini_call_gemini_sends_two_png_parts() -> None:
         gemini_inpainting_verification_strategy as gemini_mod,
     )
 
-    with patch.object(gemini_mod, "_post_gemini", side_effect=fake_post):
+    with patch.object(gemini_mod, "post_gemini", side_effect=fake_post):
         strategy._call_gemini(original, outlined, params)
     parts = posted[0]["parts"]
     inline_parts = [part for part in parts if "inline_data" in part]

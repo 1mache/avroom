@@ -4,186 +4,251 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, Sequence
+from typing import Literal, Sequence
 
 import cv2
 import numpy as np
 from PIL import Image
 
+from ..ai_engines.mask_selection.clip_cutout_checks import (
+    CHECK_PASS_THRESHOLD,
+    CLIP_CUTOUT_CHECKS,
+    LabelScorer,
+    average_positive_score,
+    score_cutout_checks,
+)
+from ..ai_engines.mask_selection.mask_selection_strategy import (
+    MaskSelectionContext,
+    MaskSelectionStrategy,
+    ScoredCandidate,
+)
+from ..ai_engines.mask_selection.mask_selection_tiebreak_strategy import (
+    MaskSelectionTiebreakStrategy,
+    TiebreakRequest,
+)
+from ..ai_engines.mask_selection.strategies import SceneConsensusMaskSelectionStrategy
 from ..utils.debug_image_saver import DebugImageSaver
 
 logger = logging.getLogger(__name__)
 
 _DEBUG_FOLDER = "outputs/auto_mask_pick"
 
-_GOOD_LABEL = "a complete unobstructed piece of furniture or household object"
-_BAD_LABEL = "a partial cut, wall, floor, blob, or obstructed object"
-
 DEFAULT_THRESHOLD = 0.6
 MIN_AREA_FRACTION = 0.003
 MAX_AREA_FRACTION = 0.70
-_DUPLICATE_IOU = 0.85
+TIE_BAND = 0.03
 _GRAY = 128
-
-
-class BinaryProbScorer(Protocol):
-    """Minimal CLIP scoring surface used by :func:`select_best_cutout`."""
-
-    def binary_prob(self, pil_image: Image.Image, positive: str, negative: str) -> float:
-        """Return P(positive) from a 2-label softmax."""
 
 
 @dataclass(frozen=True)
 class CutoutSelectionResult:
     """Outcome of ranking BGRA cutout candidates for one click.
 
-    ``scores`` is one ``P(good)`` per input cutout. Pre-filtered candidates
-    (click miss or area out of range) are recorded as ``0.0``. ``reasons``
-    is one reject/score tag per cutout (``winner`` on the chosen index).
+    ``scores`` holds the mean CLIP check score per candidate (0.0 when rejected).
+    ``reasons`` is one tag per cutout (``click_miss``, ``clip_fail:complete``,
+    ``scored``, ``winner``, …).
     """
 
     winner_index: int | None
     scores: tuple[float, ...]
     reasons: tuple[str, ...]
+    average_scores: tuple[float, ...] = ()
+    clip_checks: tuple[dict[str, float] | None, ...] = ()
+    finalist_indices: tuple[int, ...] = ()
+    tiebreak_method: Literal["none", "gemini", "clip_fallback"] = "none"
+    tiebreak_reason: str | None = None
 
 
 def select_best_cutout(
     cutouts_bgra: Sequence[np.ndarray],
     *,
     click_xy: tuple[int, int],
-    scorer: BinaryProbScorer,
+    scorer: LabelScorer | None = None,
+    refined_masks: Sequence[np.ndarray] | None = None,
+    scene_bgr: np.ndarray | None = None,
+    depth_map: np.ndarray | None = None,
+    tiebreaker: MaskSelectionTiebreakStrategy | None = None,
+    selection_strategy: MaskSelectionStrategy | None = None,
     threshold: float = DEFAULT_THRESHOLD,
 ) -> CutoutSelectionResult:
     """Pick the best complete-object cutout for ``click_xy``, or none.
 
-    CLIP is a gate (``P(good) >= threshold``), not a ranker: its scores for
-    competing masks of the same object sit within noise of each other. The
-    winner is chosen by how many candidates agree on a silhouette — see
-    :func:`_pick_winner`.
-    """
-    scores: list[float] = []
-    reasons: list[str] = []
-    clip_crops_bgr: list[np.ndarray | None] = []
+    Each viable candidate gets CLIP check scores. A pluggable
+    ``selection_strategy`` decides which scored candidates are eligible to
+    compete for winner/tie-break resolution. When top scores cluster within
+    ``TIE_BAND``, an optional ``tiebreaker`` (Gemini) chooses among finalists.
 
-    for cutout in cutouts_bgra:
+    ``threshold`` is retained for API compatibility; gating uses per-check
+    thresholds in :mod:`clip_cutout_checks`.
+    """
+    del threshold
+
+    policy = selection_strategy or SceneConsensusMaskSelectionStrategy()
+
+    ctx = MaskSelectionContext(
+        cutouts_bgra=cutouts_bgra,
+        click_xy=click_xy,
+        scene_bgr=scene_bgr,
+        depth_map=depth_map,
+    )
+    needs_clip = policy.needs_clip()
+
+    n = len(cutouts_bgra)
+    scores: list[float] = [0.0] * n
+    reasons: list[str] = ["unknown"] * n
+    clip_checks: list[dict[str, float] | None] = [None] * n
+    clip_crops_bgr: list[np.ndarray | None] = [None] * n
+
+    if needs_clip and scorer is None:
+        raise ValueError("scorer is required when selection_strategy.needs_clip() is True")
+
+    scored_candidates: list[ScoredCandidate] = []
+    for index, cutout in enumerate(cutouts_bgra):
         reason = _prefilter_reason(cutout, click_xy)
         if reason is not None:
-            scores.append(0.0)
-            reasons.append(reason)
-            clip_crops_bgr.append(None)
+            reasons[index] = reason
+            _log_candidate(index, passed=False, avg=0.0, checks=None, reason=reason)
             continue
 
         crop = _crop_on_gray(cutout)
         if crop is None:
-            scores.append(0.0)
-            reasons.append("empty_crop")
-            clip_crops_bgr.append(None)
+            reasons[index] = "empty_crop"
+            _log_candidate(index, passed=False, avg=0.0, checks=None, reason="empty_crop")
             continue
 
-        good_p = scorer.binary_prob(crop, _GOOD_LABEL, _BAD_LABEL)
-        scores.append(good_p)
-        reasons.append("scored")
-        clip_crops_bgr.append(_pil_rgb_to_bgr(crop))
+        clip_crops_bgr[index] = _pil_rgb_to_bgr(crop)
 
-    alphas = [_alpha_mask(cutout) for cutout in cutouts_bgra]
-    best_index = _pick_winner(alphas, scores, threshold)
-    if best_index is not None:
-        reasons[best_index] = "winner"
+        avg = 0.0
+        check_scores: dict[str, float] | None = None
+        if needs_clip:
+            assert scorer is not None
+            check_scores = score_cutout_checks(scorer, crop)
+            clip_checks[index] = check_scores
+            avg = average_positive_score(check_scores)
+            scores[index] = avg
+
+        scored_candidates.append(
+            ScoredCandidate(
+                index=index,
+                avg_score=avg,
+                clip_checks=check_scores or {},
+                clip_crop_bgr=clip_crops_bgr[index],
+            )
+        )
+
+    winner_index: int | None = None
+    finalist_indices: tuple[int, ...] = ()
+    tiebreak_method: Literal["none", "gemini", "clip_fallback"] = "none"
+    tiebreak_reason: str | None = None
+
+    rank_scores = policy.rank_scores(scored_candidates, ctx)
+    for cand in scored_candidates:
+        scores[cand.index] = float(rank_scores.get(cand.index, 0.0))
+
+    eligible_indices = policy.eligible_indices(scored_candidates, ctx)
+    eligible_set = set(eligible_indices)
+
+    # Now that we know eligibility, log PASS/FAIL for each scored candidate.
+    for candidate in scored_candidates:
+        eligible = candidate.index in eligible_set
+        reasons[candidate.index] = policy.reason_for(
+            candidate.index,
+            eligible=eligible,
+            clip_checks=(candidate.clip_checks if needs_clip else None),
+        )
+        _log_candidate(
+            candidate.index,
+            passed=eligible,
+            avg=scores[candidate.index],
+            checks=(candidate.clip_checks if needs_clip else None),
+            reason=reasons[candidate.index],
+        )
+
+    if eligible_indices:
+        eligible_sorted = sorted(
+            eligible_indices, key=lambda index: scores[index], reverse=True
+        )
+        send_all_to_gemini = (
+            tiebreaker is not None
+            and getattr(tiebreaker, "select_all_candidates", False) is True
+        )
+        if send_all_to_gemini:
+            finalists = list(eligible_sorted)
+        else:
+            top_avg = scores[eligible_sorted[0]]
+            finalists = [
+                index for index in eligible_sorted if scores[index] >= top_avg - TIE_BAND
+            ]
+        finalist_indices = tuple(finalists)
+
+        if len(finalists) == 1:
+            winner_index = finalists[0]
+        elif tiebreaker is not None and scene_bgr is not None:
+            crops_bgr = {
+                index: clip_crops_bgr[index]
+                for index in finalists
+                if clip_crops_bgr[index] is not None
+            }
+            refined_map: dict[int, np.ndarray] | None = None
+            if refined_masks is not None:
+                refined_map = {
+                    index: refined_masks[index]
+                    for index in finalists
+                    if index < len(refined_masks)
+                }
+            tiebreak = tiebreaker.pick_among(
+                TiebreakRequest(
+                    scene_bgr=scene_bgr,
+                    click_xy=click_xy,
+                    finalist_indices=tuple(finalists),
+                    cutout_crops_bgr=crops_bgr,
+                    clip_averages={index: scores[index] for index in finalists},
+                    refined_masks=refined_map,
+                )
+            )
+            winner_index = tiebreak.candidate_index
+            tiebreak_method = tiebreak.method
+            tiebreak_reason = tiebreak.reason
+        else:
+            winner_index = finalists[0]
+            tiebreak_method = "clip_fallback"
+            tiebreak_reason = "no tiebreaker or scene"
+
+    if winner_index is not None:
+        reasons[winner_index] = "winner"
 
     logger.info(
-        "Cutout selection finished: winner=%s scores=%s threshold=%.2f",
-        best_index,
+        "Cutout selection finished: winner=%s scores=%s finalists=%s tiebreak=%s",
+        winner_index,
         tuple(round(score, 3) for score in scores),
-        threshold,
+        finalist_indices,
+        tiebreak_method,
     )
+
     result = CutoutSelectionResult(
-        winner_index=best_index,
+        winner_index=winner_index,
         scores=tuple(scores),
         reasons=tuple(reasons),
+        average_scores=tuple(scores),
+        clip_checks=tuple(clip_checks),
+        finalist_indices=finalist_indices,
+        tiebreak_method=tiebreak_method,
+        tiebreak_reason=tiebreak_reason,
     )
-    _save_auto_mask_debug(
-        cutouts_bgra,
-        click_xy=click_xy,
-        result=result,
-        threshold=threshold,
-        reasons=tuple(reasons),
-        clip_crops_bgr=clip_crops_bgr,
-    )
+    try:
+        _save_auto_mask_debug(
+            cutouts_bgra,
+            click_xy=click_xy,
+            result=result,
+            reasons=tuple(reasons),
+            clip_crops_bgr=clip_crops_bgr,
+            clip_checks=tuple(clip_checks),
+        )
+    except OSError as exc:
+        # Debug artifacts are best-effort; concurrent runs share the folder
+        # and Windows locks files being written/read.
+        logger.warning("Auto mask pick debug save skipped: %s", exc)
     return result
-
-
-def _alpha_mask(cutout_bgra: np.ndarray) -> np.ndarray:
-    if cutout_bgra.ndim != 3 or cutout_bgra.shape[2] < 4:
-        return np.zeros(cutout_bgra.shape[:2], dtype=bool)
-    return cutout_bgra[:, :, 3] > 0
-
-
-def _mask_iou(left: np.ndarray, right: np.ndarray) -> float:
-    union = int(np.count_nonzero(left | right))
-    if union == 0:
-        return 0.0
-    return float(int(np.count_nonzero(left & right))) / float(union)
-
-
-def _pick_winner(
-    alphas: Sequence[np.ndarray],
-    scores: Sequence[float],
-    threshold: float,
-) -> int | None:
-    """Pick the silhouette the most candidates agree on.
-
-    Each click yields six candidates: SAM's three multimask scales over the
-    depth map and over the RGB image. A true object boundary is one several
-    candidates land on independently; a part of an object, a leak into a
-    neighbour, and a mangled mask are usually one-offs. Within a group the
-    largest member wins, since near-identical masks differ only by pixels
-    one of them dropped.
-
-    ponytail: equal-support groups fall back to mean area, so two candidates
-    leaking into the same neighbour would outrank a single clean mask. Add
-    per-pass provenance to the candidate contract if that shows up.
-    """
-    eligible = [index for index, score in enumerate(scores) if score >= threshold]
-    if not eligible:
-        return None
-
-    groups = _group_by_silhouette(alphas, eligible)
-    best_group = max(groups, key=lambda group: (len(group), _mean_mask_area(group, alphas)))
-    winner = max(
-        best_group,
-        key=lambda index: (int(np.count_nonzero(alphas[index])), scores[index], index),
-    )
-    logger.info(
-        "Cutout selection: groups=%s winner=%s support=%d",
-        groups,
-        winner,
-        len(best_group),
-    )
-    return winner
-
-
-def _group_by_silhouette(
-    alphas: Sequence[np.ndarray],
-    eligible: Sequence[int],
-) -> list[list[int]]:
-    """Bucket candidates that trace the same silhouette (mutual IoU)."""
-    groups: list[list[int]] = []
-    for index in eligible:
-        for group in groups:
-            if all(
-                _mask_iou(alphas[index], alphas[member]) >= _DUPLICATE_IOU
-                for member in group
-            ):
-                group.append(index)
-                break
-        else:
-            groups.append([index])
-    return groups
-
-
-def _mean_mask_area(members: Sequence[int], alphas: Sequence[np.ndarray]) -> float:
-    total = sum(int(np.count_nonzero(alphas[index])) for index in members)
-    return float(total) / float(len(members))
 
 
 def _prefilter_reason(cutout_bgra: np.ndarray, click_xy: tuple[int, int]) -> str | None:
@@ -205,6 +270,40 @@ def _prefilter_reason(cutout_bgra: np.ndarray, click_xy: tuple[int, int]) -> str
     if area_fraction > MAX_AREA_FRACTION:
         return "area_too_large"
     return None
+
+
+def _format_clip_checks(check_scores: dict[str, float] | None) -> str:
+    """Compact per-check score and pass/fail for logs."""
+    if not check_scores:
+        return "-"
+    parts: list[str] = []
+    for check in CLIP_CUTOUT_CHECKS:
+        value = check_scores.get(check.key)
+        if value is None:
+            parts.append(f"{check.key}=missing")
+            continue
+        verdict = "pass" if value >= CHECK_PASS_THRESHOLD else "fail"
+        parts.append(f"{check.key}={value:.3f}:{verdict}")
+    return " ".join(parts)
+
+
+def _log_candidate(
+    index: int,
+    *,
+    passed: bool,
+    avg: float,
+    checks: dict[str, float] | None,
+    reason: str,
+) -> None:
+    """INFO line per SAM candidate: CLIP average, each check, pass/fail."""
+    logger.info(
+        "Cutout candidate %d: %s avg=%.3f checks=[%s] reason=%s",
+        index,
+        "PASS" if passed else "FAIL",
+        avg,
+        _format_clip_checks(checks),
+        reason,
+    )
 
 
 def _crop_on_gray(cutout_bgra: np.ndarray) -> Image.Image | None:
@@ -244,21 +343,25 @@ def _save_auto_mask_debug(
     *,
     click_xy: tuple[int, int],
     result: CutoutSelectionResult,
-    threshold: float,
     reasons: tuple[str, ...],
     clip_crops_bgr: Sequence[np.ndarray | None],
+    clip_checks: tuple[dict[str, float] | None, ...],
 ) -> None:
     """Write candidates, CLIP crops, winner, and score JSON under outputs/auto_mask_pick."""
     saver = DebugImageSaver(output_folder_name=_DEBUG_FOLDER)
     output_dir = Path(saver.output_dir)
     for stale in output_dir.iterdir():
         if stale.is_file():
-            stale.unlink()
+            try:
+                stale.unlink()
+            except OSError:
+                pass  # locked by a concurrent run or viewer; overwrite later
 
-    candidates_meta: list[dict[str, float | int | str]] = []
+    candidates_meta: list[dict[str, float | int | str | dict[str, float] | None]] = []
     for index, cutout in enumerate(cutouts_bgra):
         score = result.scores[index] if index < len(result.scores) else 0.0
         reason = reasons[index] if index < len(reasons) else "unknown"
+        checks = clip_checks[index] if index < len(clip_checks) else None
         saver.save(f"{index:02d}_cutout", cutout)
         if cutout.ndim == 3 and cutout.shape[2] >= 4:
             saver.save(f"{index:02d}_alpha", cutout[:, :, 3])
@@ -266,15 +369,24 @@ def _save_auto_mask_debug(
         crop_bgr = clip_crops_bgr[index] if index < len(clip_crops_bgr) else None
         if crop_bgr is not None:
             saver.save(f"{index:02d}_clip_crop", crop_bgr)
-        candidates_meta.append({"index": index, "score": round(float(score), 4), "reason": reason})
+        candidates_meta.append(
+            {
+                "index": index,
+                "score": round(float(score), 4),
+                "reason": reason,
+                "clip_checks": checks,
+            }
+        )
 
     if result.winner_index is not None and 0 <= result.winner_index < len(cutouts_bgra):
         saver.save("winner", cutouts_bgra[result.winner_index])
 
     summary = {
         "click_xy": [click_xy[0], click_xy[1]],
-        "threshold": threshold,
         "winner_index": result.winner_index,
+        "finalist_indices": list(result.finalist_indices),
+        "tiebreak_method": result.tiebreak_method,
+        "tiebreak_reason": result.tiebreak_reason,
         "candidates": candidates_meta,
     }
     summary_path = output_dir / "selection.json"

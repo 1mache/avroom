@@ -1,16 +1,20 @@
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import os
-import urllib.error
-import urllib.request
 from typing import Any, Callable
 
-import cv2
 import numpy as np
 
+from ...gemini.gemini_client import (
+    DEFAULT_MODEL_ID,
+    PLACEHOLDER_API_KEY,
+    encode_png_b64,
+    has_real_api_key,
+    post_gemini,
+    resolve_model_id,
+)
 from ..crop import (
     GEMINI_CROP_PAD_RATIO,
     CropWindow,
@@ -26,12 +30,6 @@ from .clip_label_inpainting_verification_strategy import (
 )
 
 logger = logging.getLogger(__name__)
-
-PLACEHOLDER_API_KEY: str = "placeholder"
-DEFAULT_MODEL_ID: str = "gemini-2.5-flash-lite"
-_GENERATE_URL: str = (
-    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-)
 
 CompleteFn = Callable[[np.ndarray, np.ndarray, InpaintSdParams], str]
 
@@ -108,15 +106,10 @@ class GeminiInpaintingVerificationStrategy(InpaintingVerificationStrategy):
 
     def _resolve_model_id(self) -> str:
         """Return the model id from constructor override or ``GEMINI_MODEL`` env."""
-        if self._model_id_override is not None:
-            override = self._model_id_override.strip()
-            return override or DEFAULT_MODEL_ID
-        raw = (os.environ.get("GEMINI_MODEL") or DEFAULT_MODEL_ID).strip()
-        return raw or DEFAULT_MODEL_ID
+        return resolve_model_id(self._model_id_override)
 
     def _has_real_key(self) -> bool:
-        key = (self._api_key or "").strip()
-        return bool(key) and key.lower() != PLACEHOLDER_API_KEY
+        return has_real_api_key(self._api_key)
 
     def verify(
         self,
@@ -223,66 +216,19 @@ class GeminiInpaintingVerificationStrategy(InpaintingVerificationStrategy):
         parts: list[dict[str, Any]] = [
             {"text": _SYSTEM_PROMPT},
             {"text": "Image 1: original before inpainting."},
-            {"inline_data": {"mime_type": "image/png", "data": _encode_png_b64(original_crop_bgr)}},
+            {"inline_data": {"mime_type": "image/png", "data": encode_png_b64(original_crop_bgr)}},
             {"text": "Image 2: inpainted result; cyan outline = inpaint region."},
-            {"inline_data": {"mime_type": "image/png", "data": _encode_png_b64(outlined_crop_bgr)}},
+            {"inline_data": {"mime_type": "image/png", "data": encode_png_b64(outlined_crop_bgr)}},
             {"text": params.to_json()},
         ]
-        return _post_gemini(parts, api_key=self._api_key, model_id=self._resolve_model_id())
+        return post_gemini(parts, api_key=self._api_key, model_id=self._resolve_model_id())
 
     def _call_gemini_legacy(self, crop_bgr: np.ndarray, params: InpaintSdParams) -> str:
         parts: list[dict[str, Any]] = [
             {"text": _SYSTEM_PROMPT + "\n" + params.to_json()},
-            {"inline_data": {"mime_type": "image/png", "data": _encode_png_b64(crop_bgr)}},
+            {"inline_data": {"mime_type": "image/png", "data": encode_png_b64(crop_bgr)}},
         ]
-        return _post_gemini(parts, api_key=self._api_key, model_id=self._resolve_model_id())
-
-
-def _encode_png_b64(crop_bgr: np.ndarray) -> str:
-    ok_flag, buf = cv2.imencode(".png", crop_bgr)
-    if not ok_flag:
-        raise ValueError("Failed to encode inpaint crop as PNG")
-    return base64.b64encode(bytes(buf)).decode("ascii")
-
-
-def _post_gemini(parts: list[dict[str, Any]], *, api_key: str, model_id: str) -> str:
-    body: dict[str, Any] = {
-        "contents": [{"parts": parts}],
-        "generationConfig": {"responseMimeType": "application/json"},
-    }
-    url = _GENERATE_URL.format(model=model_id)
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(body).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "x-goog-api-key": api_key,
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")[:400]
-        raise OSError(f"Gemini HTTP {exc.code}: {detail}") from exc
-    return _extract_text(payload)
-
-
-def _extract_text(payload: dict[str, Any]) -> str:
-    candidates = payload.get("candidates")
-    if not isinstance(candidates, list) or not candidates:
-        raise ValueError("Gemini response missing candidates")
-    content = candidates[0].get("content") if isinstance(candidates[0], dict) else None
-    if not isinstance(content, dict):
-        raise ValueError("Gemini response missing content")
-    parts = content.get("parts")
-    if not isinstance(parts, list) or not parts:
-        raise ValueError("Gemini response missing parts")
-    text = parts[0].get("text") if isinstance(parts[0], dict) else None
-    if not isinstance(text, str) or not text.strip():
-        raise ValueError("Gemini response missing text")
-    return text
+        return post_gemini(parts, api_key=self._api_key, model_id=self._resolve_model_id())
 
 
 def _parse_gemini_payload(

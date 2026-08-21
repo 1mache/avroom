@@ -31,6 +31,7 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `GET` | `/3d/{uid}` | path `uid` | GLB file (legacy id-0 fallback) |
 | `POST` | `/debug/validate` | multipart `file` | `DebugValidationResponse` |
 | `POST` | `/debug/depth-map` | multipart `file` + query params | PNG bytes |
+| `POST` | `/debug/normal-map` | multipart `file` + `hub_model` query | PNG bytes |
 | `POST` | `/debug/sam-everything` | multipart `file` + query params | PNG bytes |
 | `POST` | `/debug/auto-mask-pick` | multipart `file` + `x` `y` query | `DebugAutoMaskPickResponse` |
 | `POST` | `/debug/inpaint-verify` | multipart `file` + `x` `y` `mask_index` query | `DebugInpaintVerifyResponse` |
@@ -284,7 +285,7 @@ Returns final artifact existence flags, derives `cutout_bounds` from cached fina
 
 Router: [`fastApi-app/api/debug_vision.py`](../../fastApi-app/api/debug_vision.py), prefix `/debug`. Pipeline functions: [`fastApi-app/core/debug_vision.py`](../../fastApi-app/core/debug_vision.py). Test/inspection tools, not part of the production object-removal flow — **no session is created, nothing is written to disk**. All of them are gated by `DEBUG_ENDPOINTS` (`settings.get_debug_endpoints_enabled()`, default enabled); when disabled, they return **404**. Frontend entry point: the dashboard header's flask icon opens `DebugScreen` (see [frontend/user-flow.md](../frontend/user-flow.md#pipeline-debug-screen)).
 
-GPU jobs dispatch through the inference pool (`JobKind.DEBUG_DEPTH_MAP` / `DEBUG_SAM_EVERYTHING` / `DEBUG_AUTO_MASK_PICK` / `DEBUG_INPAINT_VERIFY`; `/debug/validate`'s content stage reuses `JobKind.VALIDATE_CONTENT`). Those four debug job kinds are in `_FACADE_JOB_KINDS` (`core/inference_pool/dispatch.py`) so inline mode takes the GPU lock. JSON debug jobs put their payload on `JobResult.debug_payload`.
+GPU jobs dispatch through the inference pool (`JobKind.DEBUG_DEPTH_MAP` / `DEBUG_NORMAL_MAP` / `DEBUG_SAM_EVERYTHING` / `DEBUG_AUTO_MASK_PICK` / `DEBUG_INPAINT_VERIFY`; `/debug/validate`'s content stage reuses `JobKind.VALIDATE_CONTENT`). Those debug job kinds are in `_FACADE_JOB_KINDS` (`core/inference_pool/dispatch.py`) so inline mode takes the GPU lock. JSON debug jobs put their payload on `JobResult.debug_payload`.
 
 ### `POST /debug/validate`
 
@@ -314,6 +315,16 @@ Renders a depth map for an uploaded image as a viewable PNG (not a `.npy` array)
 - `enhanced_edge` — `EnhancedEdgeDepthMappingStrategy()`, `blended` plus CLAHE + bilateral filtering — production's **true default** (`DepthMappingFacade`'s own default strategy).
 
 Response is `image/png` with header `X-Elapsed-Ms`. `422` on an unknown `colormap`/`strategy` or an undecodable upload.
+
+### `POST /debug/normal-map`
+
+Renders a Metric3D surface-normal map as a viewable PNG (`(n+1)/2` RGB encoding via `colorize_normals`). Query params:
+
+| Param | Default | Notes |
+|---|---|---|
+| `hub_model` | `metric3d_vit_small` | One of `metric3d_vit_small`, `metric3d_vit_large`, `metric3d_vit_giant2` (ViT hubs only — ConvNeXt has no normals). |
+
+Dispatches `JobKind.DEBUG_NORMAL_MAP` through the inference pool. Response is `image/png` with header `X-Elapsed-Ms`. `422` on an unknown `hub_model` or an undecodable upload. The DebugScreen samples nx/ny/nz from the displayed PNG on click (8-bit quantization).
 
 ### `POST /debug/sam-everything`
 

@@ -50,6 +50,44 @@ def colorize_depth(depth: np.ndarray, colormap: int | None = None) -> np.ndarray
     return cv2.applyColorMap(normalized_u8, colormap)
 
 
+def colorize_normals(normals: np.ndarray) -> np.ndarray:
+    """Encode unit normals as a viewable BGR uint8 image for ``cv2.imencode``.
+
+    Uses the standard Omnidata / Metric3D mapping ``(n + 1) / 2 * 255`` on
+    ``(nx, ny, nz)``, then converts to OpenCV BGR so PNG bytes display in a
+    browser with ``R=nx, G=ny, B=nz`` (canvas ``getImageData`` can recover
+    ``n = rgb/255*2-1``).
+
+    Args:
+        normals: ``float`` array of shape ``(H, W, 3)`` with values roughly
+            in ``[-1, 1]``.
+    """
+    arr = np.asarray(normals, dtype=np.float32)
+    if arr.ndim != 3 or arr.shape[2] != 3:
+        raise ValueError(f"colorize_normals expects HxWx3, got shape={arr.shape}")
+
+    rgb_u8 = np.clip((arr + 1.0) * 0.5 * 255.0, 0, 255).astype(np.uint8)
+    return cv2.cvtColor(rgb_u8, cv2.COLOR_RGB2BGR)
+
+
+def normals_from_vis_bgr(bgr: np.ndarray) -> np.ndarray:
+    """Inverse of :func:`colorize_normals` for OpenCV-loaded debug images.
+
+    Args:
+        bgr: BGR uint8 image produced by :func:`colorize_normals` (or
+            ``cv2.imdecode`` of that PNG).
+
+    Returns:
+        ``float32`` HxWx3 approximately unit normals (quantization noise from
+        8-bit encoding; re-normalize if you need unit length).
+    """
+    arr = np.asarray(bgr)
+    if arr.ndim != 3 or arr.shape[2] != 3:
+        raise ValueError(f"normals_from_vis_bgr expects HxWx3, got shape={arr.shape}")
+    rgb = cv2.cvtColor(arr, cv2.COLOR_BGR2RGB).astype(np.float32)
+    return (rgb / 255.0) * 2.0 - 1.0
+
+
 def overlay_masks(
     base_bgr: np.ndarray,
     masks: Sequence[np.ndarray],

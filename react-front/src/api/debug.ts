@@ -5,6 +5,7 @@ import type {
   DebugInpaintVerifyResponse,
   DebugValidationResponse,
   DepthMapOptions,
+  NormalMapOptions,
   SamEverythingOptions,
 } from "../types/debug";
 
@@ -83,6 +84,16 @@ export async function debugDepthMap(
     colormap: options.colormap,
   });
   return postForDebugImage(`${API_BASE_URL}/debug/depth-map?${params.toString()}`, file);
+}
+
+export async function debugNormalMap(
+  file: File,
+  options: NormalMapOptions,
+): Promise<DebugImageResult> {
+  const params = new URLSearchParams({
+    hub_model: options.hubModel,
+  });
+  return postForDebugImage(`${API_BASE_URL}/debug/normal-map?${params.toString()}`, file);
 }
 
 export async function debugSamEverything(

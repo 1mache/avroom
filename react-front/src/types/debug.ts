@@ -22,11 +22,19 @@ export interface DebugValidationResponse {
 export type DepthStrategy = "anything" | "blended" | "enhanced_edge";
 export type DepthColormap = "none" | "inferno" | "magma" | "turbo" | "jet";
 export type SamSource = "depth" | "rgb";
+export type NormalHubModel =
+  | "metric3d_vit_small"
+  | "metric3d_vit_large"
+  | "metric3d_vit_giant2";
 
 export interface DepthMapOptions {
   strategy: DepthStrategy;
   model: string;
   colormap: DepthColormap;
+}
+
+export interface NormalMapOptions {
+  hubModel: NormalHubModel;
 }
 
 export interface SamEverythingOptions {

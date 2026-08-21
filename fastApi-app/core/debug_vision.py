@@ -125,6 +125,62 @@ def render_depth_map_png(
     return png_bytes
 
 
+_DEFAULT_NORMAL_HUB_MODEL = "metric3d_vit_small"
+NORMAL_HUB_MODELS = frozenset(
+    {
+        "metric3d_vit_small",
+        "metric3d_vit_large",
+        "metric3d_vit_giant2",
+    }
+)
+
+
+def render_normal_map_png(
+    image_bytes: bytes, *, hub_model: str = _DEFAULT_NORMAL_HUB_MODEL
+) -> bytes:
+    """Run normal mapping on ``image_bytes`` and return a viewable normal-map PNG.
+
+    Args:
+        image_bytes: Raw uploaded image bytes (any format OpenCV can decode).
+        hub_model: Metric3D torch.hub entrypoint name (ViT models only).
+
+    Raises:
+        ValueError: If the image bytes can't be decoded or ``hub_model`` is unknown.
+    """
+    if hub_model not in NORMAL_HUB_MODELS:
+        raise ValueError(
+            f"Unknown hub_model '{hub_model}'. Valid options: {sorted(NORMAL_HUB_MODELS)}"
+        )
+
+    logger.info("Normal-map debug render starting: hub_model=%s", hub_model)
+    start = time.monotonic()
+
+    bgr = _decode_bgr(image_bytes, label="normal-map")
+    logger.debug("Decoded input image: shape=%s", bgr.shape)
+
+    Metric3DNormalMappingStrategy = load_avroom_attr(
+        "Metric3DNormalMappingStrategy",
+        module="avroom_object_removal.ai_engines.normal_mapping",
+    )
+    colorize_normals = load_avroom_attr("colorize_normals", module="avroom_object_removal.utils")
+
+    strategy = Metric3DNormalMappingStrategy(hub_model=hub_model)
+    normals = strategy.map_normals(bgr)
+    logger.debug("Normal map computed: shape=%s dtype=%s", normals.shape, normals.dtype)
+
+    rendered = colorize_normals(normals)
+    png_bytes = encode_png(rendered, "normal-map debug")
+
+    elapsed_ms = (time.monotonic() - start) * 1000
+    logger.info(
+        "Normal-map debug render complete: hub_model=%s elapsed_ms=%.1f png_bytes=%d",
+        hub_model,
+        elapsed_ms,
+        len(png_bytes),
+    )
+    return png_bytes
+
+
 def render_sam_everything_png(
     image_bytes: bytes,
     *,

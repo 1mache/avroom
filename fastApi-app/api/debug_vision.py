@@ -15,7 +15,7 @@ from typing import Annotated
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
-from core.debug_vision import COLORMAPS, DEPTH_STRATEGIES, SEGMENT_SOURCES
+from core.debug_vision import COLORMAPS, DEPTH_STRATEGIES, NORMAL_HUB_MODELS, SEGMENT_SOURCES
 from core.image_validation import ImageValidator
 from core.inference_pool.client import InferenceJobError, get_inference_client
 from schemas.debug import (
@@ -30,6 +30,7 @@ router = APIRouter(prefix="/debug", tags=["debug"])
 logger = logging.getLogger(__name__)
 
 _DEFAULT_DEPTH_MODEL = "LiheYoung/depth-anything-small-hf"
+_DEFAULT_NORMAL_HUB_MODEL = "metric3d_vit_small"
 
 
 def _require_enabled() -> None:
@@ -191,6 +192,71 @@ def debug_depth_map(
     elapsed_ms = (time.monotonic() - start) * 1000
     logger.info(
         "debug/depth-map complete: filename=%s png_bytes=%d elapsed_ms=%.1f",
+        file.filename,
+        len(png_bytes),
+        elapsed_ms,
+    )
+
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"X-Elapsed-Ms": f"{elapsed_ms:.1f}"},
+    )
+
+
+@router.post("/normal-map")
+def debug_normal_map(
+    file: Annotated[UploadFile, File(..., description="Image to estimate normals for.")],
+    hub_model: Annotated[
+        str,
+        Query(
+            description=(
+                f"Metric3D torch.hub entrypoint. One of {sorted(NORMAL_HUB_MODELS)}. "
+                "ViT models only (ConvNeXt hubs have no normals)."
+            )
+        ),
+    ] = _DEFAULT_NORMAL_HUB_MODEL,
+) -> Response:
+    """Render a surface-normal map for an uploaded image as a viewable PNG.
+
+    Test/debug tool: nothing is written to session storage. Blocking (plain
+    ``def``) so FastAPI runs it on the thread pool rather than the event loop.
+    """
+    _require_enabled()
+
+    logger.info(
+        "debug/normal-map called: filename=%s hub_model=%s",
+        file.filename,
+        hub_model,
+    )
+
+    if hub_model not in NORMAL_HUB_MODELS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown hub_model '{hub_model}'. Valid: {sorted(NORMAL_HUB_MODELS)}",
+        )
+
+    try:
+        image_bytes = file.file.read()
+    except Exception as exc:
+        logger.exception("debug/normal-map read failed: filename=%s", file.filename)
+        raise HTTPException(status_code=500, detail=f"Failed to read upload: {exc}") from exc
+
+    start = time.monotonic()
+    try:
+        png_bytes = get_inference_client().run_debug_normal_map(
+            image_bytes=image_bytes, hub_model=hub_model
+        )
+    except ValueError as exc:
+        logger.warning("debug/normal-map rejected: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("debug/normal-map failed: filename=%s", file.filename)
+        raise HTTPException(status_code=500, detail=f"Normal-map generation failed: {exc}") from exc
+
+    elapsed_ms = (time.monotonic() - start) * 1000
+    logger.info(
+        "debug/normal-map complete: filename=%s png_bytes=%d elapsed_ms=%.1f",
         file.filename,
         len(png_bytes),
         elapsed_ms,

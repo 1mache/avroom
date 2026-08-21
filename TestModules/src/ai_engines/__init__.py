@@ -50,6 +50,11 @@ from .mask_selection import (
     MaskSelectionTiebreakStrategy,
     RelativeClipRankingStrategy,
 )
+from .normal_mapping import (
+    Metric3DNormalMappingStrategy,
+    NormalMappingFacade,
+    NormalMappingStrategy,
+)
 from .novel_view import (
     NovelViewFacade,
     NovelViewStrategy,
@@ -110,6 +115,9 @@ __all__ = [
     "AbsoluteClipGateStrategy",
     "RelativeClipRankingStrategy",
     "NearFarBlendedDepthMappingStrategy",
+    "Metric3DNormalMappingStrategy",
+    "NormalMappingFacade",
+    "NormalMappingStrategy",
     "NovelViewFacade",
     "NovelViewStrategy",
     "StableZero123NovelViewError",

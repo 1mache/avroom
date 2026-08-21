@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
-import { debugAutoMaskPick, debugDepthMap, debugInpaintVerify, debugSamEverything, validateImageDebug } from "../../api/debug";
+import { debugAutoMaskPick, debugDepthMap, debugInpaintVerify, debugNormalMap, debugSamEverything, validateImageDebug } from "../../api/debug";
 import { ApiError } from "../../api/images";
 import { BackIcon, PhotoIcon } from "../icons";
 import {
@@ -18,6 +18,7 @@ import type {
   DebugValidationResponse,
   DepthColormap,
   DepthStrategy,
+  NormalHubModel,
   SamSource,
 } from "../../types/debug";
 import { getContainedImageRect, toNaturalPoint } from "../../utils/stageGeometry";
@@ -58,6 +59,14 @@ const DEPTH_STRATEGIES: { value: DepthStrategy; label: string }[] = [
 ];
 
 const COLORMAPS: DepthColormap[] = ["none", "inferno", "magma", "turbo", "jet"];
+
+const NORMAL_HUB_MODELS: { value: NormalHubModel; label: string }[] = [
+  { value: "metric3d_vit_small", label: "metric3d_vit_small (default)" },
+  { value: "metric3d_vit_large", label: "metric3d_vit_large" },
+  { value: "metric3d_vit_giant2", label: "metric3d_vit_giant2" },
+];
+
+type NormalSample = { x: number; y: number; nx: number; ny: number; nz: number };
 
 type PanelState<T> =
   | { status: "idle" }
@@ -138,6 +147,7 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
     status: "idle",
   });
   const [depth, setDepth] = useState<PanelState<DebugImageResult>>({ status: "idle" });
+  const [normals, setNormals] = useState<PanelState<DebugImageResult>>({ status: "idle" });
   const [sam, setSam] = useState<PanelState<DebugImageResult>>({ status: "idle" });
   const [maskPick, setMaskPick] = useState<PanelState<DebugAutoMaskPickResponse>>({ status: "idle" });
   const [inpaintVerify, setInpaintVerify] = useState<PanelState<DebugInpaintVerifyResponse>>({
@@ -146,10 +156,13 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
   const [clickPos, setClickPos] = useState<{ x: number; y: number } | null>(null);
   const [selectedMaskIndex, setSelectedMaskIndex] = useState<number | null>(null);
   const previewImgRef = useRef<HTMLImageElement>(null);
+  const normalImgRef = useRef<HTMLImageElement>(null);
+  const [normalSample, setNormalSample] = useState<NormalSample | null>(null);
 
   const [depthStrategy, setDepthStrategy] = useState<DepthStrategy>("anything");
   const [depthModel, setDepthModel] = useState(KNOWN_DEPTH_MODELS[0]);
   const [colormap, setColormap] = useState<DepthColormap>("none");
+  const [normalHubModel, setNormalHubModel] = useState<NormalHubModel>("metric3d_vit_small");
 
   const [samSource, setSamSource] = useState<SamSource>("depth");
   const [samDepthStrategy, setSamDepthStrategy] = useState<DepthStrategy>("anything");
@@ -264,6 +277,8 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
     });
     setValidation({ status: "idle" });
     setDepth({ status: "idle" });
+    setNormals({ status: "idle" });
+    setNormalSample(null);
     setSam({ status: "idle" });
     setMaskPick({ status: "idle" });
     setInpaintVerify({ status: "idle" });
@@ -328,6 +343,71 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
       if (runTokenRef.current === token) setDepth({ status: "error", message: errorMessage(err) });
     }
   }, [file, depthStrategy, depthModel, colormap]);
+
+  const runNormals = useCallback(async () => {
+    if (!file) return;
+    const token = runTokenRef.current;
+    setNormals({ status: "running" });
+    setNormalSample(null);
+    try {
+      const data = await debugNormalMap(file, { hubModel: normalHubModel });
+      if (runTokenRef.current !== token) {
+        URL.revokeObjectURL(data.objectUrl);
+        return;
+      }
+      heldUrlsRef.current.add(data.objectUrl);
+      setNormals((prev) => {
+        if (prev.status === "done") {
+          URL.revokeObjectURL(prev.data.objectUrl);
+          heldUrlsRef.current.delete(prev.data.objectUrl);
+        }
+        return { status: "done", data };
+      });
+    } catch (err) {
+      if (runTokenRef.current === token) setNormals({ status: "error", message: errorMessage(err) });
+    }
+  }, [file, normalHubModel]);
+
+  const handleNormalMapClick: React.MouseEventHandler<HTMLImageElement> = useCallback(
+    (event) => {
+      const img = event.currentTarget;
+      if (!img.naturalWidth || !img.naturalHeight) {
+        return;
+      }
+      const natural = { width: img.naturalWidth, height: img.naturalHeight };
+      const box = { width: img.clientWidth, height: img.clientHeight };
+      const rendered = getContainedImageRect(box, natural);
+      if (!rendered) {
+        return;
+      }
+      const point = toNaturalPoint(
+        event.nativeEvent.offsetX,
+        event.nativeEvent.offsetY,
+        rendered,
+        natural,
+      );
+      if (!point) {
+        return;
+      }
+      const x = Math.max(0, Math.min(img.naturalWidth - 1, Math.round(point.x)));
+      const y = Math.max(0, Math.min(img.naturalHeight - 1, Math.round(point.y)));
+
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        return;
+      }
+      ctx.drawImage(img, 0, 0);
+      const pixel = ctx.getImageData(x, y, 1, 1).data;
+      const nx = (pixel[0] / 255) * 2 - 1;
+      const ny = (pixel[1] / 255) * 2 - 1;
+      const nz = (pixel[2] / 255) * 2 - 1;
+      setNormalSample({ x, y, nx, ny, nz });
+    },
+    [],
+  );
 
   const runSam = useCallback(async () => {
     if (!file) return;
@@ -656,6 +736,75 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
               </>
             ) : depth.status === "idle" ? (
               <p className="debug-panel-hint">Renders whatever Depth-Anything sees, as an image.</p>
+            ) : null}
+          </section>
+
+          {/* ── Normal map panel ─────────────────────────────────────────── */}
+          <section className="debug-panel">
+            <header className="debug-panel-head">
+              <h3 className="debug-panel-title">Normal map</h3>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void runNormals()}
+                disabled={!file || normals.status === "running"}
+              >
+                {normals.status === "running" ? <span className="tool-spinner" /> : "Generate"}
+              </button>
+            </header>
+
+            <div className="debug-knobs">
+              <label className="debug-knob">
+                <span>Metric3D hub model</span>
+                <select
+                  value={normalHubModel}
+                  onChange={(e) => setNormalHubModel(e.target.value as NormalHubModel)}
+                >
+                  {NORMAL_HUB_MODELS.map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {normals.status === "error" ? <p className="debug-panel-error">{normals.message}</p> : null}
+
+            {normals.status === "done" ? (
+              <>
+                <div className="debug-image-frame debug-image-frame-sample">
+                  <img
+                    ref={normalImgRef}
+                    src={normals.data.objectUrl}
+                    alt="Normal map render"
+                    onClick={handleNormalMapClick}
+                  />
+                </div>
+                <p className="debug-panel-hint">
+                  Click a pixel to read nx, ny, nz (8-bit from the PNG).{" "}
+                  <button
+                    type="button"
+                    className="debug-inline-link"
+                    onClick={() =>
+                      setLightboxSrc({ src: normals.data.objectUrl, alt: "Normal map render" })
+                    }
+                  >
+                    Expand
+                  </button>
+                </p>
+                {normalSample ? (
+                  <p className="debug-normal-readout" role="status">
+                    ({normalSample.x}, {normalSample.y}) → nx={normalSample.nx.toFixed(3)} ny=
+                    {normalSample.ny.toFixed(3)} nz={normalSample.nz.toFixed(3)}
+                  </p>
+                ) : null}
+                <p className="debug-panel-elapsed">{formatMs(normals.data.elapsedMs)}</p>
+              </>
+            ) : normals.status === "idle" ? (
+              <p className="debug-panel-hint">
+                Metric3D surface normals. Generate explicitly — not part of Run all.
+              </p>
             ) : null}
           </section>
 

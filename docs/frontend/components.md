@@ -86,7 +86,8 @@ Reachable from the dashboard header's flask icon. Upload a photo, click it to se
 
 - **Source strip** reuses `UploadScreen`'s dropzone markup/classes. Clicking the preview sets natural `(x, y)` via `toNaturalPoint` (red marker). Auto mask pick and inpaint verify stay disabled until a click exists. Picking a new file bumps `runTokenRef` and resets all pipeline panels plus the click.
 - **Panels**: Validation, Depth map, SAM segment-everything, Auto mask pick, Inpaint verification, plus 3D viewer. Each independently `Re-run`-able. Errors render **inside the panel**.
-- **`Run all`** awaits validation → depth → SAM only. The two verify panels are click-gated and GPU-heavy, so they are not part of `Run all`.
+- **`Run all`** awaits validation → depth → SAM only. The two verify panels are click-gated and GPU-heavy, so they are not part of `Run all`. The normal-map panel is Generate-only (Metric3D) and also excluded from `Run all`.
+- **Normal map panel** — `POST /debug/normal-map` via `debugNormalMap`; hub model select; click the result image to read approximate nx/ny/nz from the 8-bit PNG.
 - Auto mask pick shows every candidate (preview, CLIP crop, score, reason) and highlights the winner; clicking a card sets `selectedMaskIndex` for inpaint verify (winner auto-selected on a successful pick).
 - Inpaint verification shows LaMa, then each CLIP retry (candidate, crop, scores, SD params in, verifier JSON out) and the final sharpened image.
 - **Staleness guard**: `runTokenRef` is bumped on every new file pick; each async run captures its own token and checks it before committing state (same pattern as `useSessionJobs`'s `imageIdRef`), so a slow response for a since-discarded photo can never overwrite a fresher run's result. A discarded-but-still-inflight PNG result has its object URL revoked immediately rather than held.

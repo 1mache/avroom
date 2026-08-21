@@ -17,6 +17,7 @@ class JobKind(str, Enum):
     VALIDATE_CONTENT = "validate_content"
     CALIBRATE_CAMERA = "calibrate_camera"
     DEBUG_DEPTH_MAP = "debug_depth_map"
+    DEBUG_NORMAL_MAP = "debug_normal_map"
     DEBUG_SAM_EVERYTHING = "debug_sam_everything"
     DEBUG_AUTO_MASK_PICK = "debug_auto_mask_pick"
     DEBUG_INPAINT_VERIFY = "debug_inpaint_verify"

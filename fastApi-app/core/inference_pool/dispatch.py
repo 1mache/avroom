@@ -17,6 +17,7 @@ _FACADE_JOB_KINDS = frozenset({
     JobKind.VALIDATE_CONTENT,
     JobKind.CALIBRATE_CAMERA,
     JobKind.DEBUG_DEPTH_MAP,
+    JobKind.DEBUG_NORMAL_MAP,
     JobKind.DEBUG_SAM_EVERYTHING,
     JobKind.DEBUG_AUTO_MASK_PICK,
     JobKind.DEBUG_INPAINT_VERIFY,
@@ -186,6 +187,17 @@ def _execute_impl(job: JobRequest) -> JobResult:
             model_name=debug_options["model_name"],
             colormap=debug_options["colormap"],
             strategy=debug_options.get("strategy", "anything"),
+        )
+        return JobResult(job_id=job.job_id, ok=True, debug_png_bytes=png_bytes)
+
+    if job.kind == JobKind.DEBUG_NORMAL_MAP:
+        from core.debug_vision import render_normal_map_png
+
+        assert job.image_bytes is not None
+        debug_options = job.options or {}
+        png_bytes = render_normal_map_png(
+            job.image_bytes,
+            hub_model=debug_options.get("hub_model", "metric3d_vit_small"),
         )
         return JobResult(job_id=job.job_id, ok=True, debug_png_bytes=png_bytes)
 

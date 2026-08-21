@@ -23,5 +23,6 @@
 | [reconstruction-3d/README.md](reconstruction-3d/README.md) | Optional image-to-GLB (TripoSR default; OpenLRM/Trellis optional) |
 | [content-validation/README.md](content-validation/README.md) | Upload content suitability (CLIP zero-shot default) |
 | [inpainting-verification/README.md](inpainting-verification/README.md) | Post-inpaint Gemini check + SD retry inside Hybrid |
+| [normal-mapping/README.md](normal-mapping/README.md) | Per-pixel surface normals (Metric3D; debug only today) |
 
 Upstream: [core/README.md](../core/README.md).

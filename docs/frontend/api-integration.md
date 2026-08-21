@@ -103,7 +103,7 @@ Duplicating an object no longer copies the source's exact `offset` client-side; 
 [`react-front/src/api/debug.ts`](../../react-front/src/api/debug.ts) — kept separate from `api/images.ts` since nothing here is session-scoped; it backs `DebugScreen` only (see [components.md](components.md#debugscreen) and [user-flow.md](user-flow.md#pipeline-debug-screen)). Re-exports/reuses `API_BASE_URL` and `ApiError` from `api/images.ts` rather than duplicating either.
 
 - `validateImageDebug(file)` posts multipart `file` to `POST /debug/validate`, returns `DebugValidationResponse` JSON directly.
-- `debugDepthMap(file, options)` and `debugSamEverything(file, options)` both post multipart `file` with knobs in the query string to `POST /debug/depth-map` / `POST /debug/sam-everything`, and return a `DebugImageResult` blob URL.
+- `debugDepthMap(file, options)`, `debugNormalMap(file, options)`, and `debugSamEverything(file, options)` post multipart `file` with knobs in the query string to `POST /debug/depth-map` / `/debug/normal-map` / `/debug/sam-everything`, and return a `DebugImageResult` blob URL.
 - `debugAutoMaskPick(file, x, y)` posts to `POST /debug/auto-mask-pick?x=&y=` and returns `DebugAutoMaskPickResponse` JSON.
 - `debugInpaintVerify(file, x, y, maskIndex)` posts to `POST /debug/inpaint-verify` (`mask_index` omitted when `maskIndex` is null) and returns `DebugInpaintVerifyResponse` JSON.
 - Callers own the returned `objectUrl` and must `URL.revokeObjectURL(...)` it — `debug.ts` never revokes on its own. `DebugScreen` revokes the previous URL before committing a re-run's result and revokes every URL it has ever held on unmount.

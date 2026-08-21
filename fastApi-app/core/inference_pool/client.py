@@ -268,6 +268,21 @@ class InferenceClient:
         assert result.debug_png_bytes is not None
         return result.debug_png_bytes
 
+    def run_debug_normal_map(
+        self, *, image_bytes: bytes, hub_model: str = "metric3d_vit_small"
+    ) -> bytes:
+        job = JobRequest(
+            job_id=_new_job_id(),
+            kind=JobKind.DEBUG_NORMAL_MAP,
+            storage_dir=str(Path.cwd()),
+            image_bytes=image_bytes,
+            options={"hub_model": hub_model},
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.debug_png_bytes is not None
+        return result.debug_png_bytes
+
     def run_debug_sam_everything(
         self,
         *,

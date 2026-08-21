@@ -13,6 +13,7 @@ Pattern everywhere under [`TestModules/src/ai_engines/`](../../../TestModules/sr
 | Reconstruction 3D | `Reconstruction3DFacade` | OpenLRM local (`OpenLrmReconstructionStrategy`, default); Trellis HF Space (`TrellisReconstructionStrategy`) when injected |
 | Content validation | `ContentValidationFacade` | CLIP zero-shot (`ClipZeroShotContentValidationStrategy` via composite) |
 | Inpainting verification | `InpaintingVerificationFacade` | CLIP labels on padded crop (`ClipLabelInpaintingVerificationStrategy`) |
+| Normal mapping | `NormalMappingFacade` | Metric3D ViT (`Metric3DNormalMappingStrategy`; debug only) |
 
 Each facade holds one active `*Strategy` instance configured at construction.
 
@@ -25,12 +26,13 @@ Each facade holds one active `*Strategy` instance configured at construction.
 - `Reconstruction3DStrategy`
 - `ContentValidationStrategy`
 - `InpaintingVerificationStrategy`
+- `NormalMappingStrategy`
 
 Concrete implementations live under each domain’s `strategies/` package.
 
 ## Shared helpers
 
-Engines rely on [`utils/`](../utils/README.md) (`DebugImageSaver`, `MaskRefiner` where relevant) rather than duplicating I/O.
+Engines rely on [`utils/`](../utils/README.md) (`DebugImageSaver`, `MaskRefiner`, `colorize_normals` where relevant) rather than duplicating I/O.
 
 ## Per-domain docs
 
@@ -41,3 +43,4 @@ Engines rely on [`utils/`](../utils/README.md) (`DebugImageSaver`, `MaskRefiner`
 - [reconstruction-3d/README.md](reconstruction-3d/README.md)
 - [content-validation/README.md](content-validation/README.md)
 - [inpainting-verification/README.md](inpainting-verification/README.md)
+- [normal-mapping/README.md](normal-mapping/README.md)

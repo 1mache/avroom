@@ -252,6 +252,18 @@ class InferenceClient:
             camera_model=result.camera_calib_camera_model or "pinhole",
         )
 
+    def run_map_normals(self, *, image_bytes: bytes) -> np.ndarray:
+        """Run Metric3D normal mapping; returns float32 HxWx3 ndarray."""
+        job = JobRequest(
+            job_id=_new_job_id(),
+            kind=JobKind.MAP_NORMALS,
+            storage_dir=str(Path.cwd()),
+            image_bytes=image_bytes,
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.normal_map is not None
+        return result.normal_map  # type: ignore[no-any-return]
 
     def run_debug_depth_map(
         self, *, image_bytes: bytes, model_name: str, colormap: str, strategy: str = "anything"

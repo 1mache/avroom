@@ -34,6 +34,7 @@ from core.inference_pool.session_runtime import (
 )
 from core.mask_cache import delete_candidate, delete_candidates
 from core.depth_cache import delete_session_depth_maps
+from core.normal_cache import delete_session_normal_maps, warm_normals_for_session
 from core.camera_calib_cache import delete_session_camera_calib, save_camera_calib
 from core.session_preview import write_upload_preview
 from core.object_metadata import (
@@ -103,6 +104,7 @@ from settings import (
     remove_session_name,
     get_upload_validation_enabled,
     get_camera_calibration_enabled,
+    get_normal_map_enabled,
     SessionNotFoundError,
     set_session_name,
     touch_session,
@@ -219,6 +221,25 @@ async def upload_image(
             )
     else:
         logger.info("Upload camera calibration skipped: CAMERA_CALIB=false image_id=%s", image_id)
+
+    if get_normal_map_enabled():
+        try:
+            warm_normals_for_session(
+                storage_dir,
+                image_id,
+                file_bytes,
+                map_normals_from_bytes=lambda data: get_inference_client().run_map_normals(
+                    image_bytes=data
+                ),
+            )
+        except Exception as exc:
+            logger.warning(
+                "Upload normal-map warm failed (non-fatal): image_id=%s detail=%s",
+                image_id,
+                exc,
+            )
+    else:
+        logger.info("Upload normal-map warm skipped: NORMAL_MAP=false image_id=%s", image_id)
 
     return ImageUploadResponse(
         image_id=image_id,
@@ -534,6 +555,7 @@ async def delete_session(uid: str) -> Response:
 
         delete_session_metadata(storage_dir, uid, obj_ids)
         removed += delete_session_depth_maps(storage_dir, uid)
+        removed += delete_session_normal_maps(storage_dir, uid)
         removed += delete_session_camera_calib(storage_dir, uid)
 
         # Cached novel-view results and their preview placeholders, one file

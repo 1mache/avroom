@@ -16,6 +16,7 @@ _FACADE_JOB_KINDS = frozenset({
     JobKind.NOVEL_VIEW,
     JobKind.VALIDATE_CONTENT,
     JobKind.CALIBRATE_CAMERA,
+    JobKind.MAP_NORMALS,
     JobKind.DEBUG_DEPTH_MAP,
     JobKind.DEBUG_NORMAL_MAP,
     JobKind.DEBUG_SAM_EVERYTHING,
@@ -176,6 +177,13 @@ def _execute_impl(job: JobRequest) -> JobResult:
             camera_calib_confidence=calibration.confidence,
             camera_calib_camera_model=calibration.camera_model,
         )
+
+    if job.kind == JobKind.MAP_NORMALS:
+        from core.normal_mapping import map_normals_image_bytes
+
+        assert job.image_bytes is not None
+        normals = map_normals_image_bytes(job.image_bytes)
+        return JobResult(job_id=job.job_id, ok=True, normal_map=normals)
 
     if job.kind == JobKind.DEBUG_DEPTH_MAP:
         from core.debug_vision import render_depth_map_png

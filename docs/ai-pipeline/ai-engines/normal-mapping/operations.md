@@ -8,6 +8,8 @@ Default: `metric3d_vit_small` via `torch.hub.load("yvanyin/metric3d", ...)`. Deb
 
 Hub models cached per `(hub_model, device)` via module-level `lru_cache(maxsize=4)` in `Metric3DNormalMappingStrategy`.
 
+Session disk cache: `{uid}_normal_{sha256(canvas_bytes)}.npy` (`float32` HxWx3) via `fastApi-app/core/normal_cache.py`. Warmed on `POST /images/upload` when `NORMAL_MAP=true` (default). Invalidated the same way as depth — new background after inpaint changes the hash; next `get_or_compute_normals` recomputes. Removed on session delete.
+
 ## Dependencies
 
 - PyTorch + torchvision (already in root `requirements.txt`)

@@ -16,6 +16,7 @@ class JobKind(str, Enum):
     NOVEL_VIEW = "novel_view"
     VALIDATE_CONTENT = "validate_content"
     CALIBRATE_CAMERA = "calibrate_camera"
+    MAP_NORMALS = "map_normals"
     DEBUG_DEPTH_MAP = "debug_depth_map"
     DEBUG_NORMAL_MAP = "debug_normal_map"
     DEBUG_SAM_EVERYTHING = "debug_sam_everything"
@@ -80,6 +81,7 @@ class JobResult:
     camera_calib_cy: float | None = None
     camera_calib_confidence: float | None = None
     camera_calib_camera_model: str | None = None
+    normal_map: Any | None = field(default=None, repr=False)
     debug_png_bytes: bytes | None = None
     debug_mask_count: int | None = None
     debug_payload: dict[str, Any] | None = None

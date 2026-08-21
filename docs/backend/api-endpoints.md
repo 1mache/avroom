@@ -48,8 +48,11 @@ Behavior:
 4. When `VALIDATE=false`, skip steps 2–3 and persist immediately.
 5. Write `{image_id}.{ext}` under the configured image storage directory.
 6. Register `image_id` in `sessions.json` and bump `last_changed`.
+7. Write an initial dashboard preview thumbnail (non-fatal on failure).
+8. When `CAMERA_CALIB` is enabled (default), run GeoCalib and write `{uid}_camera_calib.json` (non-fatal on failure).
+9. When `NORMAL_MAP` is enabled (default), warm Metric3D normals via `JobKind.MAP_NORMALS` and write `{uid}_normal_{sha256}.npy` for the upload bytes (non-fatal on failure). Cache key is the SHA-256 of the canvas bytes — same invalidation model as depth: after inpaint replaces `{uid}_background.png`, the next `get_or_compute_normals` misses and recomputes.
 
-Thresholds for technical checks are env-configurable — see [`settings.py`](../../fastApi-app/settings.py) (`UPLOAD_*` helpers). Set `VALIDATE=false` before starting the server to disable both validation stages.
+Thresholds for technical checks are env-configurable — see [`settings.py`](../../fastApi-app/settings.py) (`UPLOAD_*` helpers). Set `VALIDATE=false` before starting the server to disable both validation stages. Set `NORMAL_MAP=false` to skip upload-time normal warm.
 
 ## `POST /images/segment`
 

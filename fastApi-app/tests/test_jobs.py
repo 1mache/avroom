@@ -63,6 +63,25 @@ def test_create_job_is_queued_and_listed() -> None:
     listed = list_session_jobs(user_id, "sess-1")
     assert [j.job_id for j in listed] == [job.id]
     assert listed[0].kind == "segment"
+    assert listed[0].object_id is None
+
+
+def test_generate_3d_job_reports_its_target_object_id() -> None:
+    """The frontend's Rotate-button spinner (WorkspaceScreen.handleRotate)
+    has to survive exit/return by finding its own queued/running generate_3d
+    job for the selected object -- that only works if JobInfo carries the
+    object_id from the job's payload."""
+    user_id = _make_user_and_session()
+    job = create_job(user_id, "sess-1", "generate_3d", {"object_id": 3})
+
+    listed = list_session_jobs(user_id, "sess-1")
+    assert listed[0].object_id == 3
+
+    active = list_active_jobs(user_id)
+    assert active[0].object_id == 3
+
+    claimed = claim_next_job()
+    assert claimed is not None and claimed.id == job.id
 
 
 def test_claim_next_job_skip_locked_gives_job_to_exactly_one_thread() -> None:

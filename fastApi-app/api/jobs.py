@@ -24,6 +24,8 @@ def _to_job_info(record: JobRecord) -> JobInfo:
         status=record.status,
         error=record.error,
         created_at=record.created_at.isoformat(),
+        # Only generate_3d payloads carry "object_id" (mirrors job_repo._row_to_info).
+        object_id=record.payload.get("object_id"),
     )
 
 

@@ -22,6 +22,13 @@ class JobInfo(BaseModel):
         Field(default=None, description="Failure/conflict message, set only for those statuses."),
     ]
     created_at: Annotated[str, Field(description="ISO-8601 UTC timestamp the job was submitted.")]
+    object_id: Annotated[
+        int | None,
+        Field(
+            default=None,
+            description="Target object id, present only for generate_3d jobs (from payload.object_id).",
+        ),
+    ]
 
 
 class JobSubmitResponse(BaseModel):

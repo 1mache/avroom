@@ -23,6 +23,8 @@ export interface JobInfo {
   status: JobStatus;
   error?: string | null;
   created_at: string;
+  /** Target object id, present only for generate_3d jobs. */
+  object_id?: number | null;
 }
 
 export interface SegmentMaskResult {

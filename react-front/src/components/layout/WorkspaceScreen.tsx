@@ -564,8 +564,17 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       let buffer = cached;
       if (!buffer) {
         // Queued now instead of one blocking request: submit, wait for the
-        // dispatcher to finish it, then read the GLB it wrote to disk.
-        const jobId = await submitGenerate3D(imageId, targetObjectId);
+        // dispatcher to finish it, then read the GLB it wrote to disk. If a
+        // generate_3d job for this object is already queued/running (the
+        // user exited mid-generation and clicked Rotate again on return),
+        // attach to that job instead of submitting a duplicate.
+        const jobId =
+          jobs.jobs.find(
+            (job) =>
+              job.kind === "generate_3d" &&
+              job.object_id === targetObjectId &&
+              (job.status === "queued" || job.status === "running"),
+          )?.job_id ?? (await submitGenerate3D(imageId, targetObjectId));
         await waitForJobDone(jobId);
         buffer = await fetchCached3DModel(imageId, targetObjectId);
         if (!buffer) {
@@ -593,6 +602,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     jobs.selectedObjectId,
     jobs.setObjects,
     jobs.setSelectedObjectId,
+    jobs.jobs,
     glbData,
   ]);
 
@@ -921,6 +931,14 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const activeJobs = jobs.jobs.filter((job) => job.status === "queued" || job.status === "running");
   const segmentingCount = activeJobs.filter((job) => job.kind === "segment").length;
   const removingCount = activeJobs.filter((job) => job.kind === "inpaint").length;
+  // Rotate's spinner has to survive exit/return: unlike segment/inpaint,
+  // generate_3d isn't watched through pendingJobs-style local state at all —
+  // handleRotate awaits it directly (see there) — so without this, exiting
+  // mid-generation and coming back shows the button idle even though a
+  // generate_3d job is still queued/running server-side for this object.
+  const activeGenerate3DJobId = activeJobs.find(
+    (job) => job.kind === "generate_3d" && job.object_id === jobs.selectedObjectId,
+  )?.job_id;
 
   const status = segmentingCount > 0
     ? `finding masks${segmentingCount > 1 ? ` (${segmentingCount})` : ""}`
@@ -952,7 +970,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         cutMode={cutMode}
         onCut={handleCut}
         rotateMode={rotateMode}
-        isPreparing3D={isPreparing3D}
+        isPreparing3D={isPreparing3D || Boolean(activeGenerate3DJobId)}
         onRotate={handleRotate}
         isDuplicating={jobs.isDuplicating}
         onCopy={handleCopy}

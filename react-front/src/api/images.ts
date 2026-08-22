@@ -221,8 +221,10 @@ const JOB_POLL_TIMEOUT_MS = 5 * 60 * 1000;
  * A 404 here is treated as success, not a fresh failure: a successful
  * generate_3d job's row is deleted by the dispatcher (its real result is the
  * GLB file on disk, already written by the time the row disappears) — same
- * as inpaint. This is only safe because callers poll a job id they just
- * submitted themselves; polling an id after already consuming it once would
+ * as inpaint. This is only safe because callers poll a job id currently
+ * `queued`/`running` in `jobs.jobs` (whether just submitted, or attached to
+ * after exiting mid-generation and returning — see WorkspaceScreen's
+ * handleRotate); polling an id after it's already been dismissed once would
  * misread "gone because dismissed" as success.
  */
 export async function waitForJobDone(jobId: string): Promise<void> {

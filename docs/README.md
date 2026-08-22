@@ -2,9 +2,17 @@
 
 Welcome to the Avroom architecture documentation. These docs describe the **current state** of the project as found in the code (not aspirational design).
 
-> Last refresh: 2026-08-14
+> Last refresh: 2026-08-22
 
 What changed in this refresh:
+
+- Corrected the 3D reconstruction backend across every doc that named one: `Reconstruction3DFacade`'s default primary strategy is now **`Hunyuan3D2ReconstructionStrategy`** (Hugging Face Space `es3d-fi/hunyuan3d-2-1`, a mirror of `tencent/Hunyuan3D-2.1`, via `gradio_client`), with automatic fallback to **`TriposrReconstructionStrategy`** on failure — not TripoSR-as-default and not Trellis. See [ai-pipeline/ai-engines/reconstruction-3d/README.md](ai-pipeline/ai-engines/reconstruction-3d/README.md).
+- Corrected the wiring status of 3D reconstruction: it **is** invoked in production, via `core/inference_pool`'s `JobKind.GENERATE_3D` from `POST /3d/test-3d` and `POST /images/novel-view` — previous docs said it was test-only / not on any HTTP path.
+- Noted `TrellisReconstructionStrategy` and `Vfusion3dReconstructionStrategy` are optional backends reachable only by explicit injection — never constructed by the facade's default or fallback path.
+- Noted Hunyuan3D-2.1 and TripoSR each map `ReconstructionQuality` via their own local tables, not the shared `GenerationParams`/`PRESETS` dict (that table is Trellis-specific).
+- Updated `docs/presentation-plan.md` slide 5c to screenshot the Hunyuan3D-2.1 strategy (the backend actually running) instead of the unused Trellis strategy.
+
+Previous refresh (2026-08-14):
 
 - Documented the entire `/debug` router for the first time (it existed on the backend before this refresh but had no docs coverage): `POST /debug/validate`, `POST /debug/depth-map`, `POST /debug/sam-everything` — see [backend/api-endpoints.md](backend/api-endpoints.md#debug-endpoints), [backend/schemas.md](backend/schemas.md#debug), and the `DEBUG_ENDPOINTS` gate in [backend/settings-and-storage.md](backend/settings-and-storage.md).
 - Documented the new Pipeline Debug screen (`DebugScreen`), reachable from the dashboard header's flask icon: [frontend/components.md](frontend/components.md#debugscreen), [frontend/user-flow.md](frontend/user-flow.md#pipeline-debug-screen), [frontend/api-integration.md](frontend/api-integration.md#debug-endpoints), [frontend/state-and-types.md](frontend/state-and-types.md#typesdebugts), [frontend/styling.md](frontend/styling.md).

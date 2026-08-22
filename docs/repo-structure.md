@@ -119,7 +119,7 @@ TestModules/
 │   │   │   └── strategies/               - LamaInpaintingStrategy, StableDiffusionInpaintingStrategy, HybridInpaintingStrategy
 │   │   └── reconstruction_3d/            - Reconstruction3DFacade + ABC + quality presets + GLB writer
 │   │       ├── _backends/openlrm_v10/   - vendored OpenLRM v1.0 inference (`lrm/`)
-│   │       └── strategies/               - TriposrReconstructionStrategy (default), plus OpenLRM/Trellis/etc. (optional)
+│   │       └── strategies/               - Hunyuan3D2ReconstructionStrategy (default), TriposrReconstructionStrategy (automatic fallback), plus OpenLRM/Trellis/VFusion3D (optional, explicit injection only)
 │   ├── routing/                          - SegmentationRoutingStrategy (ABC)
 │   │   └── strategies/                   - BoundaryVarianceRoutingStrategy, CenterOfMassRoutingStrategy
 │   └── utils/                            - DebugImageSaver, MaskRefiner, BgraCutoutComposer

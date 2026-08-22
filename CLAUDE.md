@@ -175,15 +175,15 @@ Not wired into segment/inpaint/removal pipelines.
 - `predict_everything` is on `ImageSegmentationStrategy` as a non-abstract method (default raises `NotImplementedError`) since prompt-free segmentation is SAM-specific, not a general strategy capability. `ImageSegmentationFacade.get_all_masks_for_image` exposes it at the facade level, alongside the existing point-prompted `get_mask_at_point` / `get_all_masks_for_position`.
 - `X-Mask-Count`/`X-Elapsed-Ms` response headers require `expose_headers` on the CORS middleware (`main.py`) — `allow_headers` only covers request headers, so without it browser JS reads both as `null`.
 
-## Trellis 2 3D Generation
+## 3D Reconstruction (Hunyuan3D-2.1)
 
-`TrellisModule/` (package `avroom_trellis`) wraps Microsoft's Trellis 2 image-to-3D model **via the public Hugging Face Space** (`microsoft/TRELLIS.2`) using `gradio_client`. Local install is not supported on this machine (Linux + 24 GB VRAM only).
+`TestModules/src/ai_engines/reconstruction_3d/` (part of the `avroom_object_removal` package — there is no separate 3D package anymore) owns image-to-GLB generation via `Reconstruction3DFacade`. **Default primary backend is `Hunyuan3D2ReconstructionStrategy`**, which calls Tencent's Hunyuan3D-2.1 model **via a public Hugging Face Space** (`gradio_client`, default space id `es3d-fi/hunyuan3d-2-1`, a mirror of `tencent/Hunyuan3D-2.1`). If the primary call raises, the facade automatically retries once against `TriposrReconstructionStrategy` (local PyTorch, `stabilityai/TripoSR` weights) with identical arguments before giving up. OpenLRM, Trellis (Microsoft's Trellis 2, the previous default before this backend was swapped in), and VFusion3D also exist as strategies but are reachable only by injecting them explicitly into `Reconstruction3DFacade(...)` — the facade never constructs them on its own.
 
-Public API: `Trellis3DGenerator().generate(image, *, quality=Quality.FAST, output="bytes")`. Accepts BGRA `np.ndarray` from `ObjectRemover`, PNG `bytes`, `PIL.Image`, or `pathlib.Path`. Returns GLB as `bytes` / `Path` / `BytesIO`.
+Public API: `Reconstruction3DFacade().generate(image, *, quality=ReconstructionQuality.HIGH, output="bytes")`. Accepts BGRA `np.ndarray` from `ObjectRemover`, PNG `bytes`, `PIL.Image`, or `pathlib.Path`. Returns GLB as `bytes` / `Path` / `BytesIO`.
 
-The Space is queued (Zero GPU). One generation takes seconds of compute plus queue wait. Module is **not** wired into FastAPI yet.
+The Hunyuan3D-2.1 Space is queued; one generation takes tens of seconds of compute plus queue wait. **Wired into FastAPI** via `core/inference_pool` (`JobKind.GENERATE_3D`) from two routes: `POST /3d/test-3d` (`fastApi-app/api/model_3d.py`) and `POST /images/novel-view` (`fastApi-app/api/novel_view.py`). It is not part of the `/images/click`/`/images/inpaint` object-removal path.
 
-Install: `pip install -e ./TrellisModule` (or `pip install -r requirements.txt` which includes it).
+See [docs/ai-pipeline/ai-engines/reconstruction-3d/README.md](docs/ai-pipeline/ai-engines/reconstruction-3d/README.md) for the full strategy list, quality-preset mapping, and error types.
 
 ## Email Notifications on Pipeline Completion
 

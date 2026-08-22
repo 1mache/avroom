@@ -45,7 +45,7 @@ flowchart LR
 - Installed editable via the root [`requirements.txt`](../requirements.txt) line 1: `-e ./TestModules`.
 - Public surface is `ObjectRemover` plus four per-domain Facades (`DepthMappingFacade`, `ImageSegmentationFacade`, `ImageInpaintingFacade`, `Reconstruction3DFacade`) and their Strategy ABCs — all re-exported from [`TestModules/src/__init__.py`](../TestModules/src/__init__.py).
 - `ObjectRemover.remove_object` still supports the legacy one-step path. Normal app flow now uses `ObjectSegmentor` for candidate masks, then `BackgroundInpainter` after user chooses one.
-- `Reconstruction3DFacade` is a separate, optional surface for image-to-3D (GLB). By default it uses **TripoSR** (`TriposrReconstructionStrategy`); other strategies (OpenLRM, Trellis, etc.) can be injected. It is **not** invoked by `ObjectRemover` or by the `/images/*` HTTP endpoints today.
+- `Reconstruction3DFacade` is a separate surface for image-to-3D (GLB), not invoked by `ObjectRemover`. By default it uses **Hunyuan3D-2.1** (`Hunyuan3D2ReconstructionStrategy`, a Hugging Face Space via `gradio_client`), with automatic fallback to **TripoSR** (`TriposrReconstructionStrategy`) if the Space call fails; other strategies (OpenLRM, Trellis, VFusion3D) can be injected explicitly. It runs from `POST /3d/test-3d` and `POST /images/novel-view` (dispatched through `core/inference_pool`) — not from the `/images/click`/`/images/inpaint` object-removal path.
 - See [ai-pipeline/](ai-pipeline/README.md) for details.
 
 ## Cross-tier contracts

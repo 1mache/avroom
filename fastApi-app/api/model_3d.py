@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Annotated
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 
-from core.inference_pool.client import get_inference_client
-from core.notifications import notify_pipeline_event
-from core.object_storage import object_glb_path, resolve_object_cutout_path, resolve_object_glb_path
-from core.repositories.session_repo import touch_session
+from core.auth.identity import current_user_id
+from core.object_storage import resolve_object_cutout_path, resolve_object_glb_path
+from core.repositories.job_repo import create_job
+from schemas.jobs import Generate3DJobRequest, JobSubmitResponse
 from settings import get_3d_storage_dir, get_image_storage_dir
 
 router = APIRouter(prefix="/3d", tags=["3d"])
@@ -21,34 +19,23 @@ _DEBUG_MODE = False
 _DEBUG_MODEL_PATH = Path(__file__).resolve().parent.parent / "res" / "test" / "debug_toilet.glb"
 
 
-class Test3DRequest(BaseModel):
-    """JSON body for POST /3d/test-3d."""
-
-    uid: Annotated[
-        str,
-        Field(min_length=1, description="Image uid used to locate the cutout PNG."),
-    ]
-    object_id: Annotated[
-        int,
-        Field(ge=0, description="Zero-based object id within the session to generate 3D from."),
-    ] = 0
-
-
-@router.post("/test-3d")
-def generate_test_3d(request: Test3DRequest) -> Response:
-    """Generate a GLB 3D model from the stored cutout for the given uid.
+@router.post("/test-3d", response_model=JobSubmitResponse, status_code=202)
+async def generate_test_3d(
+    request: Generate3DJobRequest, user_id: str = Depends(current_user_id)
+) -> JobSubmitResponse:
+    """Queue GLB generation from the stored cutout for the given uid and return immediately.
 
     The cutout is read from the image storage directory using the standard
-    per-object naming (``{uid}_{object_id}_cutout.png``).
-
-    Returns raw GLB bytes (model/gltf-binary). Intended for Three.js consumption
-    via GLTFLoader.load() or GLTFLoader.parse().
+    per-object naming (``{uid}_{object_id}_cutout.png``). Poll
+    `GET /jobs/{job_id}` for completion, then `GET /3d/{uid}/{object_id}` for
+    the GLB itself.
     """
     logger.info(
-        "test-3d called: uid=%s object_id=%d debug_mode=%s",
+        "3D generation queued: uid=%s object_id=%d debug_mode=%s user_id=%s",
         request.uid,
         request.object_id,
         _DEBUG_MODE,
+        user_id,
     )
 
     if _DEBUG_MODE:
@@ -59,12 +46,11 @@ def generate_test_3d(request: Test3DRequest) -> Response:
                 detail=f"Debug model not found at {_DEBUG_MODEL_PATH}. "
                 "Place debug_toilet.glb at fastApi-app/res/test/debug_toilet.glb.",
             )
-        logger.info("test-3d debug shortcut: returning %s", _DEBUG_MODEL_PATH)
-        return Response(
-            content=_DEBUG_MODEL_PATH.read_bytes(),
-            media_type="model/gltf-binary",
-            headers={"Content-Disposition": "inline; filename=debug_toilet.glb"},
-        )
+        glb_dir = get_3d_storage_dir()
+        glb_dir.mkdir(parents=True, exist_ok=True)
+        (glb_dir / f"{request.uid}_{request.object_id}.glb").write_bytes(_DEBUG_MODEL_PATH.read_bytes())
+        job = create_job(user_id, request.uid, "generate_3d", {"object_id": request.object_id})
+        return JobSubmitResponse(job_id=job.id)
 
     cutout_image_path = resolve_object_cutout_path(
         get_image_storage_dir(), request.uid, request.object_id
@@ -84,36 +70,8 @@ def generate_test_3d(request: Test3DRequest) -> Response:
             ),
         )
 
-    try:
-        glb_bytes = get_inference_client().run_generate_3d(cutout_path=cutout_image_path)
-    except Exception as exc:
-        logger.exception("3D generation failed")
-        notify_pipeline_event(
-            request.uid, "3D model ready", ok=False, detail=f"Object {request.object_id}: {exc}"
-        )
-        raise HTTPException(status_code=500, detail=f"3D generation failed: {exc}") from exc
-
-    assert isinstance(glb_bytes, bytes)
-
-    glb_dir = get_3d_storage_dir()
-    glb_dir.mkdir(parents=True, exist_ok=True)
-    glb_path = object_glb_path(glb_dir, request.uid, request.object_id)
-    glb_path.write_bytes(glb_bytes)
-    touch_session(request.uid)
-    logger.info(
-        "test-3d complete: uid=%s object_id=%d glb_bytes=%d saved=%s",
-        request.uid,
-        request.object_id,
-        len(glb_bytes),
-        glb_path,
-    )
-    notify_pipeline_event(request.uid, "3D model ready", detail=f"Object {request.object_id}")
-
-    return Response(
-        content=glb_bytes,
-        media_type="model/gltf-binary",
-        headers={"Content-Disposition": f'inline; filename="{request.uid}_{request.object_id}.glb"'},
-    )
+    job = create_job(user_id, request.uid, "generate_3d", {"object_id": request.object_id})
+    return JobSubmitResponse(job_id=job.id)
 
 
 @router.get("/{uid}/{object_id}")

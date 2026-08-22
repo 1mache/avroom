@@ -1,12 +1,18 @@
 import React, { useCallback, useEffect, useState } from "react";
 
-import { deleteSession, getSessions } from "../../api/images";
+import { deleteSession, getActiveJobs, getSessions } from "../../api/images";
 import avroomLogo from "../../assets/avroom.png";
-import type { SessionInfo } from "../../types/api";
+import type { JobInfo, SessionInfo } from "../../types/api";
 import { byMostRecentlyEdited } from "../../utils/time";
 import { SessionCard } from "../dashboard/SessionCard";
 import { FlaskIcon, PlusIcon } from "../icons";
 import { ConfirmDialog } from "../widgets/ConfirmDialog";
+
+// How often the dashboard re-checks which sessions have queued/running or
+// failed work while it's the visible screen -- cheap (one endpoint, all
+// sessions in one call), so this runs unconditionally rather than gating on
+// "is anything active" the way the workspace's per-session poll does.
+const JOBS_POLL_INTERVAL_MS = 5000;
 
 export interface DashboardScreenProps {
   onOpenSession: (uid: string) => void;
@@ -30,6 +36,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [pendingDeleteUid, setPendingDeleteUid] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeJobs, setActiveJobs] = useState<JobInfo[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -44,6 +51,29 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Session A can have a segment queued, session B an inpaint running — both
+  // show it here without opening either. Failures (from a session nobody has
+  // revisited to auto-dismiss) surface as a red dot the same way.
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const jobs = await getActiveJobs();
+        if (!cancelled) {
+          setActiveJobs(jobs);
+        }
+      } catch {
+        // Non-fatal — next tick tries again.
+      }
+    };
+    void poll();
+    const interval = setInterval(() => void poll(), JOBS_POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, []);
 
   const pendingDelete = sessions.find((s) => s.uid === pendingDeleteUid) ?? null;
 
@@ -123,16 +153,21 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             </div>
           ) : (
             <div className="session-grid">
-              {sessions.map((session) => (
-                <SessionCard
-                  key={session.uid}
-                  uid={session.uid}
-                  name={session.name}
-                  lastChanged={session.last_changed}
-                  onOpen={onOpenSession}
-                  onRequestDelete={setPendingDeleteUid}
-                />
-              ))}
+              {sessions.map((session) => {
+                const sessionJobs = activeJobs.filter((job) => job.session_id === session.uid);
+                return (
+                  <SessionCard
+                    key={session.uid}
+                    uid={session.uid}
+                    name={session.name}
+                    lastChanged={session.last_changed}
+                    isBusy={sessionJobs.some((job) => job.status === "queued" || job.status === "running")}
+                    isFailed={sessionJobs.some((job) => job.status === "failed" || job.status === "conflict")}
+                    onOpen={onOpenSession}
+                    onRequestDelete={setPendingDeleteUid}
+                  />
+                );
+              })}
             </div>
           )}
         </div>

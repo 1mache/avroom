@@ -11,9 +11,51 @@ export interface ImageUploadResponse {
   last_changed: string;
 }
 
+export type JobKind = "segment" | "inpaint" | "generate_3d";
+export type JobStatus = "queued" | "running" | "done" | "failed" | "conflict";
+
+// One durable queued-work row, as returned by GET /jobs/active and embedded
+// in SessionSyncCheckResponse.jobs. See fastApi-app/schemas/jobs.py::JobInfo.
+export interface JobInfo {
+  job_id: string;
+  session_id: string;
+  kind: JobKind;
+  status: JobStatus;
+  error?: string | null;
+  created_at: string;
+}
+
+export interface SegmentMaskResult {
+  mask_id: string;
+  cutout_b64: string;
+  format: string;
+  cutout_bounds?: CutoutBounds | null;
+}
+
+// GET /jobs/{job_id}. `masks` is populated only for a done segment job.
+export interface JobDetailResponse extends JobInfo {
+  masks?: SegmentMaskResult[] | null;
+}
+
+export interface JobSubmitResponse {
+  job_id: string;
+}
+
+export interface SubmitInpaintRequest {
+  image_id: string;
+  mask_id: string;
+  from_job_id?: string | null;
+}
+
+export interface Generate3DJobRequest {
+  uid: string;
+  object_id: number;
+}
+
 export interface SessionSyncCheckResponse {
   last_changed: string;
   needs_refresh: boolean;
+  jobs: JobInfo[];
 }
 
 // Mirrors backend processing options. Fields remain optional because frontend
@@ -39,29 +81,6 @@ export interface ClickResultResponse {
   format: string;
   // Tight visible-object bounds inside full cutout PNG. Used by drag clamp.
   cutout_bounds?: CutoutBounds | null;
-}
-
-export interface SegmentMaskOption {
-  mask_id: string;
-  cutout_b64: string;
-  format: string;
-  cutout_bounds?: CutoutBounds | null;
-}
-
-export interface SegmentResponse {
-  image_id: string;
-  masks: SegmentMaskOption[];
-}
-
-export interface InpaintMaskRequest {
-  image_id: string;
-  mask_id: string;
-}
-
-export interface InpaintMaskResponse extends ClickResultResponse {
-  object_id: number;
-  object_uuid: string;
-  source_elevation_deg?: number;
 }
 
 export interface ObjectMetadataResponse {

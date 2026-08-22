@@ -569,6 +569,11 @@ input {
   animation: notch-pulse 1.1s ease-in-out infinite;
 }
 
+.rail-notch.is-failed {
+  background: var(--danger);
+  opacity: 0.85;
+}
+
 @keyframes notch-pulse {
   0%,
   100% {
@@ -650,6 +655,14 @@ input {
 
 .rail-row.is-pending {
   opacity: 0.8;
+}
+
+.rail-row.is-failed {
+  border-left-color: var(--danger);
+}
+
+.rail-row.is-failed .rail-name {
+  color: var(--danger);
 }
 
 .rail-thumb {
@@ -1171,6 +1184,26 @@ input {
   font-size: 9.5px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
+}
+
+.session-card-dot {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 1;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px rgba(69, 224, 229, 0.7);
+  animation: notch-pulse 1.1s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.session-card-dot.is-failed {
+  background: var(--danger);
+  box-shadow: 0 0 8px rgba(226, 86, 79, 0.7);
+  animation: none;
 }
 
 .session-card-delete {

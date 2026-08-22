@@ -11,29 +11,25 @@ import os
 
 from PIL import Image, UnidentifiedImageError
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pathlib import Path
 
 from core.image_processing import (
-    build_object_metadata_for_inpaint,
     debug_click_image_path,
     get_image_path,
 )
 from core.image_codec import to_base64_ascii
 from core.image_validation import ImageValidationError, ImageValidator
+from core.auth.identity import current_user_id
 from core.inference_pool.client import get_inference_client
 from core.inference_pool.session_runtime import (
     SessionConflictError,
     acquire_canvas_writer,
-    assert_segment_click_allowed,
-    drop_lease,
-    pinned_mask_ids,
     release_canvas_writer,
-    try_admit_inpaint,
 )
-from core.mask_cache import delete_candidate, delete_candidates
-from core.notifications import notify_pipeline_event
+from core.mask_cache import delete_candidates
+from core.repositories.job_repo import create_job, delete_job, get_job, list_session_jobs
 from core.depth_cache import delete_session_depth_maps
 from core.camera_calib_cache import delete_session_camera_calib, save_camera_calib
 from core.session_preview import write_upload_preview
@@ -54,14 +50,10 @@ from schemas.image import (
     ClickResultResponse,
     DuplicateObjectResponse,
     ImageUploadResponse,
-    InpaintMaskRequest,
-    InpaintMaskResponse,
     ObjectInfo,
     ObjectListResponse,
     ObjectMetadataResponse,
-    SegmentMaskOption,
     SegmentRequest,
-    SegmentResponse,
     SessionInfo,
     SessionPreviewRequest,
     SessionSyncCheckRequest,
@@ -72,6 +64,7 @@ from schemas.image import (
     RescaleByDepthResponse,
     UidCacheStatusResponse,
 )
+from schemas.jobs import JobSubmitResponse, SubmitInpaintRequest
 from core.object_storage import (
     copy_object_artifacts,
     current_background_path,
@@ -288,161 +281,56 @@ def handle_click(request: ClickRequest) -> ClickResultResponse:
     )
 
 
-@router.post("/segment", response_model=SegmentResponse)
-def segment_image(request: SegmentRequest) -> SegmentResponse:
-    """Return all mask candidates for a click without running inpainting."""
+@router.post("/segment", response_model=JobSubmitResponse, status_code=202)
+async def segment_image(
+    request: SegmentRequest, user_id: str = Depends(current_user_id)
+) -> JobSubmitResponse:
+    """Queue segmentation for a click and return immediately.
 
+    The actual work (and any 409-equivalent conflict against an in-flight
+    inpaint's region) is resolved when the dispatcher claims the job — see
+    `core/jobs/handlers.py::run_segment_job`. Poll `GET /jobs/{job_id}` (or
+    `POST /images/{uid}/sync-check`, which now embeds the session's jobs) for
+    the result.
+    """
     logger.info(
-        "Segmentation requested: image_id=%s x=%d y=%d",
+        "Segmentation queued: image_id=%s x=%d y=%d user_id=%s",
         request.image_id,
         request.x,
         request.y,
+        user_id,
     )
+    payload = {"x": request.x, "y": request.y, "options": request.options.model_dump() if request.options else None}
+    job = create_job(user_id, request.image_id, "segment", payload)
+    return JobSubmitResponse(job_id=job.id)
 
-    storage_dir: Path = get_image_storage_dir()
 
-    try:
-        assert_segment_click_allowed(request.image_id, request.x, request.y)
-        candidates = get_inference_client().run_segment(
-            image_id=request.image_id,
-            base_dir=storage_dir,
-            x=request.x,
-            y=request.y,
-            options=request.options,
-            exclude_mask_ids=frozenset(pinned_mask_ids(request.image_id)),
-        )
-    except SessionConflictError as exc:
-        logger.warning("Segmentation rejected due to session conflict: %s", exc)
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ValueError as exc:
-        logger.exception("Segmentation failed due to invalid input")
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except FileNotFoundError as exc:
-        logger.exception("Segmentation failed due to missing file")
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Segmentation failed")
-        raise HTTPException(status_code=500, detail=f"Segmentation failed: {exc}") from exc
+@router.post("/inpaint", response_model=JobSubmitResponse, status_code=202)
+async def inpaint_mask(
+    request: SubmitInpaintRequest, user_id: str = Depends(current_user_id)
+) -> JobSubmitResponse:
+    """Queue inpainting of one selected cached mask candidate and return immediately.
 
-    masks: list[SegmentMaskOption] = []
-    for mask_id, cutout_bytes in candidates:
-        # Frontend previews object pixels directly. Raw refined masks stay
-        # server-side because they are model inputs, not user-facing images.
-        masks.append(
-            SegmentMaskOption(
-                mask_id=mask_id,
-                cutout_b64=to_base64_ascii(cutout_bytes),
-                format="png",
-                cutout_bounds=extract_cutout_bounds_from_png_bytes(cutout_bytes),
-            )
-        )
-
+    If `from_job_id` names the segment job this mask came from, that job's
+    row is consumed here (removed from the picker backlog) — the mask id
+    stays protected from a concurrent segment's candidate wipe because this
+    new inpaint job is now itself in `reserved_mask_ids` until it runs.
+    """
     logger.info(
-        "Segmentation complete: image_id=%s candidates=%d",
-        request.image_id,
-        len(masks),
-    )
-    return SegmentResponse(image_id=request.image_id, masks=masks)
-
-
-@router.post("/inpaint", response_model=InpaintMaskResponse)
-def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
-    """Inpaint background using one user-selected cached mask candidate."""
-
-    logger.info(
-        "Inpainting requested: image_id=%s mask_id=%s",
+        "Inpainting queued: image_id=%s mask_id=%s from_job_id=%s user_id=%s",
         request.image_id,
         request.mask_id,
+        request.from_job_id,
+        user_id,
     )
+    job = create_job(user_id, request.image_id, "inpaint", {"mask_id": request.mask_id})
 
-    storage_dir: Path = get_image_storage_dir()
-    lease = None
+    if request.from_job_id is not None:
+        source = get_job(user_id, request.from_job_id)
+        if source is not None and source.kind == "segment":
+            delete_job(request.from_job_id)
 
-    try:
-        lease = try_admit_inpaint(request.image_id, request.mask_id, storage_dir)
-    except FileNotFoundError as exc:
-        logger.exception("Inpainting failed due to missing cached mask or image")
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SessionConflictError as exc:
-        logger.warning("Inpainting rejected due to session conflict: %s", exc)
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    try:
-        try:
-            acquire_canvas_writer(request.image_id)
-        except SessionConflictError as exc:
-            logger.warning("Inpainting rejected due to canvas writer timeout: %s", exc)
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-        try:
-            background_bytes, cutout_bytes, image_format = get_inference_client().run_inpaint(
-                image_id=request.image_id,
-                mask_id=request.mask_id,
-                base_dir=storage_dir,
-            )
-        except FileNotFoundError as exc:
-            logger.exception("Inpainting failed due to missing cached mask or image")
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except ValueError as exc:
-            logger.exception("Inpainting failed due to invalid input")
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except Exception as exc:
-            logger.exception("Inpainting failed")
-            notify_pipeline_event(request.image_id, "Object removed", ok=False, detail=str(exc))
-            raise HTTPException(status_code=500, detail=f"Inpainting failed: {exc}") from exc
-
-        # Allocate next sequential object id for this session.
-        object_id = next_object_id(request.image_id)
-
-        object_metadata = build_object_metadata_for_inpaint(
-            image_id=request.image_id,
-            mask_id=request.mask_id,
-            object_id=object_id,
-            base_dir=storage_dir,
-        )
-        save_object_metadata(object_metadata)
-
-        # Background always written to the single cumulative canvas path (overwrites → becomes new canvas).
-        background_image_path = current_background_path(storage_dir, request.image_id)
-        background_image_path.write_bytes(background_bytes)
-
-        # Cutout written to the per-object numbered path (never overwrites a prior object).
-        cutout_image_path = object_cutout_path(storage_dir, request.image_id, object_id)
-        cutout_image_path.write_bytes(cutout_bytes)
-
-        # Selected candidate is promoted; remove only that mask's temp files.
-        delete_candidate(storage_dir, request.image_id, request.mask_id)
-        touch_session(request.image_id)
-    finally:
-        if lease is not None:
-            drop_lease(request.image_id, lease)
-        release_canvas_writer(request.image_id)
-
-    background_b64 = to_base64_ascii(background_bytes)
-    cutout_b64 = to_base64_ascii(cutout_bytes)
-    cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_bytes)
-
-    logger.info(
-        "Inpainting complete: image_id=%s mask_id=%s background_bytes=%d cutout_bytes=%d object_id=%d object_uuid=%s",
-        request.image_id,
-        request.mask_id,
-        len(background_bytes),
-        len(cutout_bytes),
-        object_id,
-        object_metadata.uuid,
-    )
-    notify_pipeline_event(request.image_id, "Object removed", detail=f"Object {object_id}")
-
-    return InpaintMaskResponse(
-        image_id=request.image_id,
-        background_b64=background_b64,
-        cutout_b64=cutout_b64,
-        format=image_format,
-        cutout_bounds=cutout_bounds,
-        object_id=object_id,
-        object_uuid=object_metadata.uuid,
-        source_elevation_deg=object_metadata.source_elevation_deg,
-    )
+    return JobSubmitResponse(job_id=job.id)
 
 
 @router.delete("/{uid}", status_code=204)
@@ -525,8 +413,15 @@ async def set_name(uid: str, request: SetNameRequest) -> SessionInfo:
 
 
 @router.post("/{uid}/sync-check", response_model=SessionSyncCheckResponse)
-async def sync_check_session(uid: str, request: SessionSyncCheckRequest) -> SessionSyncCheckResponse:
-    """Compare a client-held session timestamp against server truth."""
+async def sync_check_session(
+    uid: str, request: SessionSyncCheckRequest, user_id: str = Depends(current_user_id)
+) -> SessionSyncCheckResponse:
+    """Compare a client-held session timestamp against server truth.
+
+    Also returns this session's jobs (queued/running/done/failed/conflict) —
+    the polling channel the frontend uses to notice queued work has landed,
+    since this endpoint is already polled every ~2s while work is pending.
+    """
     logger.debug(
         "Session sync-check requested: uid=%s client_last_changed=%r",
         uid,
@@ -552,9 +447,11 @@ async def sync_check_session(uid: str, request: SessionSyncCheckRequest) -> Sess
             uid,
             server_last_changed,
         )
+    jobs = list_session_jobs(user_id, uid)
     return SessionSyncCheckResponse(
         last_changed=server_last_changed,
         needs_refresh=needs_refresh,
+        jobs=jobs,
     )
 
 

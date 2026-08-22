@@ -12,12 +12,11 @@ from avroom_object_removal.ai_engines.novel_view import NovelViewRotationAdapter
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.image_codec import encode_png, to_base64_ascii
 from core.inference_pool.client import get_inference_client
+from core.object_3d import ensure_object_glb
 from core.object_storage import (
-    object_glb_path,
     object_novel_view_path,
     object_novel_view_preview_path,
     resolve_object_cutout_path,
-    resolve_object_glb_path,
 )
 from core.object_metadata import load_object_metadata
 from core.repositories.session_repo import touch_session
@@ -27,7 +26,7 @@ from schemas.image import (
     NovelViewRequest,
     NovelViewResponse,
 )
-from settings import get_3d_storage_dir, get_image_storage_dir
+from settings import get_image_storage_dir
 
 router = APIRouter(prefix="/images", tags=["images"])
 logger = logging.getLogger(__name__)
@@ -43,62 +42,6 @@ ROTATION_STEP_DEG = 10.0
 # Below this the requested and stored elevations are the same angle, just
 # rounded differently on the way through JSON — not worth a log line.
 _ELEVATION_MATCH_TOLERANCE_DEG = 1e-3
-
-
-def _ensure_object_glb(*, uid: str, object_id: int, cutout_path: Path) -> Path:
-    """Return the on-disk GLB for ``(uid, object_id)``, generating it if missing.
-
-    Looks up the cached mesh under the 3D storage dir first (including the
-    legacy ``{uid}.glb`` name for object 0). On a miss, runs the existing 3D
-    generation job and writes the canonical numbered path
-    ``{uid}_{object_id}.glb``.
-    """
-
-    glb_dir = get_3d_storage_dir()
-    glb_dir.mkdir(parents=True, exist_ok=True)
-    existing = resolve_object_glb_path(glb_dir, uid, object_id)
-    if existing.is_file() and existing.stat().st_size > 0:
-        logger.info(
-            "novel-view GLB cache hit: uid=%s object_id=%d path=%s",
-            uid,
-            object_id,
-            existing,
-        )
-        return existing
-
-    logger.info(
-        "novel-view GLB cache miss; generating: uid=%s object_id=%d cutout=%s",
-        uid,
-        object_id,
-        cutout_path,
-    )
-    try:
-        glb_bytes = get_inference_client().run_generate_3d(cutout_path=cutout_path)
-    except Exception as exc:
-        logger.exception("novel-view GLB generation failed")
-        raise HTTPException(
-            status_code=500,
-            detail=f"3D generation for novel-view failed: {exc}",
-        ) from exc
-
-    if not isinstance(glb_bytes, bytes) or not glb_bytes:
-        logger.error("novel-view GLB generation returned empty bytes")
-        raise HTTPException(
-            status_code=500,
-            detail="3D generation for novel-view returned empty GLB bytes",
-        )
-
-    out_path = object_glb_path(glb_dir, uid, object_id)
-    out_path.write_bytes(glb_bytes)
-    touch_session(uid)
-    logger.info(
-        "novel-view GLB written: uid=%s object_id=%d bytes=%d path=%s",
-        uid,
-        object_id,
-        len(glb_bytes),
-        out_path,
-    )
-    return out_path
 
 
 def _without_negative_zero(value: float) -> float:
@@ -235,7 +178,7 @@ def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
         png_bytes = cache_path.read_bytes()
     else:
         try:
-            glb_path = _ensure_object_glb(
+            glb_path = ensure_object_glb(
                 uid=request.uid,
                 object_id=request.object_id,
                 cutout_path=cutout_path,

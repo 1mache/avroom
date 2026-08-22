@@ -9,8 +9,9 @@ they stay on local disk and are addressed by `{uid}_{object_id}_...` paths in
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.base import Base
@@ -79,3 +80,34 @@ class ObjectRow(Base):
     offset_y: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
 
     session: Mapped[SessionRow] = relationship(back_populates="objects")
+
+
+class JobRow(Base):
+    """A durable, user-owned unit of queued work (segment / inpaint / generate_3d).
+
+    The table only ever holds in-flight work, unconsumed segment results, and
+    failures — a successful inpaint/generate_3d row is deleted once its real
+    result (an `ObjectRow` / GLB file) exists, so this never grows unbounded.
+    `user_id` is the routing key: it is how a result gets back to the caller
+    that queued it once multiple users share one queue (see
+    `core/auth/identity.py`).
+    """
+
+    __tablename__ = "jobs"
+    __table_args__ = (Index("ix_jobs_status_created_at", "status", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid_str)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    session_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now_utc, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

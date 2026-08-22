@@ -2,26 +2,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   cacheNovelViewPreview,
+  deleteJob,
   deleteObject as deleteObjectRequest,
   duplicateObject as duplicateObjectRequest,
+  getJob,
   getSessionObjects,
   inpaintMask,
   segmentImage,
   setObjectName,
   synthesizeNovelView,
 } from "../api/images";
-import type { CutoutBounds, ObjectInfo, SegmentRequest } from "../types/api";
+import type { CutoutBounds, JobInfo, ObjectInfo } from "../types/api";
 import type {
   ClickPosition,
   CutoutAlphaBounds,
   CutoutObject,
-  PendingInpaintJob,
   RotationPose,
   SegmentPickerState,
 } from "../types/session";
-
-let pendingJobCounter = 0;
-const nextPendingJobId = (): string => `pending-${++pendingJobCounter}`;
 
 // Fallback when server metadata is unavailable (legacy sessions).
 const FALLBACK_SOURCE_ELEVATION_DEG = 15;
@@ -62,9 +60,9 @@ export const toCutoutAlphaBounds = (
   };
 };
 
-// Contexts a 409 can meaningfully arrive from. "generic" means: whatever this
-// error is, it isn't a concurrency conflict — hand it straight to the page's
-// existing error-modal path.
+// Contexts a 409-equivalent conflict can meaningfully arrive from. "generic"
+// means: whatever this error is, it isn't a concurrency conflict — hand it
+// straight to the page's existing error-modal path.
 export type JobErrorContext = "segment" | "inpaint" | "rotate" | "generic";
 
 interface UseSessionJobsOptions {
@@ -72,20 +70,30 @@ interface UseSessionJobsOptions {
   /** Fired after any successful mutating call so sync-check bookkeeping can
    * pick up the fresh server last_changed. */
   onMutated?: () => void;
+  /** A queued segment/inpaint job resolved to a "conflict" (the mask/click
+   * overlapped an in-flight removal). Fired once per job; the job row is
+   * then dismissed automatically since the caller has already been told. */
+  onConflict?: (job: JobInfo) => void;
 }
 
 /**
- * Owns per-session object state and job concurrency: one in-flight segment at
- * a time (it drives a single interactive picker), but N concurrent inpaints —
- * the backend's canvas-writer lock plus region leases make it safe for a
- * second non-overlapping removal to run while the first is still inpainting.
+ * Owns per-session object state and the local view of this session's job
+ * backlog. Segment and inpaint are both fire-and-forget now: submitting
+ * returns a job id immediately (202) and the result — mask candidates for
+ * segment, the finished object for inpaint — arrives later via `jobs`, fed
+ * by useSessionSync's polling of POST /images/{uid}/sync-check. This means
+ * work submitted just before navigating away from the session is never lost:
+ * it's a durable row, not component state, so re-entering the session (or
+ * the next sync tick) picks it back up.
  */
 export function useSessionJobs(imageId: string | null, options: UseSessionJobsOptions) {
-  const { onError, onMutated } = options;
+  const { onError, onMutated, onConflict } = options;
 
   const [objects, setObjects] = useState<CutoutObject[]>([]);
   const [selectedObjectId, setSelectedObjectId] = useState<number | null>(null);
-  const [pendingJobs, setPendingJobs] = useState<PendingInpaintJob[]>([]);
+  // Fed by useSessionSync from the sync-check response — server truth, no
+  // local-only fields to preserve across updates (unlike `objects`).
+  const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [segmentState, setSegmentState] = useState<SegmentPickerState>({ status: "idle" });
   const [backgroundSrc, setBackgroundSrc] = useState<string | null>(null);
   const [isDuplicating, setIsDuplicating] = useState(false);
@@ -114,16 +122,30 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   // later object reusing the same freed id isn't permanently hidden.
   const deletedObjectIdsRef = useRef<Set<number>>(new Set());
 
+  // Segment jobs the user closed the picker on without choosing a mask. The
+  // server-side row (and its reserved candidate files) is untouched, so this
+  // is purely a "not right now" — resets on remount, meaning re-entering the
+  // session offers the same result again.
+  const dismissedSegmentJobIdsRef = useRef<Set<string>>(new Set());
+  // Guards the picker-chain effect against re-fetching the same head job
+  // while its GET /jobs/{id} inflate call is still in flight.
+  const inflatingJobIdRef = useRef<string | null>(null);
+  // Conflict jobs already surfaced to onConflict, so a job row that lingers
+  // for one extra render (before its own dismissal completes) can't double-fire.
+  const notifiedConflictIdsRef = useRef<Set<string>>(new Set());
+
   const resetSession = useCallback(() => {
     setObjects([]);
     setSelectedObjectId(null);
-    setPendingJobs([]);
+    setJobs([]);
     setSegmentState({ status: "idle" });
     setBackgroundSrc(null);
     setIsDuplicating(false);
     setIsDeleting(false);
     highestCommittedObjectIdRef.current = -1;
     deletedObjectIdsRef.current = new Set();
+    dismissedSegmentJobIdsRef.current = new Set();
+    notifiedConflictIdsRef.current = new Set();
   }, []);
 
   const isObjectDeleted = useCallback((objectId: number) => deletedObjectIdsRef.current.has(objectId), []);
@@ -186,98 +208,115 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     );
   }, []);
 
+  // Queues segmentation and returns immediately — no local loading state, and
+  // no single-flight restriction: several segment clicks in a row all queue.
+  // The result surfaces later through the picker-chain effect below, once it
+  // shows up in `jobs`.
   const runSegment = useCallback(
-    async (x: number, y: number) => {
+    (x: number, y: number) => {
       const currentImageId = imageIdRef.current;
       if (!currentImageId) {
         return;
       }
+      segmentImage({ image_id: currentImageId, x, y })
+        .then(() => onMutated?.())
+        .catch((err) => onError(err, "segment"));
+    },
+    [onError, onMutated],
+  );
 
-      setSegmentState({ status: "loading" });
+  // Picker-chain: whenever the picker is idle, look for the oldest not-yet-
+  // dismissed done segment job in this session and open it. Firing again
+  // whenever `jobs` changes or the picker returns to idle is what makes
+  // several queued results open one after another as each is resolved, and
+  // what replays the same chain on session re-entry (dismissedSegmentJobIdsRef
+  // is fresh on every mount).
+  useEffect(() => {
+    if (segmentState.status !== "idle") {
+      return;
+    }
+    const currentImageId = imageIdRef.current;
+    if (!currentImageId) {
+      return;
+    }
 
-      const payload: SegmentRequest = { image_id: currentImageId, x, y };
+    const head = jobs
+      .filter(
+        (job) =>
+          job.kind === "segment" &&
+          job.status === "done" &&
+          !dismissedSegmentJobIdsRef.current.has(job.job_id),
+      )
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))[0];
 
-      try {
-        const result = await segmentImage(payload);
-        // The user may have switched to a different session while this was
-        // in flight — don't let a stale result populate the wrong picker.
+    if (!head || inflatingJobIdRef.current === head.job_id) {
+      return;
+    }
+
+    inflatingJobIdRef.current = head.job_id;
+    getJob(head.job_id)
+      .then((detail) => {
+        inflatingJobIdRef.current = null;
         if (imageIdRef.current !== currentImageId) {
           return;
         }
-        if (result.masks.length === 0) {
-          throw new Error("No mask candidates returned.");
-        }
-        setSegmentState({ status: "choosing", maskOptions: result.masks });
-      } catch (err) {
-        if (imageIdRef.current === currentImageId) {
+        if (!detail.masks || detail.masks.length === 0) {
+          // Nothing left to show (e.g. candidates expired) -- skip it so the
+          // effect tries the next backlog entry on its next run.
+          dismissedSegmentJobIdsRef.current.add(head.job_id);
           setSegmentState({ status: "idle" });
+          return;
         }
-        onError(err, "segment");
+        setSegmentState({ status: "choosing", jobId: head.job_id, maskOptions: detail.masks });
+      })
+      .catch(() => {
+        inflatingJobIdRef.current = null;
+      });
+  }, [jobs, segmentState.status]);
+
+  // A queued segment/inpaint job that resolved to "conflict" (its mask/click
+  // overlapped an in-flight removal) surfaces once via onConflict — the same
+  // inline notice a synchronous 409 used to produce — then the job row is
+  // dismissed so it can't linger or re-notify.
+  useEffect(() => {
+    for (const job of jobs) {
+      if (job.status !== "conflict" || notifiedConflictIdsRef.current.has(job.job_id)) {
+        continue;
       }
-    },
-    [onError],
-  );
+      notifiedConflictIdsRef.current.add(job.job_id);
+      onConflict?.(job);
+      deleteJob(job.job_id).catch(() => {
+        // Non-fatal — worst case the row lingers until manually cleared.
+      });
+    }
+  }, [jobs, onConflict]);
 
   const closeMaskPicker = useCallback(() => {
-    setSegmentState({ status: "idle" });
+    setSegmentState((prev) => {
+      if (prev.status === "choosing") {
+        dismissedSegmentJobIdsRef.current.add(prev.jobId);
+      }
+      return { status: "idle" };
+    });
   }, []);
 
-  // Closes the picker and fires the inpaint call detached: a pending
-  // placeholder stands in for the object until the response lands, so the
-  // caller is immediately free to click a new point and start another
-  // segment/inpaint elsewhere while this one is still running.
+  // Consumes the segment job (from_job_id) atomically with the inpaint
+  // submission and closes the picker. The created object isn't built here —
+  // it arrives through the normal sync/reconcile path once the dispatcher
+  // finishes the removal, exactly like a job that was still queued when the
+  // user navigated away and back.
   const selectMask = useCallback(
-    (maskId: string, normalizedClickPos: ClickPosition | null) => {
+    (jobId: string, maskId: string) => {
       const currentImageId = imageIdRef.current;
+      dismissedSegmentJobIdsRef.current.add(jobId);
       setSegmentState({ status: "idle" });
       if (!currentImageId) {
         return;
       }
 
-      const jobId = nextPendingJobId();
-      setPendingJobs((prev) => [
-        ...prev,
-        { jobId, maskId, normalizedClickPos, startedAt: Date.now() },
-      ]);
-
-      inpaintMask({ image_id: currentImageId, mask_id: maskId })
-        .then((result) => {
-          setPendingJobs((prev) => prev.filter((j) => j.jobId !== jobId));
-
-          // The user may have switched to a different session while this was
-          // in flight — don't let a stale result attach to the wrong one.
-          if (imageIdRef.current !== currentImageId) {
-            return;
-          }
-
-          const newObject: CutoutObject = {
-            objectId: result.object_id,
-            uuid: result.object_uuid,
-            name: null,
-            cutoutSrc: `data:image/${result.format};base64,${result.cutout_b64}`,
-            cutoutAlphaBounds: toCutoutAlphaBounds(result.cutout_bounds),
-            normalizedClickPos,
-            glbData: null,
-            rotation: null,
-            hidden: false,
-            offset: { x: 0, y: 0 },
-            sourceElevationDeg:
-              result.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
-          };
-
-          // Newly created object auto-selects — the user just made it.
-          setObjects((prev) => upsertObject(prev, newObject));
-          setSelectedObjectId(result.object_id);
-
-          if (result.object_id > highestCommittedObjectIdRef.current) {
-            highestCommittedObjectIdRef.current = result.object_id;
-            setBackgroundSrc(`data:image/${result.format};base64,${result.background_b64}`);
-          }
-
-          onMutated?.();
-        })
+      inpaintMask({ image_id: currentImageId, mask_id: maskId, from_job_id: jobId })
+        .then(() => onMutated?.())
         .catch((err) => {
-          setPendingJobs((prev) => prev.filter((j) => j.jobId !== jobId));
           if (imageIdRef.current === currentImageId) {
             onError(err, "inpaint");
           }
@@ -308,11 +347,12 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     setObjects((prev) => prev.map((o) => (o.objectId === objectId ? { ...o, offset } : o)));
   }, []);
 
-  // Fires the novel-view request detached, same pattern as selectMask: the
-  // object's `rotation` field itself is the pending-state marker (no separate
-  // pendingJobs entry needed, since the object already exists). Re-rotating
+  // Fires the novel-view request detached, same pattern as before: the
+  // object's `rotation` field itself is the pending-state marker. Re-rotating
   // an object simply overwrites its rotation -- always starting over from the
-  // pristine cutout, since the backend never mutates that file.
+  // pristine cutout, since the backend never mutates that file. Unlike
+  // segment/inpaint, rotation is not queued server-side (see plan) -- it
+  // still lives entirely in this detached-request-plus-local-marker shape.
   const commitRotation = useCallback(
     (objectId: number, pose: RotationPose, previewSrc: string) => {
       const currentImageId = imageIdRef.current;
@@ -481,16 +521,17 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     setObjects,
     selectedObjectId,
     setSelectedObjectId,
-    pendingJobs,
+    jobs,
+    setJobs,
     hasPendingWork:
-      pendingJobs.length > 0 ||
+      jobs.some((job) => job.status === "queued" || job.status === "running") ||
       isDuplicating ||
       isDeleting ||
       objects.some((o) => o.rotation?.status === "pending"),
     segmentState,
-    isSegmenting: segmentState.status === "loading",
     isChoosingMask: segmentState.status === "choosing",
     maskOptions: segmentState.status === "choosing" ? segmentState.maskOptions : [],
+    currentSegmentJobId: segmentState.status === "choosing" ? segmentState.jobId : null,
     backgroundSrc,
     setBackgroundSrc,
     isDuplicating,

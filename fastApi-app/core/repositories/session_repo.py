@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from core.auth.single_user import get_default_user_id
+from core.auth.identity import current_user_id
 from db.models import SessionRow, User
 from db.session import session_scope
 
@@ -27,16 +27,17 @@ class SessionNotFoundError(LookupError):
 
 
 def _get_or_create_session_row(db: Session, uid: str) -> SessionRow:
-    """Return the session row for *uid*, creating it (owned by the local dev
-    user) if absent.
+    """Return the session row for *uid*, creating it (owned by the current
+    caller) if absent.
 
-    `AUTH_MODE=jwt` (Phase 5) will thread a real caller-derived user id
-    through here instead of always resolving the fixed local user.
+    Identity resolution goes through `core.auth.identity.current_user_id` —
+    the one seam `AUTH_MODE=jwt` will change — rather than resolving the
+    fixed local user directly.
     """
     row = db.get(SessionRow, uid)
     if row is not None:
         return row
-    row = SessionRow(id=uid, user_id=get_default_user_id(db), name=None, last_changed=None)
+    row = SessionRow(id=uid, user_id=current_user_id(), name=None, last_changed=None)
     db.add(row)
     db.flush()
     return row

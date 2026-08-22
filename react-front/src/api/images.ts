@@ -1,17 +1,19 @@
 import type {
   DuplicateObjectResponse,
+  Generate3DJobRequest,
   ImageUploadResponse,
-  InpaintMaskRequest,
-  InpaintMaskResponse,
+  JobDetailResponse,
+  JobInfo,
+  JobSubmitResponse,
   NovelViewPreviewCacheRequest,
   NovelViewRequest,
   NovelViewResponse,
   ObjectListResponse,
   ObjectMetadataResponse,
   SegmentRequest,
-  SegmentResponse,
   SessionInfo,
   SessionSyncCheckResponse,
+  SubmitInpaintRequest,
   UidCacheStatusResponse,
   UpdateObjectRequest,
 } from "../types/api";
@@ -83,20 +85,20 @@ export async function uploadImage(file: File): Promise<ImageUploadResponse> {
   return handleJsonResponse<ImageUploadResponse>(response);
 }
 
-export async function generate3DModel(uid: string, objectId: number): Promise<ArrayBuffer> {
+// Queues GLB generation and returns its job id immediately (202) — the
+// backend no longer blocks the request on the model run. Callers await
+// completion via waitForJobDone, then fetch the GLB via fetchCached3DModel.
+export async function submitGenerate3D(uid: string, objectId: number): Promise<string> {
   const response = await fetch(`${API_BASE_URL}/3d/test-3d`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ uid, object_id: objectId }),
+    body: JSON.stringify({ uid, object_id: objectId } satisfies Generate3DJobRequest),
   });
 
-  if (!response.ok) {
-    return throwApiError(response);
-  }
-
-  return response.arrayBuffer();
+  const body = await handleJsonResponse<JobSubmitResponse>(response);
+  return body.job_id;
 }
 
 export async function getSessions(): Promise<SessionInfo[]> {
@@ -160,7 +162,10 @@ export async function getUidCacheStatus(uid: string): Promise<UidCacheStatusResp
   return handleJsonResponse<UidCacheStatusResponse>(response);
 }
 
-export async function segmentImage(payload: SegmentRequest): Promise<SegmentResponse> {
+// Queues segmentation and returns its job id immediately (202). The result
+// (mask candidates) shows up later in the session's jobs list (see
+// syncCheckSession) once the dispatcher finishes it.
+export async function segmentImage(payload: SegmentRequest): Promise<JobSubmitResponse> {
   const response = await fetch(`${API_BASE_URL}/images/segment`, {
     method: "POST",
     headers: {
@@ -169,10 +174,11 @@ export async function segmentImage(payload: SegmentRequest): Promise<SegmentResp
     body: JSON.stringify(payload),
   });
 
-  return handleJsonResponse<SegmentResponse>(response);
+  return handleJsonResponse<JobSubmitResponse>(response);
 }
 
-export async function inpaintMask(payload: InpaintMaskRequest): Promise<InpaintMaskResponse> {
+// Queues inpainting and returns its job id immediately (202).
+export async function inpaintMask(payload: SubmitInpaintRequest): Promise<JobSubmitResponse> {
   const response = await fetch(`${API_BASE_URL}/images/inpaint`, {
     method: "POST",
     headers: {
@@ -181,7 +187,68 @@ export async function inpaintMask(payload: InpaintMaskRequest): Promise<InpaintM
     body: JSON.stringify(payload),
   });
 
-  return handleJsonResponse<InpaintMaskResponse>(response);
+  return handleJsonResponse<JobSubmitResponse>(response);
+}
+
+// --- Job queue ---------------------------------------------------------
+
+export async function getActiveJobs(): Promise<JobInfo[]> {
+  const response = await fetch(`${API_BASE_URL}/jobs/active`);
+  return handleJsonResponse<JobInfo[]>(response);
+}
+
+export async function getJob(jobId: string): Promise<JobDetailResponse> {
+  const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`);
+  return handleJsonResponse<JobDetailResponse>(response);
+}
+
+/** Dismiss a failed/conflict job, or discard an unconsumed segment result. */
+export async function deleteJob(jobId: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`, { method: "DELETE" });
+  if (!response.ok) {
+    return throwApiError(response);
+  }
+}
+
+const JOB_POLL_INTERVAL_MS = 800;
+const JOB_POLL_TIMEOUT_MS = 5 * 60 * 1000;
+
+/**
+ * Polls a job until it leaves `queued`/`running`. Used only by the 3D-rotate
+ * flow, which (unlike segment/inpaint) directly awaits one specific job
+ * rather than watching the session's job list.
+ *
+ * A 404 here is treated as success, not a fresh failure: a successful
+ * generate_3d job's row is deleted by the dispatcher (its real result is the
+ * GLB file on disk, already written by the time the row disappears) — same
+ * as inpaint. This is only safe because callers poll a job id they just
+ * submitted themselves; polling an id after already consuming it once would
+ * misread "gone because dismissed" as success.
+ */
+export async function waitForJobDone(jobId: string): Promise<void> {
+  const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
+  for (;;) {
+    let job: JobDetailResponse;
+    try {
+      job = await getJob(jobId);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 404) {
+        return;
+      }
+      throw err;
+    }
+
+    if (job.status === "done") {
+      return;
+    }
+    if (job.status === "failed" || job.status === "conflict") {
+      throw new ApiError(422, job.error ?? "Job failed.");
+    }
+    if (Date.now() > deadline) {
+      throw new Error("Timed out waiting for job to finish.");
+    }
+    await new Promise((resolve) => setTimeout(resolve, JOB_POLL_INTERVAL_MS));
+  }
 }
 
 export async function deleteSession(uid: string): Promise<void> {

@@ -40,17 +40,21 @@ def test_inference_lock_serializes_concurrent_threads() -> None:
 
 
 def test_heavy_endpoints_are_sync_handlers() -> None:
-    """Heavy routes must be plain def so Starlette runs them in a thread pool."""
+    """Heavy routes must be plain def so Starlette runs them in a thread pool.
+
+    `segment_image`, `inpaint_mask`, and `generate_test_3d` are no longer
+    heavy themselves — they only enqueue a `JobRow` and return 202. The
+    actual GPU work moved to `core/jobs/handlers.py`, run on dispatcher
+    threads (`core/jobs/dispatcher.py`), not the request thread pool, so
+    those three are correctly `async def` now.
+    """
     import ast
 
     handler_names = {
         "handle_click",
-        "segment_image",
-        "inpaint_mask",
         "rescale_object_by_depth",
         "duplicate_object",
         "delete_object",
-        "generate_test_3d",
         "synthesize_novel_view",
     }
     source_files = (

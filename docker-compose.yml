@@ -26,6 +26,15 @@ services:
       timeout: 5s
       retries: 10
 
+  mailpit:
+    # Local-mode notification transport (see fastApi-app/core/notifications/).
+    # No auth, no TLS, no credentials to configure. SMTP on 1025, mail
+    # viewable at http://localhost:8025.
+    image: axllent/mailpit
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
   api:
     build:
       context: .

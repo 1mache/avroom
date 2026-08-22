@@ -317,3 +317,55 @@ def get_debug_image_save() -> bool:
     """
     return _env_bool("DEBUG_IMAGE_SAVE", True)
 
+
+def get_notify_enabled() -> bool:
+    """Return whether AI-pipeline completion emails are sent at all."""
+    return _env_bool("NOTIFY_ENABLED", True)
+
+
+def get_notify_backend() -> str:
+    """Return which transport sends notification emails: ``"smtp"`` or ``"ses"``.
+
+    No dedicated env var is needed for the normal case: this derives from
+    `get_storage_backend()`, which deploy already flips to ``"s3"``. So local
+    dev (unset) lands on SMTP (Mailpit, no credentials) and an AWS deploy
+    lands on SES (IAM role, no credentials) with nothing else to configure.
+    `NOTIFY_BACKEND` remains as an explicit override for testing either path
+    outside its default environment.
+    """
+    raw = os.environ.get("NOTIFY_BACKEND", "").strip().lower()
+    if raw in {"smtp", "ses"}:
+        return raw
+    return "ses" if get_storage_backend() == "s3" else "smtp"
+
+
+def get_notify_from() -> str:
+    """Return the ``From`` address on notification emails."""
+    return os.environ.get("NOTIFY_FROM", "avroom@avroom.local").strip()
+
+
+def get_smtp_host() -> str:
+    """Return the SMTP host. Defaults to the local Mailpit container."""
+    return os.environ.get("SMTP_HOST", "localhost").strip()
+
+
+def get_smtp_port() -> int:
+    """Return the SMTP port. Defaults to Mailpit's unauthenticated listener."""
+    return _env_int("SMTP_PORT", 1025)
+
+
+def get_smtp_user() -> str:
+    """Return the SMTP username, empty when the relay needs no auth (e.g. Mailpit)."""
+    return os.environ.get("SMTP_USER", "").strip()
+
+
+def get_smtp_password() -> str:
+    """Return the SMTP password, used only when `get_smtp_user()` is non-empty."""
+    return os.environ.get("SMTP_PASSWORD", "").strip()
+
+
+def get_notify_ses_region() -> str:
+    """Return the AWS region for the SES client (boto3 falls back to its own
+    default resolution — env/credentials file/instance profile — if empty)."""
+    return os.environ.get("NOTIFY_SES_REGION", "").strip()
+

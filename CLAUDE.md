@@ -23,7 +23,8 @@ avroom/
 │   ├── api/routes.py     # upload, segment, inpaint, legacy click endpoints
 │   ├── core/             # image_processing.py - bridges API to ObjectRemover
 │   │   ├── repositories/ # session_repo.py - Postgres-backed session registry
-│   │   └── auth/         # single_user.py - fixed local dev user (AUTH_MODE=single_user)
+│   │   ├── auth/         # single_user.py - fixed local dev user (AUTH_MODE=single_user)
+│   │   └── notifications/ # notify_pipeline_event() - email on inpaint/3D-gen completion
 │   ├── db/                # SQLAlchemy models (users/sessions/objects) + engine/session
 │   ├── alembic/           # Postgres schema migrations (`alembic upgrade head`)
 │   ├── schemas/          # Pydantic request/response models
@@ -183,6 +184,43 @@ Public API: `Trellis3DGenerator().generate(image, *, quality=Quality.FAST, outpu
 The Space is queued (Zero GPU). One generation takes seconds of compute plus queue wait. Module is **not** wired into FastAPI yet.
 
 Install: `pip install -e ./TrellisModule` (or `pip install -r requirements.txt` which includes it).
+
+## Email Notifications on Pipeline Completion
+
+`core/notifications/notify_pipeline_event(uid, event, *, ok=True, detail=None)` emails a
+session's owner when a slow AI operation finishes — currently wired at the two call sites that
+warrant it: inpainting (`api/routes.py`, after the object is persisted) and 3D generation
+(`api/model_3d.py`, after the GLB is written), both on success and on failure. It is deliberately
+**not** a generic hook on every AI call — segment/click/upload are sub-second and the user is
+still watching the response.
+
+The function takes no dependency on `core.inference_pool` (a free-form `event` string, not a
+`JobKind`) so it can be called from anywhere, including the AI pipeline rewrite happening in
+parallel on another branch. It never raises and never blocks the request: the send happens on a
+daemon thread, and any failure (missing recipient, dead mail server) is logged at `WARNING` and
+swallowed — a notification failing must never turn an already-successful AI request into a 500.
+
+The email body/subject always name the session — its display name, falling back to the uid when
+unnamed (`core/repositories/session_repo.py::get_session_notify_target`) — so the recipient can
+tell which room finished.
+
+**Transport is zero-config in both environments**, chosen by `settings.get_notify_backend()`:
+```
+NOTIFY_BACKEND unset  →  "ses" if STORAGE_BACKEND == "s3" else "smtp"
+```
+No dedicated env var needs setting — it rides the same switch a cloud deploy already flips.
+Local (`smtp`) talks to a **Mailpit** container (`docker-compose.yml`'s `mailpit` service, started
+by `run.bat` alongside Postgres) — no auth, no TLS, no credentials; every notification is viewable
+at `http://localhost:8025`, nothing reaches a real inbox. Cloud (`ses`) uses **boto3 SES**
+(`core/notifications/ses_backend.py`; boto3 is already a dependency for the `STORAGE_BACKEND=s3`
+path) — credentials resolve from the deployed instance's IAM role, nothing in env either. All
+seven `NOTIFY_*`/`SMTP_*` vars in `.env.example` are optional overrides, not required config.
+
+The local dev user's email (`core/auth/single_user.py::LOCAL_USER_EMAIL`) is
+`avroom-team@proton.me` — the team inbox — not a personal address; local notifications land in
+Mailpit regardless, so this only matters if `NOTIFY_ENABLED=false`/Mailpit is bypassed. Alembic
+migration `0002_local_user_email` updates the row on machines that provisioned the local user
+before this change.
 
 ## Frontend Notes
 

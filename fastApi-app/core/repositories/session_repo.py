@@ -16,7 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core.auth.single_user import get_default_user_id
-from db.models import SessionRow
+from db.models import SessionRow, User
 from db.session import session_scope
 
 logger = logging.getLogger(__name__)
@@ -161,6 +161,26 @@ def delete_session(uid: str) -> None:
         if row is None:
             return
         db.delete(row)
+
+
+def get_session_notify_target(uid: str) -> tuple[str, str] | None:
+    """Return ``(display_name, recipient_email)`` for a session's owner.
+
+    `display_name` is the session's name, falling back to the uid itself
+    when unnamed (the normal case — see `_get_or_create_session_row`).
+    Returns None when the uid isn't registered, so callers can no-op a
+    notification for an unknown session instead of raising.
+    """
+    with session_scope() as db:
+        row = db.execute(
+            select(SessionRow.name, User.email)
+            .join(User, User.id == SessionRow.user_id)
+            .where(SessionRow.id == uid)
+        ).one_or_none()
+        if row is None:
+            return None
+        name, email = row
+        return (name or uid, email)
 
 
 def list_sessions_with_names() -> list[tuple[str, str | None, str | None]]:

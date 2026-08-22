@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # Fixed so the same local user is reused across restarts instead of a fresh
 # row (and a fresh set of "your" sessions) appearing every boot.
 LOCAL_USER_ID = "00000000-0000-0000-0000-000000000001"
-LOCAL_USER_EMAIL = "local@avroom.dev"
+LOCAL_USER_EMAIL = "avroom-team@proton.me"
 
 
 def get_or_create_default_user(db: Session) -> User:

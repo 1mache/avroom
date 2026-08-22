@@ -7,10 +7,10 @@ if not exist "fastApi-app\.env" (
   echo           fastApi-app\.env and paste your HF_TOKEN before 3D features will work.
 )
 
-echo [run.bat] Starting Postgres (docker compose up -d --wait db)...
-docker compose up -d --wait db
+echo [run.bat] Starting Postgres + Mailpit (docker compose up -d --wait db mailpit)...
+docker compose up -d --wait db mailpit
 if errorlevel 1 (
-  echo [run.bat] ERROR: Postgres failed to start/become healthy. Is Docker running?
+  echo [run.bat] ERROR: Postgres/Mailpit failed to start/become healthy. Is Docker running?
   exit /b 1
 )
 
@@ -36,5 +36,9 @@ if defined INFERENCE_WORKERS (
 
 start "AVRoom API" /D "%~dp0fastApi-app" cmd /k "call ..\.venv\Scripts\activate.bat && set INFERENCE_WORKERS=%INFERENCE_WORKERS% && uvicorn main:app --reload"
 start "AVRoom Front" /D "%~dp0react-front" cmd /k "npm run dev"
+
+start "" "http://localhost:8025"
+timeout /t 3 /nobreak >nul
+start "" "http://localhost:5173"
 
 endlocal

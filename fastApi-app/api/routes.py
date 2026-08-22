@@ -33,6 +33,7 @@ from core.inference_pool.session_runtime import (
     try_admit_inpaint,
 )
 from core.mask_cache import delete_candidate, delete_candidates
+from core.notifications import notify_pipeline_event
 from core.depth_cache import delete_session_depth_maps
 from core.camera_calib_cache import delete_session_camera_calib, save_camera_calib
 from core.session_preview import write_upload_preview
@@ -387,6 +388,7 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         except Exception as exc:
             logger.exception("Inpainting failed")
+            notify_pipeline_event(request.image_id, "Object removed", ok=False, detail=str(exc))
             raise HTTPException(status_code=500, detail=f"Inpainting failed: {exc}") from exc
 
         # Allocate next sequential object id for this session.
@@ -429,6 +431,7 @@ def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
         object_id,
         object_metadata.uuid,
     )
+    notify_pipeline_event(request.image_id, "Object removed", detail=f"Object {object_id}")
 
     return InpaintMaskResponse(
         image_id=request.image_id,

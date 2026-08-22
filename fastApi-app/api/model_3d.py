@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from core.inference_pool.client import get_inference_client
+from core.notifications import notify_pipeline_event
 from core.object_storage import object_glb_path, resolve_object_cutout_path, resolve_object_glb_path
 from core.repositories.session_repo import touch_session
 from settings import get_3d_storage_dir, get_image_storage_dir
@@ -87,6 +88,9 @@ def generate_test_3d(request: Test3DRequest) -> Response:
         glb_bytes = get_inference_client().run_generate_3d(cutout_path=cutout_image_path)
     except Exception as exc:
         logger.exception("3D generation failed")
+        notify_pipeline_event(
+            request.uid, "3D model ready", ok=False, detail=f"Object {request.object_id}: {exc}"
+        )
         raise HTTPException(status_code=500, detail=f"3D generation failed: {exc}") from exc
 
     assert isinstance(glb_bytes, bytes)
@@ -103,6 +107,7 @@ def generate_test_3d(request: Test3DRequest) -> Response:
         len(glb_bytes),
         glb_path,
     )
+    notify_pipeline_event(request.uid, "3D model ready", detail=f"Object {request.object_id}")
 
     return Response(
         content=glb_bytes,

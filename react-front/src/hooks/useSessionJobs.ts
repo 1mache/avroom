@@ -9,9 +9,17 @@ import {
   runSessionBatch,
   segmentImage,
   setObjectName,
+  smartPasteObject,
   synthesizeNovelView,
 } from "../api/images";
-import type { BatchRequest, CutoutBounds, ObjectInfo, SegmentRequest, VerifyMode } from "../types/api";
+import type {
+  BatchRequest,
+  CutoutBounds,
+  ObjectInfo,
+  SegmentRequest,
+  SmartPasteResponse,
+  VerifyMode,
+} from "../types/api";
 import type {
   ClickPosition,
   CutoutAlphaBounds,
@@ -180,6 +188,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       hidden: false,
       offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
       sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
+      displayScale: info.display_scale ?? 1,
     }));
     setObjects(loaded);
     highestCommittedObjectIdRef.current = loaded.reduce(
@@ -264,6 +273,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
             rotation: null,
             hidden: false,
             offset: { x: 0, y: 0 },
+            displayScale: 1,
             sourceElevationDeg:
               result.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
           };
@@ -500,6 +510,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           // Server-computed nudge (build_clone_metadata), not a raw copy of
           // source.offset -- the clone lands beside its source, not on it.
           offset: { x: info.offset_x ?? source.offset.x, y: info.offset_y ?? source.offset.y },
+          displayScale: info.display_scale ?? source.displayScale ?? 1,
           sourceElevationDeg:
             info.source_elevation_deg ?? source.sourceElevationDeg ?? FALLBACK_SOURCE_ELEVATION_DEG,
         };
@@ -521,6 +532,50 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       }
     },
     [isDuplicating, onError, onMutated],
+  );
+
+  const applySmartPasteResult = useCallback(
+    (objectId: number, result: SmartPasteResponse) => {
+      setObjects((prev) =>
+        prev.map((o) =>
+          o.objectId === objectId
+            ? {
+                ...o,
+                displayScale: result.display_scale,
+                rotation: null,
+              }
+            : o,
+        ),
+      );
+      onMutated?.();
+    },
+    [onMutated],
+  );
+
+  const runSmartPasteAfterDrag = useCallback(
+    (objectId: number, x: number, y: number) => {
+      const currentImageId = imageIdRef.current;
+      const target = objectsRef.current.find((o) => o.objectId === objectId);
+      if (!currentImageId || !target?.uuid) {
+        return Promise.resolve(false);
+      }
+
+      return smartPasteObject(target.uuid, x, y)
+        .then((result) => {
+          if (imageIdRef.current !== currentImageId) {
+            return false;
+          }
+          applySmartPasteResult(objectId, result);
+          return true;
+        })
+        .catch((err) => {
+          if (imageIdRef.current === currentImageId) {
+            onError(err, "generic");
+          }
+          return false;
+        });
+    },
+    [applySmartPasteResult, onError],
   );
 
   return {
@@ -553,6 +608,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     renameObject,
     duplicateObject,
     deleteObject,
+    runSmartPasteAfterDrag,
     isDeleting,
     isObjectDeleted,
     resetSession,

@@ -81,7 +81,7 @@ Pressing **Rotate** with an object selected either opens the 3D angle picker imm
 
 ## Session restore and background sync
 
-On opening a session, `WorkspaceScreen` calls `getUidCacheStatus(uid)` for the background/name, then `getSessionObjects(uid)` for the full object list if a cutout exists — restored objects get `hidden = false` and no `rotation`/`glbData` (those are local-only and lost across a restore). From then on, `useSessionSync` polls `POST /images/{uid}/sync-check` every 2 seconds **only while there's pending work** (an in-flight segment/inpaint/duplicate/etc.), plus once on window focus and tab-visibility change regardless of pending work. A stale-timestamp response triggers a merge (not a full replace) of server truth into local state, so local-only fields like `offset`, `hidden`, and `glbData` survive a reconcile untouched.
+On opening a session, `WorkspaceScreen` calls `getUidCacheStatus(uid)` for the background/name, fires `warmSessionMaps(uid)` in parallel to prefetch depth/normal caches, then `getSessionObjects(uid)` for the full object list if a cutout exists — restored objects get `hidden = false` and no `rotation`/`glbData` (those are local-only and lost across a restore). From then on, `useSessionSync` polls `POST /images/{uid}/sync-check` every 2 seconds **only while there's pending work** (an in-flight segment/inpaint/duplicate/etc.), plus once on window focus and tab-visibility change regardless of pending work. A stale-timestamp response triggers a merge (not a full replace) of server truth into local state, so local-only fields like `offset`, `hidden`, and `glbData` survive a reconcile untouched.
 
 ## Pipeline debug screen
 

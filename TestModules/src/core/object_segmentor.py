@@ -89,9 +89,10 @@ class ObjectSegmentor:
             A tuple of ``(refined_mask, cutout_bgra)`` pairs from **both** passes
             concatenated: depth-map candidates first, then original-image candidates.
             ``refined_mask`` is the routing-expanded mask after a 3 px uniform
-            dilation (ready for inpainting). ``cutout_bgra`` is the original pixels
-            inside the *raw* SAM mask with alpha = 0 outside it (BGRA, same spatial
-            size as the input image).
+            dilation (ready for inpainting; further hole growth is
+            verifier-driven via ``mask_dilate_pixels``). ``cutout_bgra`` is the
+            original pixels inside the *raw* SAM mask with alpha = 0 outside it
+            (BGRA, same spatial size as the input image).
         """
         logger.info(
             f"Starting multi-mask segmentation — image: {image_path}, point: ({x}, {y})"
@@ -207,14 +208,14 @@ class ObjectSegmentor:
             expanded_mask = ensure_mask_hw(expanded_mask, image.shape[:2])
             original_mask = ensure_mask_hw(original_mask, image.shape[:2])
 
-            # Raw mask as SAM produced it (before routing dilation).
+            # Raw / pre-sanitize SAM mask (may still include detached speckles).
             self.image_saver.save(f"{pfx}_sam_raw_mask", original_mask)
 
-            # Mask after routing-dilation (expand_pixels applied by SAM strategy).
+            # Mask after sanitize-then-expand (expand_pixels applied by SAM strategy).
             self.image_saver.save(f"{pfx}_sam_expanded_mask", expanded_mask)
 
-            # SAM emits detached speckles and interior gaps; both are corruption
-            # that would otherwise reach the cutout and the inpainting mask.
+            # Idempotent if the strategy already sanitized; still required for
+            # any caller that passes pre-dilated dirty pairs.
             original_mask = self.mask_refiner.keep_click_component(
                 original_mask, click_x, click_y
             )
@@ -228,7 +229,7 @@ class ObjectSegmentor:
             expanded_overlay[expanded_bool] = [255, 255, 255]
             self.image_saver.save(f"{pfx}_overlay_expanded", expanded_overlay)
 
-            # Uniform 3 px dilation on top of the routing-expanded mask.
+            # Uniform 3 px dilation on the sanitized routing-expanded mask.
             refined_mask = self.mask_refiner.expand_mask_uniform(
                 original_mask=expanded_mask,
                 radius=3,

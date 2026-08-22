@@ -103,7 +103,7 @@ class BoundaryVarianceRoutingStrategy(SegmentationRoutingStrategy):
 
         context: dict[str, Any] = {
             "input_image": adapted_depth,
-            "sd_strength": 0.35,
+            "sd_strength": 0.40,
             "use_broad_mask": False,
             "expand_pixels": expand_pixels,
         }

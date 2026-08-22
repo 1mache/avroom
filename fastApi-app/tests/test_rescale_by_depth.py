@@ -5,16 +5,16 @@ from __future__ import annotations
 Picks a saved session and one of its object cutouts from the configured image
 storage directory, copies that session's artifacts into a throwaway sandbox,
 and drives ``POST /images/objects/{uuid}/rescale-by-depth`` through the real
-router -> ``rescale_cutout_by_depth`` -> filesystem path.  Every mutation
-(overwritten cutout PNG, updated ``average_depth``) lands in the sandbox, so
-the developer's real sessions are never modified.
+router -> ``rescale_cutout_by_depth`` -> filesystem path.  Metadata mutations
+(``display_scale``, ``average_depth``) land in the sandbox; the cutout PNG is
+never modified, so the developer's real sessions are never modified.
 
 Checks performed after the call:
 
 * scale factor equals ``target_depth / source_average_depth``
-* the rescaled cutout keeps the original canvas size and bbox center
-* the visible alpha bbox scaled by the reported factor
-* the response bytes match what was written to disk
+* cutout PNG bytes on disk are unchanged
+* ``display_scale`` in metadata equals prior scale times the reported factor
+* response ``cutout_bounds`` reflect the scaled logical bbox
 * metadata ``average_depth`` advanced to ``target_depth``
 * a second call at the same point is a no-op (scaling must not compound)
 
@@ -53,6 +53,7 @@ from core.depth_cache import get_or_compute_depth, sample_depth_at_point  # noqa
 from core.image_processing import load_canvas_bytes  # noqa: E402
 from core.object_metadata import ObjectMetadata, load_object_metadata  # noqa: E402
 from core.object_storage import resolve_object_cutout_path  # noqa: E402
+from avroom_object_removal.core.cutout_rescaler import compute_depth_scale_factor  # noqa: E402
 
 logger = logging.getLogger("RescaleByDepthTest")
 
@@ -374,92 +375,92 @@ def verify_response(
         f"reported={target:.4f} sampled={expected_target_depth:.4f}",
     )
     checks.record(
-        "scale factor equals target/source",
-        abs(scale - (target / source)) < 1e-6,
-        f"scale={scale:.4f} target/source={target / source:.4f}",
+        "scale factor equals dampened target/source",
+        abs(scale - compute_depth_scale_factor(source, target)) < 1e-6,
+        f"scale={scale:.4f} dampened={compute_depth_scale_factor(source, target):.4f} "
+        f"raw={target / source:.4f}",
+    )
+    expected_display = chosen.metadata.display_scale * scale
+    checks.record(
+        "display_scale is cumulative",
+        abs(float(payload["display_scale"]) - expected_display) < 1e-6,
+        f"reported={payload['display_scale']:.4f} expected={expected_display:.4f}",
     )
 
 
-def verify_geometry(
+def verify_cutout_unchanged(
     checks: Checklist,
     before_bytes: bytes,
-    after_bytes: bytes,
-    scale: float,
+    images_dir: Path,
+    chosen: SavedObject,
 ) -> None:
-    """Verify canvas size, bbox scaling, and center preservation of the cutout."""
-    before = decode_bgra(before_bytes)
-    after = decode_bgra(after_bytes)
-
+    """Verify the on-disk cutout PNG was not mutated."""
+    cutout_path = resolve_object_cutout_path(
+        images_dir, chosen.metadata.session_id, chosen.metadata.object_id
+    )
+    after_bytes = cutout_path.read_bytes()
     checks.record(
-        "canvas size unchanged",
-        before.shape[:2] == after.shape[:2],
-        f"before={before.shape[:2]} after={after.shape[:2]}",
+        "cutout PNG bytes unchanged",
+        before_bytes == after_bytes,
+        f"path={cutout_path.name} bytes={len(after_bytes)}",
     )
 
+
+def verify_display_bounds(
+    checks: Checklist,
+    before_bytes: bytes,
+    payload: dict[str, Any],
+    scale: float,
+) -> None:
+    """Verify response cutout_bounds reflect the scaled logical bbox."""
     before_box = alpha_bbox(before_bytes)
-    after_box = alpha_bbox(after_bytes)
-    if before_box is None or after_box is None:
-        checks.record(
-            "visible content preserved",
-            False,
-            "one of the cutouts has no visible alpha pixels",
-        )
+    bounds = payload.get("cutout_bounds")
+    if before_box is None or bounds is None:
+        checks.skip("cutout_bounds scaled by reported factor", "no bounds or no visible pixels")
         return
 
-    canvas_h, canvas_w = before.shape[:2]
     expected_w = before_box.width * scale
     expected_h = before_box.height * scale
     center_x, center_y = before_box.center
-    fits = (
-        center_x - expected_w / 2.0 >= 0
-        and center_y - expected_h / 2.0 >= 0
-        and center_x + expected_w / 2.0 <= canvas_w
-        and center_y + expected_h / 2.0 <= canvas_h
+    tol_w = BBOX_TOLERANCE_PX + expected_w * BBOX_TOLERANCE_RATIO
+    tol_h = BBOX_TOLERANCE_PX + expected_h * BBOX_TOLERANCE_RATIO
+    actual_w = bounds["right"] - bounds["left"]
+    actual_h = bounds["bottom"] - bounds["top"]
+    actual_center = (
+        (bounds["left"] + bounds["right"]) / 2.0,
+        (bounds["top"] + bounds["bottom"]) / 2.0,
     )
 
-    if not fits:
-        checks.skip(
-            "bbox scaled by reported factor",
-            f"expected {expected_w:.1f}x{expected_h:.1f} box is clipped by the "
-            f"{canvas_w}x{canvas_h} canvas, so size cannot be compared",
-        )
-    else:
-        tol_w = BBOX_TOLERANCE_PX + expected_w * BBOX_TOLERANCE_RATIO
-        tol_h = BBOX_TOLERANCE_PX + expected_h * BBOX_TOLERANCE_RATIO
-        checks.record(
-            "bbox scaled by reported factor",
-            abs(after_box.width - expected_w) <= tol_w
-            and abs(after_box.height - expected_h) <= tol_h,
-            f"before={before_box.width}x{before_box.height} "
-            f"after={after_box.width}x{after_box.height} "
-            f"expected~{expected_w:.1f}x{expected_h:.1f}",
-        )
-
-    after_center = after_box.center
     checks.record(
-        "bbox center preserved",
-        abs(after_center[0] - center_x) <= BBOX_TOLERANCE_PX
-        and abs(after_center[1] - center_y) <= BBOX_TOLERANCE_PX,
+        "cutout_bounds scaled by reported factor",
+        abs(actual_w - expected_w) <= tol_w and abs(actual_h - expected_h) <= tol_h,
+        f"before={before_box.width}x{before_box.height} "
+        f"response={actual_w}x{actual_h} expected~{expected_w:.1f}x{expected_h:.1f}",
+    )
+    checks.record(
+        "cutout_bounds center preserved",
+        abs(actual_center[0] - center_x) <= BBOX_TOLERANCE_PX
+        and abs(actual_center[1] - center_y) <= BBOX_TOLERANCE_PX,
         f"before=({center_x:.1f},{center_y:.1f}) "
-        f"after=({after_center[0]:.1f},{after_center[1]:.1f})",
+        f"response=({actual_center[0]:.1f},{actual_center[1]:.1f})",
     )
 
 
 def verify_persistence(
     checks: Checklist,
     payload: dict[str, Any],
-    after_bytes: bytes,
+    before_bytes: bytes,
     images_dir: Path,
     chosen: SavedObject,
 ) -> None:
-    """Verify the cutout PNG and metadata on disk reflect the response."""
+    """Verify metadata on disk reflects the response; cutout PNG stays pristine."""
     cutout_path = resolve_object_cutout_path(
         images_dir, chosen.metadata.session_id, chosen.metadata.object_id
     )
     checks.record(
-        "cutout PNG overwritten with response bytes",
-        cutout_path.exists() and cutout_path.read_bytes() == after_bytes,
-        f"path={cutout_path.name} bytes={len(after_bytes)}",
+        "cutout PNG still matches pre-call bytes",
+        cutout_path.exists() and cutout_path.read_bytes() == before_bytes,
+        f"path={cutout_path.name} bytes={len(before_bytes)}",
     )
 
     reloaded = load_object_metadata(
@@ -476,23 +477,10 @@ def verify_persistence(
         f"stored={reloaded.average_depth:.4f} target={target:.4f} "
         f"(was {chosen.metadata.average_depth:.4f})",
     )
-
-    bounds = payload.get("cutout_bounds")
-    actual_box = alpha_bbox(after_bytes)
-    if bounds is None or actual_box is None:
-        checks.skip("cutout_bounds match alpha bbox", "no bounds or no visible pixels")
-        return
-
     checks.record(
-        "cutout_bounds match alpha bbox",
-        (
-            bounds["left"] == actual_box.left
-            and bounds["top"] == actual_box.top
-            and bounds["right"] == actual_box.right
-            and bounds["bottom"] == actual_box.bottom
-        ),
-        f"response={bounds['left']},{bounds['top']},{bounds['right']},{bounds['bottom']} "
-        f"actual={actual_box.left},{actual_box.top},{actual_box.right},{actual_box.bottom}",
+        "metadata display_scale matches response",
+        abs(reloaded.display_scale - float(payload["display_scale"])) < 1e-6,
+        f"stored={reloaded.display_scale:.4f} response={payload['display_scale']:.4f}",
     )
 
 
@@ -502,7 +490,7 @@ def verify_no_compounding(
     chosen: SavedObject,
     x: int,
     y: int,
-    after_bytes: bytes,
+    first_display_scale: float,
 ) -> None:
     """Re-run at the same point and assert the second call is a no-op.
 
@@ -516,20 +504,10 @@ def verify_no_compounding(
         abs(scale - 1.0) < 1e-6,
         f"scale_factor={scale:.6f}",
     )
-
-    second_bytes = base64.b64decode(payload["cutout_b64"])
-    first_box = alpha_bbox(after_bytes)
-    second_box = alpha_bbox(second_bytes)
-    if first_box is None or second_box is None:
-        checks.skip("bbox stable across repeat call", "missing visible pixels")
-        return
-
     checks.record(
-        "bbox stable across repeat call",
-        abs(second_box.width - first_box.width) <= BBOX_TOLERANCE_PX
-        and abs(second_box.height - first_box.height) <= BBOX_TOLERANCE_PX,
-        f"first={first_box.width}x{first_box.height} "
-        f"second={second_box.width}x{second_box.height}",
+        "display_scale stable across repeat call",
+        abs(float(payload["display_scale"]) - first_display_scale) < 1e-6,
+        f"first={first_display_scale:.6f} second={payload['display_scale']:.6f}",
     )
 
 
@@ -583,6 +561,7 @@ def save_artifacts(
         "source_average_depth": payload["source_average_depth"],
         "target_depth": payload["target_depth"],
         "scale_factor": payload["scale_factor"],
+        "display_scale": payload["display_scale"],
         "cutout_bounds": payload.get("cutout_bounds"),
     }
     (output_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -669,18 +648,26 @@ def main() -> int:
 
         with TestClient(build_test_app()) as client:
             payload = call_rescale(client, chosen.metadata.uuid, x, y)
-            after_bytes = base64.b64decode(payload["cutout_b64"])
 
             logger.info(
                 f"Rescale returned scale_factor={payload['scale_factor']:.4f} "
+                f"display_scale={payload['display_scale']:.4f} "
                 f"(source={payload['source_average_depth']:.2f} -> "
                 f"target={payload['target_depth']:.2f})"
             )
 
             verify_response(checks, payload, chosen, expected_target_depth)
-            verify_geometry(checks, before_bytes, after_bytes, float(payload["scale_factor"]))
-            verify_persistence(checks, payload, after_bytes, images_dir, chosen)
-            verify_no_compounding(checks, client, chosen, x, y, after_bytes)
+            verify_cutout_unchanged(checks, before_bytes, images_dir, chosen)
+            verify_display_bounds(checks, before_bytes, payload, float(payload["scale_factor"]))
+            verify_persistence(checks, payload, before_bytes, images_dir, chosen)
+            verify_no_compounding(
+                checks,
+                client,
+                chosen,
+                x,
+                y,
+                float(payload["display_scale"]),
+            )
 
         output_dir = (
             Path(args.output_dir)
@@ -688,7 +675,14 @@ def main() -> int:
             else _APP_ROOT / DEFAULT_OUTPUT_SUBDIR / datetime.now().strftime("%Y%m%d_%H%M%S")
         )
         save_artifacts(
-            output_dir, chosen, canvas_bytes, before_bytes, after_bytes, payload, x, y
+            output_dir,
+            chosen,
+            canvas_bytes,
+            before_bytes,
+            before_bytes,
+            payload,
+            x,
+            y,
         )
     except Exception:
         logger.exception("Rescale-by-depth harness failed")

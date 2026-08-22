@@ -12,6 +12,13 @@ const PREVIEW_QUALITY = 0.82;
 export interface PreviewLayer {
   src: string;
   offset: ClickPosition;
+  displayScale?: number;
+  bounds?: {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  } | null;
 }
 
 // Cutouts are data: URLs, but the background is served from the API on a
@@ -76,13 +83,22 @@ export async function composeSessionPreview(
     // each one is drawn at the same size as the background, just displaced.
     for (const layer of layers) {
       const image = await loadForCanvas(layer.src);
-      ctx.drawImage(
-        image,
-        layer.offset.x * scale,
-        layer.offset.y * scale,
-        canvas.width,
-        canvas.height,
-      );
+      const offsetX = layer.offset.x * scale;
+      const offsetY = layer.offset.y * scale;
+      const displayScale = layer.displayScale ?? 1;
+
+      if (displayScale !== 1 && layer.bounds) {
+        const centerX = ((layer.bounds.left + layer.bounds.right) / 2) * scale;
+        const centerY = ((layer.bounds.top + layer.bounds.bottom) / 2) * scale;
+        ctx.save();
+        ctx.translate(offsetX + centerX, offsetY + centerY);
+        ctx.scale(displayScale, displayScale);
+        ctx.translate(-centerX, -centerY);
+        ctx.drawImage(image, offsetX, offsetY, canvas.width, canvas.height);
+        ctx.restore();
+      } else {
+        ctx.drawImage(image, offsetX, offsetY, canvas.width, canvas.height);
+      }
     }
 
     return canvas.toDataURL("image/jpeg", PREVIEW_QUALITY).split(",")[1] ?? null;

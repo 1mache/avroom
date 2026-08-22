@@ -57,3 +57,22 @@ def test_click_outside_mask_leaves_it_untouched() -> None:
     sanitized = _REFINER.keep_click_component(mask, 5, 5)
 
     assert np.array_equal(sanitized, mask)
+
+
+def test_sanitize_then_expand_does_not_bridge_detached_speckles() -> None:
+    """Dilate-before-sanitize used to merge nearby speckles into the inpaint mask."""
+    mask = _blank()
+    mask[30:70, 30:70] = 255
+    # Gap of 8 px; expand=10 bridges if dilation runs on the dirty raw mask.
+    mask[48:52, 78:82] = 255
+
+    expanded, original = _REFINER.sanitize_then_expand(mask, 50, 50, expand_pixels=10)
+
+    assert original[50, 80] == 0
+    assert expanded[50, 80] == 0
+    assert int(np.count_nonzero(original)) == 40 * 40
+    # Uniform 10 px dilate grows the square to x≈79; the speckle at x=80 stays out.
+    assert expanded[50, 50] == 255
+    assert expanded[50, 79] == 255
+    assert mask[50, 80] == 255  # raw still has the speckle
+    # Regression: dilate-then-sanitize would have kept x=80 after bridging.

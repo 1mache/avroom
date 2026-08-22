@@ -25,7 +25,7 @@ Stages 1–4 identical to `remove_object` (load image → depth → adapt → ro
 
 For each Pass A candidate:
 
-6. **Refine** — `MaskRefiner.expand_mask_uniform(..., radius=3)` applied to `expanded_mask` → `refined_mask`.
+6. **Refine** — `MaskRefiner.expand_mask_uniform(..., radius=3)` applied to sanitized `expanded_mask` → `refined_mask`.
 7. **Compose** — `BgraCutoutComposer.compose_original_overlap_bgra(image, original_mask)` builds `cutout_bgra` from the raw (tight) mask.
 
 **Pass B — original RGB input:**

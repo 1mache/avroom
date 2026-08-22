@@ -151,7 +151,7 @@ class InferenceClient:
         assert result.source_average_depth is not None
         assert result.target_depth is not None
         assert result.scale_factor is not None
-        assert result.cutout_bytes is not None
+        assert result.display_scale is not None
         return RescaleByDepthResult(
             object_uuid=result.object_uuid,
             session_id=result.session_id,
@@ -159,7 +159,44 @@ class InferenceClient:
             source_average_depth=result.source_average_depth,
             target_depth=result.target_depth,
             scale_factor=result.scale_factor,
-            cutout_bytes=result.cutout_bytes,
+            display_scale=result.display_scale,
+        )
+
+    def run_smart_paste(
+        self,
+        *,
+        base_dir: Path,
+        object_uuid: str,
+        x: int,
+        y: int,
+    ) -> SmartPasteBridgeResult:
+        from core.image_processing import SmartPasteBridgeResult
+
+        job = JobRequest(
+            job_id=_new_job_id(),
+            kind=JobKind.SMART_PASTE,
+            storage_dir=str(base_dir.resolve()),
+            object_uuid=object_uuid,
+            x=x,
+            y=y,
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.object_uuid is not None
+        assert result.session_id is not None
+        assert result.object_id is not None
+        assert result.source_average_depth is not None
+        assert result.target_depth is not None
+        assert result.scale_factor is not None
+        assert result.display_scale is not None
+        return SmartPasteBridgeResult(
+            object_uuid=result.object_uuid,
+            session_id=result.session_id,
+            object_id=result.object_id,
+            source_average_depth=result.source_average_depth,
+            target_depth=result.target_depth,
+            scale_factor=result.scale_factor,
+            display_scale=result.display_scale,
         )
 
     def run_generate_3d(self, *, cutout_path: Path) -> bytes:
@@ -264,6 +301,26 @@ class InferenceClient:
         self._raise_if_failed(result)
         assert result.normal_map is not None
         return result.normal_map  # type: ignore[no-any-return]
+
+    def run_warm_session_maps(self, *, image_id: str, base_dir: Path) -> WarmSessionMapsResult:
+        from core.session_maps import WarmSessionMapsResult
+
+        job = JobRequest(
+            job_id=_new_job_id(),
+            kind=JobKind.WARM_SESSION_MAPS,
+            storage_dir=str(base_dir.resolve()),
+            image_id=image_id,
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.warm_content_hash is not None
+        assert result.depth_cache_hit is not None
+        return WarmSessionMapsResult(
+            session_id=image_id,
+            content_hash=result.warm_content_hash,
+            depth_cache_hit=result.depth_cache_hit,
+            normal_cache_hit=result.normal_cache_hit,
+        )
 
     def run_debug_depth_map(
         self, *, image_bytes: bytes, model_name: str, colormap: str, strategy: str = "anything"

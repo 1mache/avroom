@@ -103,7 +103,29 @@ def _execute_impl(job: JobRequest) -> JobResult:
             source_average_depth=result.source_average_depth,
             target_depth=result.target_depth,
             scale_factor=result.scale_factor,
-            cutout_bytes=result.cutout_bytes,
+            display_scale=result.display_scale,
+        )
+
+    if job.kind == JobKind.SMART_PASTE:
+        from core.image_processing import run_smart_paste
+
+        assert job.object_uuid is not None and job.x is not None and job.y is not None
+        result = run_smart_paste(
+            base_dir=base_dir,
+            object_uuid=job.object_uuid,
+            x=job.x,
+            y=job.y,
+        )
+        return JobResult(
+            job_id=job.job_id,
+            ok=True,
+            object_uuid=result.object_uuid,
+            session_id=result.session_id,
+            object_id=result.object_id,
+            source_average_depth=result.source_average_depth,
+            target_depth=result.target_depth,
+            scale_factor=result.scale_factor,
+            display_scale=result.display_scale,
         )
 
     if job.kind == JobKind.GENERATE_3D:
@@ -184,6 +206,24 @@ def _execute_impl(job: JobRequest) -> JobResult:
         assert job.image_bytes is not None
         normals = map_normals_image_bytes(job.image_bytes)
         return JobResult(job_id=job.job_id, ok=True, normal_map=normals)
+
+    if job.kind == JobKind.WARM_SESSION_MAPS:
+        from core.normal_mapping import map_normals_image_bytes
+        from core.session_maps import warm_session_maps
+
+        assert job.image_id is not None
+        warm_result = warm_session_maps(
+            base_dir,
+            job.image_id,
+            map_normals_from_bytes=map_normals_image_bytes,
+        )
+        return JobResult(
+            job_id=job.job_id,
+            ok=True,
+            warm_content_hash=warm_result.content_hash,
+            depth_cache_hit=warm_result.depth_cache_hit,
+            normal_cache_hit=warm_result.normal_cache_hit,
+        )
 
     if job.kind == JobKind.DEBUG_DEPTH_MAP:
         from core.debug_vision import render_depth_map_png

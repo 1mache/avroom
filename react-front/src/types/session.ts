@@ -54,6 +54,8 @@ export interface CutoutObject {
   // Per-object drag offset, natural-image pixels. Every object stays composited
   // on the background simultaneously, so position can't live in shared state.
   offset: ClickPosition;
+  // Cumulative UI display scale; cutout PNG stays at original resolution.
+  displayScale: number;
   // Server-estimated Zero123 source elevation (degrees); used for novel-view.
   sourceElevationDeg: number;
 }
@@ -87,6 +89,31 @@ export function effectiveCutoutBounds(
     return obj.rotation.bounds;
   }
   return obj.cutoutAlphaBounds;
+}
+
+// Logical on-stage bounds after UI display scale is applied. Base alpha bounds
+// come from the untouched cutout PNG; displayScale is persisted separately.
+export function effectiveDisplayBounds(
+  obj: {
+    cutoutAlphaBounds: CutoutAlphaBounds | null;
+    displayScale: number;
+    rotation: ObjectRotation | null;
+  },
+  showOriginal: boolean,
+): CutoutAlphaBounds | null {
+  const base = effectiveCutoutBounds(obj, showOriginal);
+  if (!base || obj.displayScale === 1) {
+    return base;
+  }
+  const growX = ((base.right - base.left) * (obj.displayScale - 1)) / 2;
+  const growY = ((base.bottom - base.top) * (obj.displayScale - 1)) / 2;
+  return {
+    ...base,
+    left: base.left - growX,
+    right: base.right + growX,
+    top: base.top - growY,
+    bottom: base.bottom + growY,
+  };
 }
 
 // One in-flight inpaint. Captured at mask-selection time — not read from live

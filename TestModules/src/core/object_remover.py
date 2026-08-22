@@ -37,7 +37,8 @@ class ObjectRemover:
     3. Route          - :class:`SegmentationRoutingStrategy` decides expansion etc.
     4. Segment        - :class:`ImageSegmentationFacade` returns a tight mask.
     5. Refine         - :class:`MaskRefiner` applies a small uniform dilation.
-    6. Inpaint        - :class:`ImageInpaintingFacade` fills the mask region.
+    6. Inpaint        - :class:`ImageInpaintingFacade` fills the mask region
+       (verifier may dilate further on retry).
     7. Compose cutout - :class:`BgraCutoutComposer` extracts the original
        overlap as BGRA with alpha=0 outside the mask.
 
@@ -133,8 +134,8 @@ class ObjectRemover:
         )
 
         # Tight mask first - we don't want to accidentally include nearby
-        # background objects. The post-mask uniform dilation handles small
-        # edge misses.
+        # background objects. Small uniform refine covers LaMa edge misses;
+        # larger hole growth is verifier-driven on retry.
         logger.info(f"Requesting TIGHT mask from SAM at ({x}, {y})...")
         tight_mask, original_mask = self.segmentation.get_mask_at_point(
             run_context["input_image"],

@@ -16,6 +16,13 @@ export interface SessionSyncCheckResponse {
   needs_refresh: boolean;
 }
 
+export interface WarmSessionMapsResponse {
+  uid: string;
+  content_hash: string;
+  depth_cache_hit: boolean;
+  normal_cache_hit: boolean | null;
+}
+
 // Mirrors backend processing options. Fields remain optional because frontend
 // currently sends none of them in normal flow.
 export interface ClickRequestOptions {
@@ -117,6 +124,33 @@ export interface CutoutBounds {
   natural_height: number;
 }
 
+export interface RescaleByDepthResponse {
+  object_uuid: string;
+  session_id: string;
+  object_id: number;
+  source_average_depth: number;
+  target_depth: number;
+  scale_factor: number;
+  display_scale: number;
+  cutout_bounds?: CutoutBounds | null;
+}
+
+export interface SmartPasteRequest {
+  x: number;
+  y: number;
+}
+
+export interface SmartPasteResponse {
+  object_uuid: string;
+  session_id: string;
+  object_id: number;
+  source_average_depth: number;
+  target_depth: number;
+  scale_factor: number;
+  display_scale: number;
+  cutout_bounds?: CutoutBounds | null;
+}
+
 export interface ObjectInfo {
   object_id: number;
   uuid?: string | null;
@@ -129,6 +163,7 @@ export interface ObjectInfo {
   has_3d: boolean;
   offset_x: number;
   offset_y: number;
+  display_scale?: number;
 }
 
 export interface ObjectListResponse {

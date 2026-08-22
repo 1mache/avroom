@@ -107,9 +107,28 @@ sequenceDiagram
     Router-->>Client: SessionSyncCheckResponse
 ```
 
+## Session map warm (workspace open)
+
+When the workspace opens, the frontend fires `POST /images/{uid}/warm-maps` fire-and-forget. The handler loads the current canvas bytes (background if present, else original), ensures depth and optional normal `.npy` caches exist under the same SHA-256 keys used by segment and smart-paste, and returns cache-hit flags. Does not bump `last_changed`.
+
+```mermaid
+sequenceDiagram
+    participant Client as "WorkspaceScreen"
+    participant Router as "api/routes.py"
+    participant Pool as "inference_pool"
+    participant Maps as "core/session_maps.py"
+
+    Client->>Router: POST /images/{uid}/warm-maps
+    Router->>Pool: JobKind.WARM_SESSION_MAPS
+    Pool->>Maps: warm_session_maps(base_dir, uid)
+    Maps-->>Pool: depth/normal cache ensured
+    Pool-->>Router: WarmSessionMapsResult
+    Router-->>Client: WarmSessionMapsResponse
+```
+
 ## Rescale-by-Depth Flow
 
-Backend-only today (no frontend caller). Persists rescaled cutout to disk.
+Backend-only today (no dedicated frontend wrapper; smart-paste shares the math). Persists `display_scale` + `average_depth` only — cutout PNG stays pristine.
 
 ```mermaid
 sequenceDiagram
@@ -118,15 +137,13 @@ sequenceDiagram
     participant Core as "core/image_processing.py"
     participant Depth as "core/depth_cache.py"
     participant Meta as "core/object_metadata.py"
-    participant Disk as "tmp/images"
 
     Client->>Router: POST /images/objects/{uuid}/rescale-by-depth {x,y}
     Router->>Meta: get_object_by_uuid
     Router->>Core: rescale_cutout_by_depth(...)
     Core->>Depth: get_or_compute_depth(current canvas)
-    Core->>Core: sample depth, scale cutout alpha content
-    Core->>Disk: overwrite uid_objectId_cutout.png
-    Core->>Meta: set_object_average_depth
+    Core->>Core: compute depth scale_factor
+    Core->>Meta: set_object_rescale_state
     Router-->>Client: RescaleByDepthResponse
 ```
 
@@ -136,7 +153,7 @@ sequenceDiagram
 - New segmentation for same image deletes older candidates first, **except** mask ids pinned by active inpaint leases.
 - Segmentation reads from the current canvas (`{uid}_background.png` if present, original otherwise) — each new object is cut from the already-cleaned room image.
 - Successful inpaint writes the new background to `{uid}_background.png` (overwrites — becomes the canvas for the next object) and the cutout to `{uid}_{object_id}_cutout.png` (numbered — not overwritten by later inpaints).
-- Rescale-by-depth overwrites `{uid}_{object_id}_cutout.png` for the targeted object and updates its metadata `average_depth`.
+- Rescale-by-depth / smart-paste update metadata `display_scale` and `average_depth` for the targeted object; the cutout PNG is never rewritten.
 - Successful inpaint deletes **only** the selected `{uid}_mask_{mask_id}_*` temporary files (not all candidates).
 - Depth maps (`{uid}_depth_{hash}.npy`) persist until session delete; one file per distinct canvas content hash.
 

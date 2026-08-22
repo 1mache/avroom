@@ -20,6 +20,8 @@ class MaskRefiner:
       downward bias. This is the path used by ``ObjectRemover`` today.
     * :meth:`dilate_mask` - thin wrapper around ``cv2.dilate`` for callers
       that just want N-pixel expansion (used by SAM facade).
+    * :meth:`sanitize_then_expand` - click-component sanitize, then dilate.
+      Use this instead of dilating a dirty SAM mask (bridging speckles).
     * :meth:`keep_click_component` - drop speckles not connected to the
       click and fill enclosed holes. Every SAM candidate goes through this.
     """
@@ -153,3 +155,29 @@ class MaskRefiner:
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
         dilated = cv2.dilate(mask_uint8, kernel, iterations=1)
         return dilated.astype(np.uint8)
+
+    def sanitize_then_expand(
+        self,
+        mask: np.ndarray,
+        click_x: int,
+        click_y: int,
+        expand_pixels: int = 0,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Drop detached speckles, then dilate the click component.
+
+        Dilating before sanitize bridges nearby SAM debris into the click blob,
+        so the expanded/inpaint mask grows into floor/chair while the cutout
+        (built from the sanitized original) stays tight. Always sanitize first.
+
+        Returns:
+            ``(expanded_mask, original_mask)`` where ``original_mask`` is the
+            click-connected component (holes filled) and ``expanded_mask`` is
+            that mask after ``expand_pixels`` dilation (a distinct copy when
+            ``expand_pixels == 0``).
+        """
+        original_mask = self.keep_click_component(mask, click_x, click_y)
+        if expand_pixels > 0:
+            expanded_mask = self.dilate_mask(original_mask, pixels=expand_pixels)
+        else:
+            expanded_mask = original_mask.copy()
+        return expanded_mask, original_mask

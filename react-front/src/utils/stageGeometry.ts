@@ -141,6 +141,27 @@ export const clampCutoutOffset = (
   };
 };
 
+/** Center of the visible alpha bbox after drag offset — depth sample for smart paste. */
+export const getObjectPlacementCenter = (
+  bounds: CutoutAlphaBounds | null,
+  offset: ClickPosition,
+  imageSize: Size,
+): ClickPosition => {
+  const effectiveBounds = bounds ?? {
+    left: 0,
+    top: 0,
+    right: imageSize.width,
+    bottom: imageSize.height,
+    naturalWidth: imageSize.width,
+    naturalHeight: imageSize.height,
+  };
+
+  return {
+    x: Math.round((effectiveBounds.left + effectiveBounds.right) / 2 + offset.x),
+    y: Math.round((effectiveBounds.top + effectiveBounds.bottom) / 2 + offset.y),
+  };
+};
+
 // Maps an object's alpha bounds (+ its drag offset) from natural-image pixels
 // into on-stage CSS pixels, using the same contained-rect scale as the
 // background/cutout images. Falls back to the full rendered rect when bounds
@@ -168,6 +189,23 @@ export const getBoundsStageRect = (
     top: renderedRect.y + (bounds.top + offset.y) * scaleY,
     width: (bounds.right - bounds.left) * scaleX,
     height: (bounds.bottom - bounds.top) * scaleY,
+  };
+};
+
+/** Map a point on a scaled object back into base cutout coordinates for alpha sampling. */
+export const mapPointThroughInverseScale = (
+  point: ClickPosition,
+  bounds: CutoutAlphaBounds,
+  displayScale: number,
+): ClickPosition => {
+  if (displayScale === 1) {
+    return point;
+  }
+  const centerX = (bounds.left + bounds.right) / 2;
+  const centerY = (bounds.top + bounds.bottom) / 2;
+  return {
+    x: centerX + (point.x - centerX) / displayScale,
+    y: centerY + (point.y - centerY) / displayScale,
   };
 };
 

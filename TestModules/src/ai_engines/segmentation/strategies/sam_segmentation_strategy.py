@@ -204,14 +204,11 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         # Index 1 is SAM's "tight" candidate - good for flat objects (TVs,
         # windows). use_broad_mask is accepted for interface symmetry; the
         # legacy code never actually switched indices on it, so we don't either.
-        best_mask = masks[1]
-
-        original_mask = best_mask
+        expanded_mask, original_mask = self._mask_refiner.sanitize_then_expand(
+            masks[1], x, y, expand_pixels=expand_pixels
+        )
         if expand_pixels > 0:
-            expanded_mask = self._mask_refiner.dilate_mask(best_mask, pixels=expand_pixels)
             image_saver.save("dilated_mask.png", expanded_mask)
-        else:
-            expanded_mask = best_mask.copy()
 
         image_saver.save("best_mask.png", expanded_mask)
         return expanded_mask, original_mask
@@ -230,8 +227,9 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         SAM's ``multimask_output=True`` mode yields three candidates (indices
         0, 1, 2 — roughly small, tight, broad). This method returns all three
         so callers can pick or compare them without running SAM multiple times.
-        Each candidate is independently dilated by ``expand_pixels`` when
-        non-zero; otherwise a distinct copy is returned.
+        Each candidate is sanitized to the click component, then independently
+        dilated by ``expand_pixels`` when non-zero (sanitize-before-dilate so
+        detached speckles cannot bridge into the inpaint mask).
         """
         # ObjectSegmentor saves labeled per-candidate artifacts for every pair
         # it receives, so we skip the raw unlabeled saves here to avoid writing
@@ -239,13 +237,12 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         masks, _image_saver = self._run_sam_predict(image, x, y, save_debug=False)
 
         candidate_pairs: list[tuple[np.ndarray, np.ndarray]] = []
-        for i, raw_mask in enumerate(masks):
-            original_mask = raw_mask
-            if expand_pixels > 0:
-                expanded_mask = self._mask_refiner.dilate_mask(raw_mask, pixels=expand_pixels)
-            else:
-                expanded_mask = raw_mask.copy()
-            candidate_pairs.append((expanded_mask, original_mask))
+        for raw_mask in masks:
+            candidate_pairs.append(
+                self._mask_refiner.sanitize_then_expand(
+                    raw_mask, x, y, expand_pixels=expand_pixels
+                )
+            )
 
         return tuple(candidate_pairs)
 

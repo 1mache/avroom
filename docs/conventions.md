@@ -38,7 +38,12 @@ These are things that look weird but should NOT be "simplified":
 
 - **SAM is fed depth, not RGB.** RGB causes SAM to over-segment along texture/fabric/shadow seams. The adapted depth map gives clean geometric boundaries. See [`sam_image_adapter.py`](../TestModules/src/ai_engines/segmentation/sam_image_adapter.py) and the `input_image: adapted_depth` choice in [`boundary_variance_routing_strategy.py`](../TestModules/src/routing/strategies/boundary_variance_routing_strategy.py) line 105.
 - **Two depth models, alpha-blended.** V2 Small is good for the foreground (near), LiheYoung Small is good for far walls. Hard switching causes visible seams; alpha compositing using the near map's confidence avoids them. See [`near_far_blended_depth_mapping_strategy.py`](../TestModules/src/ai_engines/depth/strategies/near_far_blended_depth_mapping_strategy.py) lines 49–66.
-- **Mask is dilated before inpainting.** A perfectly tight SAM mask makes LaMa/SD bleed object pixels into the background. The pipeline expands by ~3px uniformly via [`MaskRefiner.expand_mask_uniform`](../TestModules/src/utils/mask_refiner.py) lines 70–93 plus a downward bias.
+- **Small mask refine before inpainting; larger growth is routing + verifier.**
+  Attempt 0 expands via routing ``expand_pixels`` (~4–20 on BoundaryVariance;
+  image pass fixed 14), then ~3 px via
+  [`MaskRefiner.expand_mask_uniform`](../TestModules/src/utils/mask_refiner.py).
+  On verify fail, Hybrid may apply ``mask_dilate_pixels`` /
+  ``compose_dilate_pixels``. Always sanitize before dilating (bridges SAM speckles).
 - **LaMa is given a mean-fill mask interior.** Before passing the image to LaMa, the masked region is replaced with the mean color of its boundary so LaMa is not biased by the object's own pixels. See [`lama_inpainting_strategy.py`](../TestModules/src/ai_engines/inpainting/strategies/lama_inpainting_strategy.py) lines 52–66.
 - **SD is skipped at low strength.** When `sd_strength <= 0.2` the hybrid uses the primary (LaMa) result only ([`hybrid_inpainting_strategy.py`](../TestModules/src/ai_engines/inpainting/strategies/hybrid_inpainting_strategy.py) lines 70–72) — SD's 512² resize introduces smear that you don't want for already-good LaMa output.
 

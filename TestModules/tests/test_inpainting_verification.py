@@ -250,7 +250,7 @@ def test_hybrid_fail_then_pass_uses_second_sd() -> None:
     assert trace[0]["candidate_bgr"].shape[:2] == image.shape[:2]
 
 
-def test_hybrid_always_fail_keeps_last_after_two_retries() -> None:
+def test_hybrid_always_fail_keeps_last_after_retries_exhausted() -> None:
     sd = _SequenceInpaintStrategy([(11, 0, 0), (22, 0, 0), (33, 0, 0), (44, 0, 0)])
     hybrid = HybridInpaintingStrategy(
         primary=_SolidColorInpaintStrategy((1, 1, 1)),
@@ -260,8 +260,9 @@ def test_hybrid_always_fail_keeps_last_after_two_retries() -> None:
     hybrid.SHARPEN_AMOUNT = 0.0
     image, mask = _scene()
     result = hybrid.inpaint(image, mask, strength=0.35)
-    assert len(sd.calls) == 3
-    assert np.all(result == np.array((33, 0, 0), dtype=np.uint8))
+    # attempt 0 + INPAINT_VERIFY_MAX_RETRIES (3) = 4 SD calls
+    assert len(sd.calls) == 4
+    assert np.all(result == np.array((44, 0, 0), dtype=np.uint8))
 
 
 def test_hybrid_skip_sd_when_verify_passes() -> None:

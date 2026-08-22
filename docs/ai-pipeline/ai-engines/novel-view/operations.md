@@ -165,7 +165,7 @@ Responses echo optional direction fields and return the resolved signed pose val
 
 Successful responses write `{uid}_{object_id}_novel_az{azimuth}_el{rel_el}.png` under the image storage directory, keyed by the **snapped** azimuth/elevation (see below) — the JSON contract is unchanged.
 
-This cache is read as well as written: a request whose snapped pose already has a cache file **newer than** the object's cutout is served straight from disk (no inference, no `touch_session`). A cutout rewritten by `rescale-by-depth` after the rotation was cached makes the entry stale, and the endpoint re-synthesizes instead of serving it.
+This cache is read as well as written: a request whose snapped pose already has a cache file **newer than** the object's cutout is served straight from disk (no inference, no `touch_session`). Rescale/smart-paste no longer rewrite the cutout PNG, so depth rescale alone does not invalidate cached rotations; only an actual cutout file rewrite (e.g. a future pipeline mutation) would.
 
 ## HTTP-layer pose snapping
 

@@ -88,6 +88,7 @@ export function useSessionSync(options: UseSessionSyncOptions) {
               name: info.name ?? local.name,
               cutoutSrc,
               cutoutAlphaBounds: cutoutAlphaBounds ?? local.cutoutAlphaBounds,
+              displayScale: info.display_scale ?? local.displayScale ?? 1,
               sourceElevationDeg:
                 info.source_elevation_deg ?? local.sourceElevationDeg,
             };
@@ -103,7 +104,8 @@ export function useSessionSync(options: UseSessionSyncOptions) {
             glbData: null,
             rotation: null,
             hidden: false,
-            offset: { x: 0, y: 0 },
+            offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
+            displayScale: info.display_scale ?? 1,
             sourceElevationDeg: info.source_elevation_deg ?? 15,
           };
         });

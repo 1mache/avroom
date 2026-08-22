@@ -20,14 +20,12 @@ from core.inference_pool.session_runtime import mask_id_for_candidate_slot
 from core.object_storage import current_background_path, object_cutout_path, resolve_object_cutout_path
 from core.depth_cache import (
     compute_average_depth_over_mask,
-    compute_depth_scale_factor,
     get_or_compute_depth,
     memory_image_key,
-    sample_depth_at_point,
 )
 from core.camera_calib_cache import load_camera_calib
 from core.camera_calibration import cache_dict_to_calibration_result
-from core.object_metadata import ObjectMetadata, create_object_metadata, get_object_by_uuid, set_object_average_depth
+from core.object_metadata import ObjectMetadata, create_object_metadata, get_object_by_uuid, set_object_rescale_state
 from core.inference_lock import inference_session
 
 
@@ -519,70 +517,47 @@ class RescaleByDepthResult:
     source_average_depth: float
     target_depth: float
     scale_factor: float
-    cutout_bytes: bytes
+    display_scale: float
 
 
-def _scale_cutout_bgra_about_alpha_center(cutout_bgra: np.ndarray, scale_factor: float) -> np.ndarray:
-    """Scale visible cutout content about its alpha-bbox center on a same-sized canvas."""
-    if cutout_bgra.ndim != 3 or cutout_bgra.shape[2] < 4:
-        raise ValueError("Cutout must be a BGRA image with an alpha channel.")
+@dataclass(frozen=True)
+class SmartPasteBridgeResult:
+    """Outcome of smart paste after persistence."""
 
-    height, width = cutout_bgra.shape[:2]
-    alpha = cutout_bgra[:, :, 3]
-    non_zero_points = cv2.findNonZero(alpha)
-    if non_zero_points is None:
-        raise ValueError("Cutout has no visible alpha pixels.")
-
-    x, y, w, h = cv2.boundingRect(non_zero_points)
-    left, top, right, bottom = x, y, x + w, y + h
-    center_x = (left + right) / 2.0
-    center_y = (top + bottom) / 2.0
-
-    crop = cutout_bgra[top:bottom, left:right]
-    new_w = max(1, int(round(crop.shape[1] * scale_factor)))
-    new_h = max(1, int(round(crop.shape[0] * scale_factor)))
-    scaled_crop = cv2.resize(crop, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-
-    canvas = np.zeros_like(cutout_bgra)
-    paste_x = int(round(center_x - new_w / 2.0))
-    paste_y = int(round(center_y - new_h / 2.0))
-
-    src_x0 = max(0, -paste_x)
-    src_y0 = max(0, -paste_y)
-    dst_x0 = max(0, paste_x)
-    dst_y0 = max(0, paste_y)
-    copy_w = min(new_w - src_x0, width - dst_x0)
-    copy_h = min(new_h - src_y0, height - dst_y0)
-
-    if copy_w <= 0 or copy_h <= 0:
-        raise ValueError("Scaled cutout falls completely outside the canvas bounds.")
-
-    canvas[dst_y0 : dst_y0 + copy_h, dst_x0 : dst_x0 + copy_w] = scaled_crop[
-        src_y0 : src_y0 + copy_h,
-        src_x0 : src_x0 + copy_w,
-    ]
-    return canvas
+    object_uuid: str
+    session_id: str
+    object_id: int
+    source_average_depth: float
+    target_depth: float
+    scale_factor: float
+    display_scale: float
 
 
-def rescale_cutout_by_depth(
-    base_dir: Path,
-    object_uuid: str,
+def _compute_depth_rescale(
+    source_average_depth: float,
+    depth_map: np.ndarray,
     x: int,
     y: int,
-) -> RescaleByDepthResult:
-    """Rescale a stored cutout based on depth at ``(x, y)`` and persist the result.
-
-    Samples depth from the session's current canvas, compares it to the object's
-    stored ``average_depth``, resizes the cutout proportionally, overwrites the
-    cutout PNG, and updates metadata so later rescales do not compound.
-    """
-    logger.info(
-        "Rescale by depth requested: object_uuid=%s placement=(%d,%d)",
-        object_uuid,
-        x,
-        y,
+) -> tuple[float, float, float]:
+    """Delegate depth-proportional scale math to TestModules."""
+    compute_fn = load_avroom_attr(
+        "compute_depth_rescale",
+        module="avroom_object_removal.core.cutout_rescaler",
+    )
+    result = compute_fn(
+        source_average_depth=source_average_depth,
+        depth_map=depth_map,
+        x=x,
+        y=y,
+    )
+    return (
+        result.source_average_depth,
+        result.target_depth,
+        result.scale_factor,
     )
 
+
+def _load_object_metadata_for_rescale(base_dir: Path, object_uuid: str) -> ObjectMetadata:
     metadata = get_object_by_uuid(base_dir, object_uuid)
     if metadata is None:
         raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
@@ -592,50 +567,90 @@ def rescale_cutout_by_depth(
         raise FileNotFoundError(
             f"Cutout not found for uuid='{object_uuid}' at path='{cutout_path}'"
         )
+    return metadata
 
-    source_average_depth = metadata.average_depth
-    image_bytes = load_canvas_bytes(image_id=metadata.session_id, base_dir=base_dir)
 
+def _compute_session_depth_map(base_dir: Path, session_id: str) -> np.ndarray:
+    image_bytes = load_canvas_bytes(image_id=session_id, base_dir=base_dir)
     with inference_session():
         segmentor = load_avroom_attr("ObjectSegmentor")()
         depth_map, _ = get_or_compute_depth(
             base_dir,
-            metadata.session_id,
+            session_id,
             image_bytes,
             segmentor.depth.map_depth,
         )
-        target_depth = sample_depth_at_point(depth_map, x, y)
+    return depth_map
 
-    scale_factor = compute_depth_scale_factor(source_average_depth, target_depth)
+
+def _persist_rescale_metadata(
+    base_dir: Path,
+    object_uuid: str,
+    *,
+    target_depth: float,
+    display_scale: float,
+) -> None:
+    set_object_rescale_state(
+        base_dir,
+        object_uuid,
+        average_depth=target_depth,
+        display_scale=display_scale,
+    )
+
+
+def rescale_cutout_by_depth(
+    base_dir: Path,
+    object_uuid: str,
+    x: int,
+    y: int,
+) -> RescaleByDepthResult:
+    """Compute depth-proportional UI scale at ``(x, y)`` and persist metadata only.
+
+    Samples depth from the session's current canvas, compares it to the object's
+    stored ``average_depth``, updates cumulative ``display_scale``, and advances
+    ``average_depth`` so later rescales do not compound. The cutout PNG is never
+    modified.
+    """
     logger.info(
-        "Depth scale computed: object_uuid=%s source_depth=%.2f target_depth=%.2f scale=%.4f",
+        "Rescale by depth requested: object_uuid=%s placement=(%d,%d)",
+        object_uuid,
+        x,
+        y,
+    )
+
+    metadata = _load_object_metadata_for_rescale(base_dir, object_uuid)
+    depth_map = _compute_session_depth_map(base_dir, metadata.session_id)
+
+    source_average_depth, target_depth, scale_factor = _compute_depth_rescale(
+        source_average_depth=metadata.average_depth,
+        depth_map=depth_map,
+        x=x,
+        y=y,
+    )
+    display_scale = metadata.display_scale * scale_factor
+    logger.info(
+        "Depth scale computed: object_uuid=%s source_depth=%.2f target_depth=%.2f "
+        "scale=%.4f display_scale=%.4f",
         object_uuid,
         source_average_depth,
         target_depth,
         scale_factor,
+        display_scale,
     )
 
-    cutout_bgra = cv2.imdecode(
-        np.frombuffer(cutout_path.read_bytes(), dtype=np.uint8),
-        cv2.IMREAD_UNCHANGED,
+    _persist_rescale_metadata(
+        base_dir,
+        object_uuid,
+        target_depth=target_depth,
+        display_scale=display_scale,
     )
-    if cutout_bgra is None:
-        raise ValueError(f"Could not decode cutout PNG for uuid='{object_uuid}'.")
-
-    scaled_cutout = _scale_cutout_bgra_about_alpha_center(cutout_bgra, scale_factor)
-    cutout_bytes = encode_png(scaled_cutout, "rescaled cutout")
-
-    write_path = object_cutout_path(base_dir, metadata.session_id, metadata.object_id)
-    write_path.write_bytes(cutout_bytes)
-    set_object_average_depth(base_dir, object_uuid, target_depth)
 
     logger.info(
-        "Rescale by depth complete: object_uuid=%s session_id=%s object_id=%d path=%s shape=%s",
+        "Rescale by depth complete: object_uuid=%s session_id=%s object_id=%d display_scale=%.4f",
         object_uuid,
         metadata.session_id,
         metadata.object_id,
-        write_path,
-        scaled_cutout.shape,
+        display_scale,
     )
 
     return RescaleByDepthResult(
@@ -645,6 +660,69 @@ def rescale_cutout_by_depth(
         source_average_depth=source_average_depth,
         target_depth=target_depth,
         scale_factor=scale_factor,
-        cutout_bytes=cutout_bytes,
+        display_scale=display_scale,
+    )
+
+
+def run_smart_paste(
+    base_dir: Path,
+    object_uuid: str,
+    x: int,
+    y: int,
+) -> SmartPasteBridgeResult:
+    """Run smart paste for one object at ``(x, y)`` and persist metadata only."""
+    logger.info(
+        "Smart paste requested: object_uuid=%s placement=(%d,%d)",
+        object_uuid,
+        x,
+        y,
+    )
+
+    metadata = _load_object_metadata_for_rescale(base_dir, object_uuid)
+    depth_map = _compute_session_depth_map(base_dir, metadata.session_id)
+
+    with inference_session():
+        smart_paster = load_avroom_attr("SmartPaster")()
+        paste_result = smart_paster.smart_paste(
+            source_average_depth=metadata.average_depth,
+            depth_map=depth_map,
+            x=x,
+            y=y,
+        )
+
+    display_scale = metadata.display_scale * paste_result.scale_factor
+    logger.info(
+        "Smart paste scale computed: object_uuid=%s source_depth=%.2f target_depth=%.2f "
+        "scale=%.4f display_scale=%.4f",
+        object_uuid,
+        paste_result.source_average_depth,
+        paste_result.target_depth,
+        paste_result.scale_factor,
+        display_scale,
+    )
+
+    _persist_rescale_metadata(
+        base_dir,
+        object_uuid,
+        target_depth=paste_result.target_depth,
+        display_scale=display_scale,
+    )
+
+    logger.info(
+        "Smart paste complete: object_uuid=%s session_id=%s object_id=%d display_scale=%.4f",
+        object_uuid,
+        metadata.session_id,
+        metadata.object_id,
+        display_scale,
+    )
+
+    return SmartPasteBridgeResult(
+        object_uuid=object_uuid,
+        session_id=metadata.session_id,
+        object_id=metadata.object_id,
+        source_average_depth=paste_result.source_average_depth,
+        target_depth=paste_result.target_depth,
+        scale_factor=paste_result.scale_factor,
+        display_scale=display_scale,
     )
 

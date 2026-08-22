@@ -12,6 +12,9 @@ import type {
   SegmentResponse,
   SessionInfo,
   SessionSyncCheckResponse,
+  SmartPasteRequest,
+  SmartPasteResponse,
+  WarmSessionMapsResponse,
   UidCacheStatusResponse,
   UpdateObjectRequest,
   BatchRequest,
@@ -162,6 +165,13 @@ export async function getUidCacheStatus(uid: string): Promise<UidCacheStatusResp
   return handleJsonResponse<UidCacheStatusResponse>(response);
 }
 
+export async function warmSessionMaps(uid: string): Promise<WarmSessionMapsResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/${uid}/warm-maps`, {
+    method: "POST",
+  });
+  return handleJsonResponse<WarmSessionMapsResponse>(response);
+}
+
 export async function segmentImage(payload: SegmentRequest): Promise<SegmentResponse> {
   const response = await fetch(`${API_BASE_URL}/images/segment`, {
     method: "POST",
@@ -248,6 +258,22 @@ export async function setObjectOffset(
   });
 
   return handleJsonResponse<ObjectMetadataResponse>(response);
+}
+
+export async function smartPasteObject(
+  objectUuid: string,
+  x: number,
+  y: number,
+): Promise<SmartPasteResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}/smart-paste`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ x, y } satisfies SmartPasteRequest),
+  });
+
+  return handleJsonResponse<SmartPasteResponse>(response);
 }
 
 export async function runSessionBatch(uid: string, payload: BatchRequest): Promise<BatchResponse> {

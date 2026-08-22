@@ -199,7 +199,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
       <span className="toolbar-spacer" />
 
-      {status ? <span className="toolbar-status">{status}</span> : null}
+      {status ? (
+        <span className="toolbar-status">
+          {status === "preparing maps" ? (
+            <span className="tool-spinner" aria-hidden="true" />
+          ) : null}
+          {status}
+        </span>
+      ) : null}
 
       <button
         type="button"

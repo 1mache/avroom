@@ -50,29 +50,65 @@ def _snap_to_multiple_of_8(
     return w, h
 
 
+# Bump when load-time flags change so worker lru_cache cannot reuse a stale pipe.
+_SD_PIPE_CACHE_VERSION: int = 2
+
+
+def _disable_safety_checker(pipe: Any) -> None:
+    """Force-disable Diffusers NSFW filter (false positives → solid black crops)."""
+    pipe.safety_checker = None
+    if hasattr(pipe, "requires_safety_checker"):
+        pipe.requires_safety_checker = False
+    if hasattr(pipe, "feature_extractor"):
+        pipe.feature_extractor = None
+
+
 @functools.lru_cache(maxsize=1)
-def _load_stable_diffusion_pipe(model_id: str, device: str) -> Any:
+def _load_stable_diffusion_pipe(
+    model_id: str,
+    device: str,
+    cache_version: int = _SD_PIPE_CACHE_VERSION,
+) -> Any:
     """Load and cache a single Stable Diffusion inpainting pipeline.
 
     Replaces the per-instance ``__init__`` model load in the legacy
-    ``StableDiffusionInpainter``.
+    ``StableDiffusionInpainter``. Safety checker is disabled: false positives
+    on empty floor/wall fills were replaced with solid black crops.
     """
     import torch
     from diffusers import StableDiffusionInpaintPipeline
 
     logger.info(
-        f"Loading Stable Diffusion Inpainting model on {device} "
-        f"(this might take a while on first run)"
+        "Loading Stable Diffusion Inpainting model on %s "
+        "(cache_version=%s; this might take a while on first run)",
+        device,
+        cache_version,
     )
     pipe = StableDiffusionInpaintPipeline.from_pretrained(
         model_id,
         torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+        safety_checker=None,
+        requires_safety_checker=False,
     )
+    _disable_safety_checker(pipe)
     pipe = pipe.to(device)
     if device == "cuda":
         pipe.enable_attention_slicing()
-    logger.info("Stable Diffusion Inpainting model loaded successfully.")
+    logger.info(
+        "Stable Diffusion Inpainting model loaded successfully (safety_checker=off)."
+    )
     return pipe
+
+
+def _is_near_black_rgb(image_rgb: np.ndarray, *, mean_max: float = 8.0) -> bool:
+    """True when Diffusers NSFW replacement left an (almost) solid black frame."""
+    if image_rgb.size == 0:
+        return True
+    return float(np.mean(image_rgb)) <= mean_max
+
+
+# Drop any pipe cached before safety_checker was disabled (same-process reload).
+_load_stable_diffusion_pipe.cache_clear()
 
 
 class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
@@ -116,7 +152,7 @@ class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
         image: np.ndarray,
         mask: np.ndarray,
         prompt: str | None = None,
-        strength: float = 0.35,
+        strength: float = 0.40,
         **kwargs: Any,
     ) -> np.ndarray:
         """Inpaint the masked region and return a full-frame BGR array.
@@ -156,7 +192,7 @@ class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
         if prompt is None:
             prompt = self._prompt
         negative_prompt = str(kwargs.get("negative_prompt", self._negative_prompt))
-        num_inference_steps = int(kwargs.get("num_inference_steps", 30))
+        num_inference_steps = int(kwargs.get("num_inference_steps", 42))
         guidance_scale = float(kwargs.get("guidance_scale", 10.0))
 
         logger.info(
@@ -174,7 +210,10 @@ class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
             prompt,
             negative_prompt,
         )
-        pipe = _load_stable_diffusion_pipe(self._model_id, self._device)
+        pipe = _load_stable_diffusion_pipe(
+            self._model_id, self._device, _SD_PIPE_CACHE_VERSION
+        )
+        _disable_safety_checker(pipe)
         result_pil = pipe(
             prompt=prompt,
             negative_prompt=negative_prompt,
@@ -189,7 +228,17 @@ class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
         if result_pil.size != (window.width, window.height):
             result_pil = result_pil.resize((window.width, window.height), Image.LANCZOS)
 
-        result_crop_bgr = cv2.cvtColor(np.array(result_pil), cv2.COLOR_RGB2BGR)
+        result_crop_rgb = np.array(result_pil)
+        if _is_near_black_rgb(result_crop_rgb):
+            # NSFW filter (or a stale cached pipe) replaced the crop with black.
+            # Keep the LaMa/base pixels already in ``image`` instead of painting a hole.
+            logger.warning(
+                "SD inpaint crop is near-black (likely NSFW filter); "
+                "keeping pre-SD pixels for this window."
+            )
+            return image
+
+        result_crop_bgr = cv2.cvtColor(result_crop_rgb, cv2.COLOR_RGB2BGR)
 
         # Paste only the mask pixels; all surroundings stay byte-identical.
         out = image.copy()

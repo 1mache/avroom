@@ -128,15 +128,22 @@ Segmentation, inpaint metadata, and rescale-by-depth all call [`get_or_compute_d
 
 ## Rescale by depth — `rescale_cutout_by_depth`
 
-`rescale_cutout_by_depth` (lines 466–546) samples depth at a placement point, computes `scale_factor = target_depth / average_depth`, scales the cutout's alpha-bbox content about its center, overwrites the numbered cutout PNG, and updates metadata `average_depth` via `set_object_average_depth` so later rescales do not compound.
+`rescale_cutout_by_depth` samples depth at a placement point, computes `scale_factor = target_depth / average_depth`, multiplies cumulative metadata `display_scale`, and updates `average_depth` via `set_object_rescale_state`. The numbered cutout PNG is never modified — the frontend renders at `display_scale` with CSS transform.
 
-```505:527:fastApi-app/core/image_processing.py
-    target_depth = sample_depth_at_point(depth_map, x, y)
-    scale_factor = compute_depth_scale_factor(source_average_depth, target_depth)
-    ...
-    write_path = object_cutout_path(base_dir, metadata.session_id, metadata.object_id)
-    write_path.write_bytes(cutout_bytes)
-    set_object_average_depth(base_dir, object_uuid, target_depth)
+```593:604:fastApi-app/core/image_processing.py
+def _persist_rescale_metadata(
+    base_dir: Path,
+    object_uuid: str,
+    *,
+    target_depth: float,
+    display_scale: float,
+) -> None:
+    set_object_rescale_state(
+        base_dir,
+        object_uuid,
+        average_depth=target_depth,
+        display_scale=display_scale,
+    )
 ```
 
 ## Concurrency (route-level, not in this module)

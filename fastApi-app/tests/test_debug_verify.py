@@ -72,8 +72,8 @@ def _load_attr(name: str, module: str = "avroom_object_removal"):
                             "params": {
                                 "prompt": "p",
                                 "negative_prompt": "n",
-                                "strength": 0.35,
-                                "num_inference_steps": 30,
+                                "strength": 0.40,
+                                "num_inference_steps": 42,
                                 "guidance_scale": 10.0,
                                 "mask_dilate_pixels": 0,
                                 "compose_dilate_pixels": 0,
@@ -128,7 +128,7 @@ def test_inpaint_verify_payload_validates() -> None:
     assert model.preview_b64
     assert model.cutout_b64
     assert len(model.attempts) == 1
-    assert model.attempts[0].params.strength == 0.35
+    assert model.attempts[0].params.strength == 0.40
 
 
 def test_click_out_of_bounds() -> None:

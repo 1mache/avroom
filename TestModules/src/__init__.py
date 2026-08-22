@@ -76,6 +76,8 @@ from .core import (
     CutoutSelectionResult,
     ObjectRemover,
     ObjectSegmentor,
+    SmartPaster,
+    SmartPasteResult,
     select_best_cutout,
 )
 from .routing import (
@@ -140,6 +142,8 @@ __all__ = [
     "ReconstructionQuality",
     "SamImageAdapter",
     "select_best_cutout",
+    "SmartPaster",
+    "SmartPasteResult",
     "SamSegmentationStrategy",
     "SegmentationRoutingStrategy",
     "StableDiffusionInpaintingStrategy",

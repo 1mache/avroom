@@ -12,11 +12,13 @@ class JobKind(str, Enum):
     INPAINT = "inpaint"
     CLICK = "click"
     RESCALE_BY_DEPTH = "rescale_by_depth"
+    SMART_PASTE = "smart_paste"
     GENERATE_3D = "generate_3d"
     NOVEL_VIEW = "novel_view"
     VALIDATE_CONTENT = "validate_content"
     CALIBRATE_CAMERA = "calibrate_camera"
     MAP_NORMALS = "map_normals"
+    WARM_SESSION_MAPS = "warm_session_maps"
     DEBUG_DEPTH_MAP = "debug_depth_map"
     DEBUG_NORMAL_MAP = "debug_normal_map"
     DEBUG_SAM_EVERYTHING = "debug_sam_everything"
@@ -66,6 +68,7 @@ class JobResult:
     source_average_depth: float | None = None
     target_depth: float | None = None
     scale_factor: float | None = None
+    display_scale: float | None = None
     glb_bytes: bytes | None = None
     novel_view_bgra: Any | None = field(default=None, repr=False)
     validation_ok: bool | None = None
@@ -85,3 +88,6 @@ class JobResult:
     debug_png_bytes: bytes | None = None
     debug_mask_count: int | None = None
     debug_payload: dict[str, Any] | None = None
+    warm_content_hash: str | None = None
+    depth_cache_hit: bool | None = None
+    normal_cache_hit: bool | None = None

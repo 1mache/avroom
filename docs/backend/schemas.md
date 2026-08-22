@@ -31,6 +31,15 @@ All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.
 | `last_changed` | `str` | Server-side last-changed timestamp. Empty string when the session exists but has no recorded timestamp yet. |
 | `needs_refresh` | `bool` | `true` when the client must re-poll session data from the server. |
 
+`WarmSessionMapsResponse` is returned by `POST /images/{uid}/warm-maps`.
+
+| Field | Type | Description |
+|---|---|---|
+| `uid` | `str` | Session UID. |
+| `content_hash` | `str` | SHA-256 hex of the canvas bytes used for depth/normal cache keys. |
+| `depth_cache_hit` | `bool` | `true` when the depth map was already on disk before this call. |
+| `normal_cache_hit` | `bool \| null` | Same for normals when `NORMAL_MAP=true`; `null` when normal warm is disabled. |
+
 `SessionPreviewRequest` is the body of `POST /images/{uid}/preview`.
 
 | Field | Type | Description |
@@ -138,9 +147,8 @@ The handler reads `request.model_fields_set` (which keys were actually present i
 | `source_average_depth` | `float` | `average_depth` before this rescale. |
 | `target_depth` | `float` | Sampled uint8 depth at placement point. |
 | `scale_factor` | `float` | Applied factor (`target_depth / source_average_depth`). |
-| `cutout_b64` | `str` | Base64 rescaled BGRA cutout PNG. |
-| `format` | `str` | Currently `png`. |
-| `cutout_bounds` | `CutoutBounds \| null` | Bounds after rescale. |
+| `display_scale` | `float` | Cumulative UI display scale after this call. |
+| `cutout_bounds` | `CutoutBounds \| null` | Logical display bounds (base alpha bbox scaled by `display_scale`). |
 
 ## Object List
 
@@ -158,6 +166,7 @@ The handler reads `request.model_fields_set` (which keys were actually present i
 | `has_3d` | `bool` | Whether a GLB 3D model has been generated for this object. |
 | `offset_x` | `float` | Persisted drag offset X, natural-image pixels. |
 | `offset_y` | `float` | Persisted drag offset Y, natural-image pixels. |
+| `display_scale` | `float` | Cumulative UI display scale (default `1.0`). |
 
 `ObjectListResponse` is returned by `GET /images/{uid}/objects`.
 

@@ -78,7 +78,9 @@ Response is `InpaintMaskResponse`, which extends `ClickResultResponse` and adds 
 
 Duplicating an object no longer copies the source's exact `offset` client-side; the clone's nudged position is computed server-side (`build_clone_metadata`, atomic with clone creation — see [api-endpoints.md](../backend/api-endpoints.md#post-imagesobjectsobject_uuidduplicate)) and arrives via the `getSessionObjects` fetch `duplicateObject` already performs after cloning.
 
-`POST /images/objects/{uuid}/rescale-by-depth` exists on the backend but has no frontend wrapper or UI wiring yet.
+`smartPasteObject(objectUuid, x, y)` sends `POST /images/objects/${objectUuid}/smart-paste` with `{ x, y }`. When the workspace toolbar **Smart paste** switch is on, `WorkspaceScreen`'s `finishDrag` fires this after `setObjectOffset`, sampling depth at the center of the dragged object's scaled alpha bbox plus its offset (`getObjectPlacementCenter` with `effectiveDisplayBounds`). On success, `useSessionJobs.applySmartPasteResult` updates local `displayScale` from `display_scale` and clears any stale rotation preview — the cutout PNG src is unchanged.
+
+`POST /images/objects/{uuid}/rescale-by-depth` remains a lower-level backend endpoint with no frontend wrapper.
 
 `deleteObject(objectUuid)` calls `DELETE /images/objects/${objectUuid}`, void-returning like `deleteSession`. `useSessionJobs.deleteObject` wraps it with a busy flag (`isDeleting`) and a `uuid` guard (objects from pre-UUID sessions can't be deleted, same precondition as duplicate). The Toolbar's trash button arms a `ConfirmDialog` in `WorkspaceScreen` rather than deleting directly — deletion is permanent and the background keeps the object's inpainted hole, it's never repainted. `deletedObjectIdsRef` in `useSessionJobs` is a *pending* set now, not permanent: an id is held only while its DELETE is in flight (so a racing sync-check reconcile can't resurrect the object mid-request), then dropped once the request settles — server truth takes over, so a later object reusing the freed `object_id` isn't hidden.
 
@@ -91,6 +93,8 @@ Duplicating an object no longer copies the source's exact `offset` client-side; 
 ## Session management
 
 `getUidCacheStatus(uid)` fetches `GET /images/${uid}/cache` for session restore.
+
+`warmSessionMaps(uid)` posts to `POST /images/${uid}/warm-maps` with no body. `WorkspaceScreen` fires it fire-and-forget when a session mounts and again when the user turns **Smart paste** on, so depth/normal caches are warm before the first drag-rescale; failures are `console.warn`-logged and non-fatal.
 
 `deleteSession(uid)` calls `DELETE /images/${uid}` (no body). Throws on non-2xx.
 

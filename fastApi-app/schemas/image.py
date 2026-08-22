@@ -64,6 +64,27 @@ class SessionSyncCheckResponse(BaseModel):
     ]
 
 
+class WarmSessionMapsResponse(BaseModel):
+    """Result of warming depth/normal caches for the session's current canvas."""
+
+    uid: Annotated[str, Field(description="Session UID.")]
+    content_hash: Annotated[
+        str,
+        Field(description="SHA-256 hex of the canvas bytes used for cache keys."),
+    ]
+    depth_cache_hit: Annotated[
+        bool,
+        Field(description="True when the depth map was already on disk before this call."),
+    ]
+    normal_cache_hit: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description="True when normals were cached; null when NORMAL_MAP=false.",
+        ),
+    ]
+
+
 class SessionPreviewRequest(BaseModel):
     """Request payload for POST /images/{uid}/preview.
 
@@ -361,17 +382,54 @@ class RescaleByDepthResponse(BaseModel):
         float,
         Field(description="Applied scale factor (target_depth / source_average_depth)."),
     ]
-    cutout_b64: Annotated[
-        str,
-        Field(description="Base64-encoded rescaled BGRA cutout PNG."),
-    ]
-    format: Annotated[
-        str,
-        Field(description="Image format, currently 'png'."),
+    display_scale: Annotated[
+        float,
+        Field(description="Cumulative UI display scale after this rescale."),
     ]
     cutout_bounds: Annotated[
         CutoutBounds | None,
-        Field(default=None, description="Tight visible-object bounds inside the rescaled cutout PNG."),
+        Field(default=None, description="Logical display bounds (base alpha bbox scaled by display_scale)."),
+    ]
+
+
+class SmartPasteRequest(BaseModel):
+    """Request payload for smart paste at a placement point."""
+
+    x: Annotated[
+        int,
+        Field(ge=0, description="Placement X coordinate in natural-image pixels."),
+    ]
+    y: Annotated[
+        int,
+        Field(ge=0, description="Placement Y coordinate in natural-image pixels."),
+    ]
+
+
+class SmartPasteResponse(BaseModel):
+    """Result of smart paste (rescale today; rotation fields reserved for later)."""
+
+    object_uuid: Annotated[str, Field(description="Server-generated UUID for this object.")]
+    session_id: Annotated[str, Field(description="Session UID.")]
+    object_id: Annotated[int, Field(ge=0, description="Zero-based integer id within the session.")]
+    source_average_depth: Annotated[
+        float,
+        Field(description="Object average depth before this smart paste."),
+    ]
+    target_depth: Annotated[
+        float,
+        Field(description="Sampled uint8 depth at the placement point."),
+    ]
+    scale_factor: Annotated[
+        float,
+        Field(description="Applied scale factor (target_depth / source_average_depth)."),
+    ]
+    display_scale: Annotated[
+        float,
+        Field(description="Cumulative UI display scale after this smart paste."),
+    ]
+    cutout_bounds: Annotated[
+        CutoutBounds | None,
+        Field(default=None, description="Logical display bounds (base alpha bbox scaled by display_scale)."),
     ]
 
 
@@ -413,6 +471,14 @@ class ObjectMetadataResponse(BaseModel):
     offset_y: Annotated[
         float,
         Field(default=0.0, description="Persisted drag offset Y, natural-image pixels."),
+    ]
+    display_scale: Annotated[
+        float,
+        Field(
+            default=1.0,
+            gt=0.0,
+            description="Cumulative UI display scale; cutout PNG stays at original resolution.",
+        ),
     ]
 
 
@@ -462,6 +528,14 @@ class ObjectInfo(BaseModel):
     offset_y: Annotated[
         float,
         Field(default=0.0, description="Persisted drag offset Y, natural-image pixels."),
+    ]
+    display_scale: Annotated[
+        float,
+        Field(
+            default=1.0,
+            gt=0.0,
+            description="Cumulative UI display scale; cutout PNG stays at original resolution.",
+        ),
     ]
 
 

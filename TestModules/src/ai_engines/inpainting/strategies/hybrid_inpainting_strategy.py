@@ -44,7 +44,7 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
     SD_SKIP_THRESHOLD: float = 0.2
     SHARPEN_SIGMA: float = 0.8
     SHARPEN_AMOUNT: float = 0.6
-    INPAINT_VERIFY_MAX_RETRIES: int = 2
+    INPAINT_VERIFY_MAX_RETRIES: int = 3
     INPAINT_VERIFY_CROP_PAD_RATIO: float = _CROP_PAD_RATIO
 
     def __init__(
@@ -107,7 +107,7 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
             prompt=prompt,
             negative_prompt=negative,
             strength=strength,
-            num_inference_steps=int(kwargs.get("num_inference_steps", 30)),
+            num_inference_steps=int(kwargs.get("num_inference_steps", 42)),
             guidance_scale=float(kwargs.get("guidance_scale", 10.0)),
         )
 
@@ -154,7 +154,7 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
         self._image_saver.save("debug_lama_output", primary_result)
 
         logger.info("--- Hybrid Pipeline Phase 2: Texture refinement (SD) ---")
-        dynamic_strength = float(kwargs.get("strength", 0.35))
+        dynamic_strength = float(kwargs.get("strength", 0.40))
         params = self._snapshot_params(kwargs, dynamic_strength)
 
         sd_skipped = dynamic_strength <= self.SD_SKIP_THRESHOLD

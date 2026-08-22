@@ -114,15 +114,15 @@ Reuse these instead of re-implementing them per module:
 2. **Adapt** — `SamImageAdapter` converts the grayscale depth map to 3-channel RGB for SAM input. Result is cached per image+point.
 3. **Route** — `BoundaryVarianceRoutingStrategy` probes a tight SAM mask, measures depth variance along its boundary ring, and decides expand pixels + whether the object is 3D. Returns a `run_context` dict.
 4. **Segment** — `SamFacadeSingleton` (loaded once, Singleton) receives the adapted depth map (NOT the RGB image) and returns a mask.
-5. **Refine** — `MaskRefiner.expand_mask_uniform(radius=3)` applies uniform dilation to cover missed edge pixels.
-6. **Inpaint** — `HybridInpainter` (LaMa primary + Stable Diffusion with `sd_strength=0.35`).
+5. **Refine** — routing `expand_pixels` (sanitize-then-dilate) plus `MaskRefiner.expand_mask_uniform(radius=3)`. Verifier may grow further via `mask_dilate_pixels` on retry.
+6. **Inpaint** — `HybridInpainter` (LaMa primary + Stable Diffusion with `sd_strength=0.40`, 42 steps).
 7. **Compose** — `MaskOverlapRGBAComposer` extracts the cutout as BGRA with alpha=0 outside the mask.
 
 ### Rules Never to Break
 
 - **SAM receives depth map, not RGB.** RGB causes over-segmentation on fabric creases and shadows. The adapter exists for this reason.
 - **Near-Far blending is alpha compositing, not averaging.** V2 depth values serve as the alpha weight. Do not simplify to a mean.
-- **Mask dilation prevents LaMa halo.** LaMa bleeds object pixels into background with tight masks. Always dilate before inpainting.
+- **Sanitize before any dilation.** Dilating a dirty SAM mask bridges detached speckles into floor/chair. Use `sanitize_then_expand` / keep-click-component first; the ~3 px refine is only an edge pad.
 - **SD runs on a native-resolution crop, never the squashed full frame.** `StableDiffusionInpaintingStrategy` crops around the mask with `mask_crop_window`, generates at /8-snapped native dims, and pastes only mask pixels back. Squashing a 1600×1200 frame to 512×512 causes a 3× upscale smear and a paste seam that no SD knob can fix. Only mask pixels are written back; surroundings stay byte-identical so Gemini's dual-crop verifier sees an uncorrupted reference.
 
 ## FastAPI ↔ TestModules Integration
@@ -144,10 +144,11 @@ Not wired into segment/inpaint/removal pipelines.
 
 ### Debug vision endpoints
 
-`POST /debug/validate`, `POST /debug/depth-map`, and `POST /debug/sam-everything` (`fastApi-app/api/debug_vision.py`) are test/inspection tools, not production flow — no session, no disk writes. All three accept a multipart `file` upload and are gated by `DEBUG_ENDPOINTS` (`settings.get_debug_endpoints_enabled`, default enabled; `false` → all three 404). The React frontend has a dedicated screen for these — see `DebugScreen` under Frontend Notes below.
+`POST /debug/validate`, `POST /debug/depth-map`, `POST /debug/normal-map`, and `POST /debug/sam-everything` (`fastApi-app/api/debug_vision.py`) are test/inspection tools, not production flow — no session, no disk writes. They accept a multipart `file` upload and are gated by `DEBUG_ENDPOINTS` (`settings.get_debug_endpoints_enabled`, default enabled; `false` → 404). The React frontend has a dedicated screen for these — see `DebugScreen` under Frontend Notes below.
 
 - `/debug/validate` runs the **full** validation scoreboard (`ImageValidator.validate_all` — every technical check plus the CLIP content checks, never stopping at the first failure, unlike `POST /images/upload`'s `validate()`) and always returns 200 JSON (`DebugValidationResponse`) — a failed check is data, not an error.
 - `/debug/depth-map?strategy=anything|blended|enhanced_edge&model=...&colormap=none|inferno|magma|turbo|jet` renders one of three depth strategies as a PNG via `avroom_object_removal.utils.colorize_depth`. `strategy=anything` is `DepthAnythingMappingStrategy(model)` (the only one honoring `model`); `blended`/`enhanced_edge` are the actual multi-checkpoint strategies production uses (`NearFarBlendedDepthMappingStrategy` / `EnhancedEdgeDepthMappingStrategy`, production's true default).
+- `/debug/normal-map?hub_model=metric3d_vit_small|metric3d_vit_large|metric3d_vit_giant2` runs `Metric3DNormalMappingStrategy` and returns a PNG via `colorize_normals` (`JobKind.DEBUG_NORMAL_MAP`). DebugScreen clicks sample approximate nx/ny/nz from the 8-bit PNG.
 - `/debug/sam-everything?source=depth|rgb&depth_strategy=...&points_per_side=16&pred_iou_thresh=0.88&stability_score_thresh=0.95&min_mask_region_area=0&alpha=0.45` runs `SamSegmentationStrategy.predict_everything` (wraps `SamAutomaticMaskGenerator`, reusing the already-loaded `SamPredictor` weights via a second `functools.lru_cache`'d loader, now keyed on all four quality-threshold args too) and renders the masks via `avroom_object_removal.utils.overlay_masks` (deterministic per-mask color, translucent fill + outline) composited onto the original photo. `source=depth` (default) feeds SAM the same `SamImageAdapter`-adapted depth map production uses; `source=rgb` feeds the raw photo instead, to visually demonstrate why the depth-map rule exists (visibly more/noisier masks from fabric creases and shadows).
 - All three dispatch through the inference pool (`/debug/validate`'s content stage reuses `JobKind.VALIDATE_CONTENT`; the two PNG endpoints are `JobKind.DEBUG_DEPTH_MAP` / `DEBUG_SAM_EVERYTHING`, in `_FACADE_JOB_KINDS` so inline mode takes the GPU lock) — same concurrency model as every other model call, see `core/inference_pool/`.
 - `predict_everything` is on `ImageSegmentationStrategy` as a non-abstract method (default raises `NotImplementedError`) since prompt-free segmentation is SAM-specific, not a general strategy capability. `ImageSegmentationFacade.get_all_masks_for_image` exposes it at the facade level, alongside the existing point-prompted `get_mask_at_point` / `get_all_masks_for_position`.

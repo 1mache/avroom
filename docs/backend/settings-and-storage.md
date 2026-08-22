@@ -134,7 +134,7 @@ fastApi-app/tmp/
 │   ├── {image_id}.{ext}             - one per upload (jpg/png/...)
 │   ├── {image_id}_preview.jpg             - dashboard thumbnail (written at upload, overwritten after each edit settles)
 │   ├── {image_id}_background.png         - cumulative inpainted canvas (overwrites each inpaint)
-│   ├── {image_id}_{object_id}_cutout.png - per-object cutout (overwritten by rescale-by-depth)
+│   ├── {image_id}_{object_id}_cutout.png - per-object cutout (written at inpaint; never rewritten by rescale)
 │   ├── {image_id}_{object_id}_meta.json   - object metadata (uuid, average_depth, clone lineage, …)
 │   ├── {image_id}_{object_id}_novel_az{az}_el{el}.png - cached novel-view result (copied on duplicate)
 │   ├── {image_id}_{object_id}_novel_az{az}_el{el}.preview.png - client novel-view preview placeholder
@@ -152,7 +152,7 @@ fastApi-app/tmp/
 - `{image_id}.{ext}` is written by `upload_image` — the suffix comes from the original filename or defaults to `.png` ([`api/routes.py`](../../fastApi-app/api/routes.py) lines 41–48).
 - `{image_id}_preview.jpg` is written once at upload time by `core/session_preview.py::write_upload_preview` (downscaled copy of the original, non-fatal on failure), then overwritten by `POST /images/{uid}/preview` after every edit the frontend decides is "settled" (debounced ~1.5s). Removed by `DELETE /images/{uid}`.
 - `{image_id}_background.png` is written (and overwritten) by `inpaint_mask` on every successful inpaint, becoming the progressive canvas for the next object.
-- `{image_id}_{object_id}_cutout.png` is written by `inpaint_mask` with a sequentially allocated `object_id`. It is **not** overwritten by later inpaints, but **is** overwritten by `POST /images/objects/{uuid}/rescale-by-depth`. Path construction lives in [`core/object_storage.py`](../../fastApi-app/core/object_storage.py) (`object_cutout_path`, `next_object_id`).
+- `{image_id}_{object_id}_cutout.png` is written by `inpaint_mask` with a sequentially allocated `object_id`. It is **not** overwritten by later inpaints or by rescale/smart-paste (UI scale is metadata-only). Path construction lives in [`core/object_storage.py`](../../fastApi-app/core/object_storage.py) (`object_cutout_path`, `next_object_id`).
 - `{image_id}_{object_id}_meta.json` and `object_index.json` are written by `inpaint_mask` via [`core/object_metadata.py`](../../fastApi-app/core/object_metadata.py).
 - `{image_id}_depth_{hash}.npy` is written by [`core/depth_cache.py`](../../fastApi-app/core/depth_cache.py) on first depth computation for a canvas state; removed by `DELETE /images/{uid}`.
 - `point/{image_id}_debug.png` is written by `_create_debug_click_image` on every click ([`core/image_processing.py`](../../fastApi-app/core/image_processing.py) lines 74–90).
@@ -192,7 +192,7 @@ Depth maps for the current session canvas are cached on disk keyed by SHA-256 of
 | `load_depth_map` / `save_depth_map` | Read/write `{session_id}_depth_{content_hash}.npy` |
 | `compute_average_depth_over_mask` | Mean uint8 depth inside a mask (inpaint metadata) |
 | `sample_depth_at_point` | Single-pixel depth at `(x, y)`, clamped to bounds |
-| `compute_depth_scale_factor` | `target / source` for rescale-by-depth |
+| `compute_depth_scale_factor` | Dampened `target/source` (35% strength, clamped 0.88–1.12 per placement) |
 | `delete_session_depth_maps` | Remove all `{session_id}_depth_*.npy` on session delete |
 
 Higher uint8 depth values mean closer to the camera (same convention as the AI pipeline).
@@ -208,7 +208,7 @@ Each finalized object gets a UUID at inpaint time. Metadata is stored per object
 
 Key helpers: `save_object_metadata`, `get_object_by_uuid`, `set_object_name`, `set_object_average_depth`, `build_clone_metadata`, `format_clone_name`, `remove_object_index_entry`, `delete_session_metadata`.
 
-`average_depth` is set from mask depth at inpaint and updated after each rescale-by-depth call.
+`average_depth` is set from mask depth at inpaint and updated after each rescale/smart-paste call. `display_scale` (default `1.0`) accumulates the UI-only depth rescale multiplier.
 
 Clone lineage fields on `ObjectMetadata` (all optional / default `None` for non-clones):
 

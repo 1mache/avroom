@@ -4,7 +4,7 @@
 
 | Name | Default | Meaning |
 |------|---------|---------|
-| `INPAINT_VERIFY_MAX_RETRIES` | `2` | SD retries after the first candidate (3 SD calls max when SD ran first) |
+| `INPAINT_VERIFY_MAX_RETRIES` | `3` | SD retries after the first candidate (4 SD calls max when SD ran first) |
 | `INPAINT_VERIFY_CROP_PAD_RATIO` | `0.25` | Pad mask bbox on each side before CLIP verify crop |
 | `GEMINI_CROP_PAD_RATIO` | `0.35` | Wider pad for Gemini so shadow rings are visible |
 | `MAX_MASK_DILATE_PER_RETRY` | `16` | Safety cap on AI-requested inpaint mask expansion per retry |

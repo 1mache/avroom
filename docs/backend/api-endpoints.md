@@ -12,6 +12,7 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `POST` | `/images/click` | `ClickRequest` | `ClickResultResponse` legacy one-step flow |
 | `POST` | `/images/{uid}/name` | `SetNameRequest` | `SessionInfo` |
 | `POST` | `/images/{uid}/sync-check` | `SessionSyncCheckRequest` | `SessionSyncCheckResponse` |
+| `POST` | `/images/{uid}/warm-maps` | path `uid` | `WarmSessionMapsResponse` |
 | `DELETE` | `/images/{uid}` | path `uid` | 204 No Content |
 | `GET` | `/images/{uid}/cache` | path `uid` | `UidCacheStatusResponse` |
 | `GET` | `/images/{uid}/objects` | path `uid` | `ObjectListResponse` |
@@ -25,6 +26,7 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `POST` | `/images/objects/{object_uuid}/duplicate` | path `object_uuid` | `DuplicateObjectResponse` |
 | `DELETE` | `/images/objects/{object_uuid}` | path `object_uuid` | 204 No Content |
 | `POST` | `/images/objects/{object_uuid}/rescale-by-depth` | `RescaleByDepthRequest` | `RescaleByDepthResponse` |
+| `POST` | `/images/objects/{object_uuid}/smart-paste` | `SmartPasteRequest` | `SmartPasteResponse` |
 | `POST` | `/images/novel-view` | `NovelViewRequest` | `NovelViewResponse` |
 | `POST` | `/3d/test-3d` | `{"uid":"...", "object_id": 0}` | GLB bytes |
 | `GET` | `/3d/{uid}/{object_id}` | path `uid`, `object_id` | GLB file |
@@ -170,16 +172,31 @@ Behavior:
 1. Load object metadata by UUID (`average_depth` is the baseline depth).
 2. Load the session's current canvas and get/compute depth (`get_or_compute_depth`).
 3. Sample depth at `(x, y)` (clamped to map bounds).
-4. Compute `scale_factor = target_depth / average_depth` (higher uint8 depth = closer; near → far yields scale &lt; 1).
-5. Scale the cutout's visible alpha content about its bbox center on a same-sized transparent canvas.
-6. Overwrite `{uid}_{object_id}_cutout.png` with the rescaled PNG.
-7. Update metadata `average_depth` to `target_depth` so repeated rescales do not compound.
-8. Return `RescaleByDepthResponse` with pre-update `source_average_depth`, `target_depth`, `scale_factor`, and base64 cutout.
-9. Bump the parent session's `last_changed` timestamp.
+4. Compute dampened `scale_factor` from `target_depth / average_depth` (35% of raw delta from 1.0, clamped to 0.88–1.12 per placement).
+5. Update metadata: `display_scale *= scale_factor`, `average_depth = target_depth` (anti-compounding for repeat placements).
+6. Return `RescaleByDepthResponse` with `source_average_depth`, `target_depth`, `scale_factor`, cumulative `display_scale`, and logical `cutout_bounds` (base alpha bbox scaled by `display_scale`). The cutout PNG on disk is **not** modified.
+7. Bump the parent session's `last_changed` timestamp.
 
-Returns `404` when object or cutout is missing; `400` when depth values are invalid or the cutout has no visible alpha.
+Returns `404` when object or cutout is missing; `400` when depth values are invalid.
 
-Not wired in the React frontend today.
+Not wired in the React frontend today (smart-paste uses the same math via the toolbar).
+
+## `POST /images/objects/{object_uuid}/smart-paste`
+
+Runs the smart-paste pipeline at a placement point. Body: `SmartPasteRequest` with natural-image `x`/`y` (same coordinate space as rescale-by-depth).
+
+Behavior today (rescale only; auto-rotate reserved for a later release):
+
+1. Load object metadata by UUID (`average_depth` is the baseline depth; cutout must exist on disk).
+2. Load the session's current canvas and get/compute depth (`get_or_compute_depth`).
+3. Call `SmartPaster.smart_paste(...)` in TestModules — depth-proportional scale math only (no pixel mutation).
+4. Update metadata: `display_scale *= scale_factor`, `average_depth = target_depth`.
+5. Return `SmartPasteResponse` (same shape as `RescaleByDepthResponse`).
+6. Bump the parent session's `last_changed` timestamp.
+
+Returns `404` when object or cutout is missing; `400` when depth values are invalid.
+
+Wired in the React workspace: when the toolbar **Smart paste** switch is on, `WorkspaceScreen`'s drag-end handler fires this after persisting the object's offset.
 
 ## `POST /images/novel-view`
 
@@ -238,6 +255,21 @@ Behavior:
 
 Returns `SessionSyncCheckResponse` with `last_changed` and `needs_refresh`.
 
+## `POST /images/{uid}/warm-maps`
+
+Ensures depth (and optionally normal) maps exist for the session's **current canvas** — the inpainted `{uid}_background.png` when present, otherwise the original upload. Uses the same cache keys as segment, inpaint, and smart-paste (`{uid}_depth_{sha256}.npy`, `{uid}_normal_{sha256}.npy`).
+
+Behavior:
+
+1. Return **404** when `uid` is absent from `sessions.json`, or when no stored image exists for the session.
+2. Dispatch `JobKind.WARM_SESSION_MAPS` through the inference pool (GPU lock in inline mode).
+3. Depth is always warmed via `get_or_compute_depth`. When `NORMAL_MAP=true` (default), normals are warmed via `warm_normals_for_session`; when `NORMAL_MAP=false`, `normal_cache_hit` is `null` and normals are skipped.
+4. Does **not** call `touch_session` — this is a cache prefetch, not a user-visible mutation.
+
+Returns `WarmSessionMapsResponse` with `uid`, `content_hash`, `depth_cache_hit`, and `normal_cache_hit` (whether each map was already on disk before this call).
+
+The React workspace fires this fire-and-forget on session open so the first cut or smart-paste does not pay a cold model load.
+
 ## Session dirty timestamps
 
 Client-visible durable mutations bump `last_changed` through `touch_session` in [`settings.py`](../../fastApi-app/settings.py):
@@ -252,10 +284,11 @@ Client-visible durable mutations bump `last_changed` through `touch_session` in 
 | `POST /images/objects/{object_uuid}/duplicate` | `api/routes.py` |
 | `DELETE /images/objects/{object_uuid}` | `api/routes.py` |
 | `POST /images/objects/{object_uuid}/rescale-by-depth` | `api/routes.py` |
+| `POST /images/objects/{object_uuid}/smart-paste` | `api/routes.py` |
 | `POST /3d/test-3d` | `api/model_3d.py` |
 | `POST /images/novel-view` (cache miss only — a cache hit changes nothing and skips the touch) | `api/novel_view.py` |
 
-These do **not** bump session dirty state: `POST /images/segment` candidate caches, depth `.npy` cache writes, in-memory region leases.
+These do **not** bump session dirty state: `POST /images/segment` candidate caches, depth `.npy` cache writes, in-memory region leases, `POST /images/{uid}/warm-maps`.
 
 ## `GET /images/sessions`
 

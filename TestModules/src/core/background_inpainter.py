@@ -85,10 +85,11 @@ class BackgroundInpainter:
         """Inpaint the masked region and return the reconstructed background.
 
         Delegates to :meth:`ImageInpaintingFacade.inpaint` using ``mask`` (the
-        broad inpainting mask), then composes the model output onto
-        ``original_image`` using ``compose_mask`` when provided. The compose
-        mask is typically the cutout alpha (raw SAM mask), which is tighter than
-        ``mask``. Verifier-driven compose dilation arrives via ``inpaint_out``.
+        inpainting hole, typically ~3 px refined), then composes the model
+        output onto ``original_image`` using ``compose_mask`` when provided.
+        The compose mask is typically the cutout alpha (raw SAM mask), which
+        is tighter than ``mask``. Verifier-driven compose dilation arrives via
+        ``inpaint_out``.
 
         Args:
             original_image: BGR ``np.ndarray`` of the full scene. Must match

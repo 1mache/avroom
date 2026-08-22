@@ -65,10 +65,13 @@ from schemas.image import (
     SessionPreviewRequest,
     SessionSyncCheckRequest,
     SessionSyncCheckResponse,
+    WarmSessionMapsResponse,
     SetNameRequest,
     UpdateObjectRequest,
     RescaleByDepthRequest,
     RescaleByDepthResponse,
+    SmartPasteRequest,
+    SmartPasteResponse,
     UidCacheStatusResponse,
     BatchRequest,
     BatchResponse,
@@ -89,7 +92,7 @@ from core.object_storage import (
     resolve_object_glb_path,
     session_preview_path,
 )
-from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
+from core.cutout_bounds import extract_cutout_bounds_from_png_bytes, scale_cutout_bounds
 from settings import (
     clear_session_last_changed,
     deregister_uid,
@@ -626,6 +629,47 @@ async def sync_check_session(uid: str, request: SessionSyncCheckRequest) -> Sess
     )
 
 
+@router.post("/{uid}/warm-maps", response_model=WarmSessionMapsResponse)
+def warm_session_maps_endpoint(uid: str) -> WarmSessionMapsResponse:
+    """Ensure depth and normal maps exist for the session's current canvas.
+
+    Called fire-and-forget when the workspace opens so the first segment or
+    smart-paste does not pay a cold-cache model load. Does not bump
+    ``last_changed``.
+    """
+    logger.info("Session map warm requested: uid=%s", uid)
+    if not is_session_registered(uid):
+        logger.warning("Session map warm failed — unknown uid: %s", uid)
+        raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'")
+
+    storage_dir = get_image_storage_dir()
+    try:
+        result = get_inference_client().run_warm_session_maps(
+            image_id=uid,
+            base_dir=storage_dir,
+        )
+    except FileNotFoundError as exc:
+        logger.warning("Session map warm failed — not found: uid=%s", uid)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Session map warm failed: uid=%s", uid)
+        raise HTTPException(status_code=500, detail=f"Session map warm failed: {exc}") from exc
+
+    logger.info(
+        "Session map warm complete: uid=%s content_hash=%s depth_hit=%s normal_hit=%s",
+        uid,
+        result.content_hash[:12],
+        result.depth_cache_hit,
+        result.normal_cache_hit,
+    )
+    return WarmSessionMapsResponse(
+        uid=uid,
+        content_hash=result.content_hash,
+        depth_cache_hit=result.depth_cache_hit,
+        normal_cache_hit=result.normal_cache_hit,
+    )
+
+
 def _metadata_to_response(
     metadata: ObjectMetadata,
     storage_dir: Path,
@@ -650,6 +694,7 @@ def _metadata_to_response(
         cutout_bounds=cutout_bounds,
         offset_x=metadata.offset_x,
         offset_y=metadata.offset_y,
+        display_scale=metadata.display_scale,
     )
 
 
@@ -917,11 +962,16 @@ def rescale_object_by_depth(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     touch_session(result.session_id)
-    cutout_bounds = extract_cutout_bounds_from_png_bytes(result.cutout_bytes)
+    cutout_path = resolve_object_cutout_path(storage_dir, result.session_id, result.object_id)
+    base_bounds = extract_cutout_bounds_from_png_bytes(cutout_path.read_bytes())
+    cutout_bounds = (
+        scale_cutout_bounds(base_bounds, result.display_scale) if base_bounds is not None else None
+    )
     logger.info(
-        "Rescale by depth complete: uuid=%s scale_factor=%.4f target_depth=%.2f",
+        "Rescale by depth complete: uuid=%s scale_factor=%.4f display_scale=%.4f target_depth=%.2f",
         object_uuid,
         result.scale_factor,
+        result.display_scale,
         result.target_depth,
     )
     return RescaleByDepthResponse(
@@ -931,8 +981,59 @@ def rescale_object_by_depth(
         source_average_depth=result.source_average_depth,
         target_depth=result.target_depth,
         scale_factor=result.scale_factor,
-        cutout_b64=to_base64_ascii(result.cutout_bytes),
-        format="png",
+        display_scale=result.display_scale,
+        cutout_bounds=cutout_bounds,
+    )
+
+
+@router.post("/objects/{object_uuid}/smart-paste", response_model=SmartPasteResponse)
+def smart_paste_object(
+    object_uuid: str,
+    request: SmartPasteRequest,
+) -> SmartPasteResponse:
+    """Run smart paste (depth rescale today) at the given placement point."""
+    logger.info(
+        "Smart paste requested: uuid=%s placement=(%d,%d)",
+        object_uuid,
+        request.x,
+        request.y,
+    )
+    storage_dir = get_image_storage_dir()
+    try:
+        result = get_inference_client().run_smart_paste(
+            base_dir=storage_dir,
+            object_uuid=object_uuid,
+            x=request.x,
+            y=request.y,
+        )
+    except FileNotFoundError as exc:
+        logger.warning("Smart paste failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        logger.error("Smart paste failed — invalid input: uuid=%s reason=%s", object_uuid, exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    touch_session(result.session_id)
+    cutout_path = resolve_object_cutout_path(storage_dir, result.session_id, result.object_id)
+    base_bounds = extract_cutout_bounds_from_png_bytes(cutout_path.read_bytes())
+    cutout_bounds = (
+        scale_cutout_bounds(base_bounds, result.display_scale) if base_bounds is not None else None
+    )
+    logger.info(
+        "Smart paste complete: uuid=%s scale_factor=%.4f display_scale=%.4f target_depth=%.2f",
+        object_uuid,
+        result.scale_factor,
+        result.display_scale,
+        result.target_depth,
+    )
+    return SmartPasteResponse(
+        object_uuid=result.object_uuid,
+        session_id=result.session_id,
+        object_id=result.object_id,
+        source_average_depth=result.source_average_depth,
+        target_depth=result.target_depth,
+        scale_factor=result.scale_factor,
+        display_scale=result.display_scale,
         cutout_bounds=cutout_bounds,
     )
 
@@ -989,6 +1090,7 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
                     has_3d=has_3d,
                     offset_x=meta.offset_x if meta is not None else 0.0,
                     offset_y=meta.offset_y if meta is not None else 0.0,
+                    display_scale=meta.display_scale if meta is not None else 1.0,
                 )
             )
         except FileNotFoundError as exc:

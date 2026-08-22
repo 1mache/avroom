@@ -101,6 +101,14 @@ class ObjectMetadata(BaseModel):
         float,
         Field(default=0.0, description="Persisted drag offset Y from center, natural-image pixels."),
     ]
+    display_scale: Annotated[
+        float,
+        Field(
+            default=1.0,
+            gt=0.0,
+            description="Cumulative UI display scale; cutout PNG stays at original resolution.",
+        ),
+    ]
 
 
 class ObjectIndexEntry(BaseModel):
@@ -238,6 +246,28 @@ def set_object_average_depth(base_dir: Path, object_uuid: str, average_depth: fl
     return updated
 
 
+def set_object_rescale_state(
+    base_dir: Path,
+    object_uuid: str,
+    *,
+    average_depth: float,
+    display_scale: float,
+) -> ObjectMetadata:
+    """Persist depth and cumulative UI scale after a smart-paste / rescale call."""
+    updated = _update_object_fields(
+        base_dir,
+        object_uuid,
+        {"average_depth": average_depth, "display_scale": display_scale},
+    )
+    logger.info(
+        "Updated object rescale state: uuid=%s average_depth=%.2f display_scale=%.4f",
+        object_uuid,
+        average_depth,
+        display_scale,
+    )
+    return updated
+
+
 def delete_session_metadata(base_dir: Path, session_id: str, object_ids: list[int]) -> int:
     """Remove metadata JSON files and prune UUID index entries for a session."""
     index = _load_object_index()
@@ -282,6 +312,7 @@ def create_object_metadata(
     clone_index: int | None = None,
     offset_x: float = 0.0,
     offset_y: float = 0.0,
+    display_scale: float = 1.0,
 ) -> ObjectMetadata:
     """Build a new metadata record with a fresh UUID and timestamp."""
     return ObjectMetadata(
@@ -298,6 +329,7 @@ def create_object_metadata(
         clone_index=clone_index,
         offset_x=offset_x,
         offset_y=offset_y,
+        display_scale=display_scale,
     )
 
 
@@ -429,6 +461,7 @@ def build_clone_metadata(
         clone_index=clone_index,
         offset_x=offset_x,
         offset_y=offset_y,
+        display_scale=source.display_scale,
     )
 
 

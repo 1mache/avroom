@@ -200,8 +200,8 @@ def test_stale_cache_after_cutout_rewrite_resynthesizes(
         _post_novel_view(client, azimuth_deg=40.0)
         assert len(fake_client.calls) == 1
 
-        # Simulate rescale-by-depth rewriting the cutout in place, strictly
-        # after the cached rotation was written.
+        # Simulate a cutout rewrite in place, strictly after the cached rotation
+        # was written (e.g. a future pipeline that mutates the PNG).
         time.sleep(0.05)
         cutout_path = storage_sandbox / "sess-1_0_cutout.png"
         cutout_path.write_bytes(cutout_path.read_bytes())

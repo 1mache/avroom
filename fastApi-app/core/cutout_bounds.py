@@ -53,3 +53,17 @@ def extract_cutout_bounds_from_png_bytes(image_bytes: bytes) -> CutoutBounds | N
         natural_width=width,
         natural_height=height,
     )
+
+
+def scale_cutout_bounds(bounds: CutoutBounds, scale_factor: float) -> CutoutBounds:
+    """Grow or shrink *bounds* about its center by *scale_factor*."""
+    grow_x = ((bounds.right - bounds.left) * (scale_factor - 1.0)) / 2.0
+    grow_y = ((bounds.bottom - bounds.top) * (scale_factor - 1.0)) / 2.0
+    return CutoutBounds(
+        left=int(round(bounds.left - grow_x)),
+        top=int(round(bounds.top - grow_y)),
+        right=int(round(bounds.right + grow_x)),
+        bottom=int(round(bounds.bottom + grow_y)),
+        natural_width=bounds.natural_width,
+        natural_height=bounds.natural_height,
+    )

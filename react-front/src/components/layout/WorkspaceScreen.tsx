@@ -10,6 +10,7 @@ import {
   saveSessionPreview,
   setObjectOffset,
   setSessionName as saveSessionName,
+  warmSessionMaps,
 } from "../../api/images";
 import { useConflictNotices, type ConflictContext } from "../../hooks/useConflictNotices";
 import { useSessionJobs, type JobErrorContext } from "../../hooks/useSessionJobs";
@@ -18,6 +19,7 @@ import type { VerifyMode } from "../../types/api";
 import {
   effectiveCutoutBounds,
   effectiveCutoutSrc,
+  effectiveDisplayBounds,
   type ClickPosition,
   type CutoutObject,
 } from "../../types/session";
@@ -29,8 +31,10 @@ import {
   compositePreviewOntoCanvas,
   getBoundsStageRect,
   getContainedImageRect,
+  getObjectPlacementCenter,
   inflateAroundCenter,
   inflateBounds,
+  mapPointThroughInverseScale,
   toNaturalPoint,
   type Rect,
   type Size,
@@ -62,6 +66,7 @@ interface HitCanvasEntry {
   // src in place without changing its objectId, so the cache must invalidate
   // on src change, not just track which ids exist.
   src: string;
+  displayScale: number;
 }
 
 const errorMessage = (error: unknown, fallback: string): string =>
@@ -96,6 +101,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const imageId = uid;
   const [sessionName, setSessionName] = useState("");
   const [originalSrc, setOriginalSrc] = useState<string | null>(null);
+  const [mapsWarming, setMapsWarming] = useState(true);
+  const mapsWarmGenerationRef = useRef(0);
 
   const [naturalSize, setNaturalSize] = useState<Size | null>(null);
   const [stageSize, setStageSize] = useState<Size | null>(null);
@@ -121,6 +128,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const [showOriginalIds, setShowOriginalIds] = useState<ReadonlySet<number>>(new Set());
 
   const [smartPaste, setSmartPaste] = useState(false);
+  const smartPasteRef = useRef(false);
+  const [isSmartPasting, setIsSmartPasting] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Object id awaiting delete confirmation. Deletion is permanent (the
@@ -183,11 +192,38 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     [showOriginalIds],
   );
 
+  // --- session map warm ----------------------------------------------------
+
+  const startMapsWarm = useCallback(() => {
+    const generation = ++mapsWarmGenerationRef.current;
+    setMapsWarming(true);
+    void warmSessionMaps(uid)
+      .catch((err: unknown) => {
+        console.warn("Session map warm failed (non-fatal); first cut may be slower.", err);
+      })
+      .finally(() => {
+        if (mapsWarmGenerationRef.current === generation) {
+          setMapsWarming(false);
+        }
+      });
+  }, [uid]);
+
+  const handleToggleSmartPaste = useCallback(() => {
+    setSmartPaste((on) => {
+      const next = !on;
+      if (next) {
+        startMapsWarm();
+      }
+      return next;
+    });
+  }, [startMapsWarm]);
+
   // --- session load -------------------------------------------------------
 
   useEffect(() => {
     let cancelled = false;
     setOriginalSrc(`${API_BASE_URL}/images/${uid}/original`);
+    startMapsWarm();
 
     const load = async () => {
       try {
@@ -225,11 +261,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     };
     // Runs once per session: App remounts this screen when uid changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uid]);
+  }, [uid, startMapsWarm]);
 
   // --- dashboard thumbnail -------------------------------------------------
-
-  // Re-composites the canvas after edits settle and stores it as the session's
   // dashboard preview. Detached and failure-swallowing: a missing thumbnail is
   // never worth interrupting an edit for. No-ops until the preview endpoints
   // exist (see PREVIEW_API_READY in api/images.ts).
@@ -253,6 +287,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   }, [jobs.backgroundSrc, originalSrc, jobs.objects, naturalSize, showOriginalIds]);
 
   useEffect(() => {
+    smartPasteRef.current = smartPaste;
+  }, [smartPaste]);
+
+  useEffect(() => {
     capturePreviewRef.current = () => {
       if (!PREVIEW_API_READY) {
         return;
@@ -274,6 +312,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           .map((obj) => ({
             src: effectiveCutoutSrc(obj, shown.has(obj.objectId)),
             offset: obj.offset,
+            displayScale: obj.displayScale,
+            bounds: effectiveCutoutBounds(obj, shown.has(obj.objectId)),
           }));
 
         const composed = await composeSessionPreview(backgroundSrc, layers, size);
@@ -361,7 +401,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     jobs.objects.forEach((obj) => {
       const src = effectiveCutoutSrc(obj, isShowingOriginal(obj));
       const existing = hitCanvasesRef.current.get(obj.objectId);
-      if (existing && existing.src === src) {
+      if (existing && existing.src === src && existing.displayScale === obj.displayScale) {
         return;
       }
 
@@ -380,6 +420,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           width: img.naturalWidth,
           height: img.naturalHeight,
           src,
+          displayScale: obj.displayScale,
         });
       };
       img.src = src;
@@ -726,8 +767,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       for (const obj of hitOrder) {
         const localObjX = natural.x - obj.offset.x;
         const localObjY = natural.y - obj.offset.y;
+        const showOriginal = isShowingOriginal(obj);
+        const baseBounds = effectiveCutoutBounds(obj, showOriginal);
+        const bounds = effectiveDisplayBounds(obj, showOriginal);
 
-        const bounds = effectiveCutoutBounds(obj, isShowingOriginal(obj));
         if (
           bounds &&
           (localObjX < bounds.left ||
@@ -738,7 +781,18 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           continue;
         }
 
-        if (sampleObjectAlpha(obj.objectId, localObjX, localObjY) <= ALPHA_HIT_THRESHOLD) {
+        const samplePoint =
+          baseBounds && obj.displayScale !== 1
+            ? mapPointThroughInverseScale(
+                { x: localObjX, y: localObjY },
+                baseBounds,
+                obj.displayScale,
+              )
+            : { x: localObjX, y: localObjY };
+
+        if (
+          sampleObjectAlpha(obj.objectId, samplePoint.x, samplePoint.y) <= ALPHA_HIT_THRESHOLD
+        ) {
           continue;
         }
 
@@ -840,7 +894,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
       const target = jobs.objects.find((o) => o.objectId === dragState.objectId);
       const bounds = target
-        ? effectiveCutoutBounds(target, showOriginalIds.has(target.objectId))
+        ? effectiveDisplayBounds(target, showOriginalIds.has(target.objectId))
         : null;
 
       // Mouse delta arrives in screen pixels; convert back to natural-image
@@ -883,6 +937,28 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             console.warn("setObjectOffset failed; position won't survive reload.", err);
           },
         );
+
+        if (smartPasteRef.current) {
+          const size = previewInputsRef.current.naturalSize;
+          if (size) {
+            const bounds = effectiveDisplayBounds(
+              dragged,
+              previewInputsRef.current.showOriginalIds.has(dragged.objectId),
+            );
+            const placement = getObjectPlacementCenter(bounds, dragged.offset, size);
+            setIsSmartPasting(true);
+            void jobs
+              .runSmartPasteAfterDrag(draggedObjectId, placement.x, placement.y)
+              .then((applied) => {
+                if (applied) {
+                  capturePreviewRef.current();
+                }
+              })
+              .finally(() => {
+                setIsSmartPasting(false);
+              });
+          }
+        }
       }
     };
 
@@ -913,16 +989,31 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     (obj) => !(rotateMode && obj.objectId === jobs.selectedObjectId),
   );
 
-  const cutoutStyle = (obj: { offset: ClickPosition }, zIndex: number): React.CSSProperties | undefined =>
-    naturalSize && renderedRect
-      ? {
-          left: `${renderedRect.x + obj.offset.x * (renderedRect.width / naturalSize.width)}px`,
-          top: `${renderedRect.y + obj.offset.y * (renderedRect.height / naturalSize.height)}px`,
-          width: `${renderedRect.width}px`,
-          height: `${renderedRect.height}px`,
-          zIndex,
-        }
-      : undefined;
+  const cutoutStyle = (
+    obj: CutoutObject,
+    showOriginal: boolean,
+    zIndex: number,
+  ): React.CSSProperties | undefined => {
+    if (!naturalSize || !renderedRect) {
+      return undefined;
+    }
+
+    const baseBounds = effectiveCutoutBounds(obj, showOriginal);
+    const transformOrigin =
+      baseBounds && naturalSize.width > 0 && naturalSize.height > 0
+        ? `${(((baseBounds.left + baseBounds.right) / 2 / naturalSize.width) * 100).toFixed(4)}% ${(((baseBounds.top + baseBounds.bottom) / 2 / naturalSize.height) * 100).toFixed(4)}%`
+        : "50% 50%";
+
+    return {
+      left: `${renderedRect.x + obj.offset.x * (renderedRect.width / naturalSize.width)}px`,
+      top: `${renderedRect.y + obj.offset.y * (renderedRect.height / naturalSize.height)}px`,
+      width: `${renderedRect.width}px`,
+      height: `${renderedRect.height}px`,
+      zIndex,
+      transform: obj.displayScale !== 1 ? `scale(${obj.displayScale})` : undefined,
+      transformOrigin,
+    };
+  };
 
   const rectStyle = (rect: {
     left: number;
@@ -943,7 +1034,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const selectedRect =
     naturalSize && renderedRect && selectedObject
       ? getBoundsStageRect(
-          effectiveCutoutBounds(selectedObject, isShowingOriginal(selectedObject)),
+          effectiveDisplayBounds(selectedObject, isShowingOriginal(selectedObject)),
           selectedObject.offset,
           renderedRect,
           naturalSize,
@@ -964,6 +1055,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
   const status = jobs.isBatching
     ? "batch cutting"
+    : isSmartPasting
+      ? "smart pasting"
     : jobs.isSegmenting
     ? "finding masks"
     : jobs.pendingJobs.length > 0
@@ -974,7 +1067,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           ? "copying"
           : jobs.isDeleting
             ? "deleting"
-            : null;
+            : mapsWarming
+              ? "preparing maps"
+              : null;
 
   return (
     <div className="workspace">
@@ -997,7 +1092,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         isDuplicating={jobs.isDuplicating}
         onCopy={handleCopy}
         smartPaste={smartPaste}
-        onToggleSmartPaste={() => setSmartPaste((on) => !on)}
+        onToggleSmartPaste={handleToggleSmartPaste}
         isDeleting={jobs.isDeleting}
         onDeleteObject={handleDeleteObject}
         status={status}
@@ -1033,6 +1128,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                 className="stage-cutout"
                 style={cutoutStyle(
                   obj,
+                  isShowingOriginal(obj),
                   obj.objectId === jobs.selectedObjectId ? stageObjects.length + 2 : index + 2,
                 )}
                 draggable={false}
@@ -1081,9 +1177,22 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           </>
         ) : (
           <div className="stage-message">
+            {mapsWarming ? <span className="stage-warm-spinner tool-spinner" aria-hidden="true" /> : null}
             <p className="stage-message-line">Opening the session</p>
           </div>
         )}
+
+        {mapsWarming && photoSrc ? (
+          <div
+            className="stage-warm-overlay"
+            aria-live="polite"
+            aria-busy="true"
+            aria-label="Preparing depth and normal maps"
+          >
+            <span className="stage-warm-spinner tool-spinner" aria-hidden="true" />
+            <p className="stage-message-line">Preparing depth maps</p>
+          </div>
+        ) : null}
 
         {rotateMode ? (
           <p className="stage-hint">Drag to orbit · Enter applies · Esc cancels</p>

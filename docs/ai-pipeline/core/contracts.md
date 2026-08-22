@@ -32,7 +32,7 @@ Backend encodes both as PNG for HTTP responses.
 
 | Position | Tensor | Channels | Role |
 |----------|--------|----------|------|
-| `[i][0]` | `refined_mask` | 1 (uint8 0/255) | Routing-expanded mask after 3 px uniform dilation; ready for inpainting |
+| `[i][0]` | `refined_mask` | 1 (uint8 0/255) | Routing-expanded mask after 3 px uniform dilation; ready for inpainting (verifier may dilate further on retry) |
 | `[i][1]` | `cutout_bgra` | 4 (BGRA) | Original pixels inside the raw SAM mask; alpha 0 outside |
 
 Typically 3 pairs (SAM's three multimask candidates). Inpainting is not performed.

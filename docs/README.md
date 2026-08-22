@@ -2,12 +2,13 @@
 
 Welcome to the Avroom architecture documentation. These docs describe the **current state** of the project as found in the code (not aspirational design).
 
-> Last refresh: 2026-08-15
+> Last refresh: 2026-08-22
 
 What changed in this refresh:
 
-- Documented `POST /debug/auto-mask-pick` and `POST /debug/inpaint-verify` (click-seeded CLIP mask ranking and hybrid inpaint retry traces) plus matching DebugScreen panels.
-- Noted `CutoutSelectionResult.reasons` and `InpaintingVerificationResult` CLIP `scores`/`winner_label`, plus optional `verify_trace` on hybrid inpaint.
+- Depth rescale / smart-paste are UI-only: server persists `display_scale` + `average_depth`; cutout PNG stays pristine.
+- Updated rescale/smart-paste API responses (no `cutout_b64`; added `display_scale`).
+- Frontend renders objects at `displayScale` via CSS transform; session restore reads `display_scale` from `ObjectInfo`.
 
 If you change architecture, run the `update-docs` skill (see [`CLAUDE.md`](../CLAUDE.md) for how skills are invoked in this repo) to keep these files in sync with the code.
 

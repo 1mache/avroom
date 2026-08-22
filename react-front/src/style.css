@@ -140,6 +140,9 @@ input {
 }
 
 .toolbar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-family: var(--mono);
   font-size: 10.5px;
   letter-spacing: 0.13em;
@@ -484,6 +487,27 @@ input {
   letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--ink-dim);
+}
+
+.stage-warm-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 330;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  pointer-events: none;
+  background: rgba(8, 8, 8, 0.42);
+}
+
+.stage-warm-spinner {
+  width: 28px;
+  height: 28px;
+  border-width: 2px;
 }
 
 /* ── Conflict notices ────────────────────────────────────────────────────── */

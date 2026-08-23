@@ -96,14 +96,16 @@ the screenshots are the "proof".
   their error types, all exported side by side. This is the visual "menu of backends".
 - Caption: "Pick a backend = one constructor arg. Built-in automatic fallback."
 
-### SLIDE 5c — A concrete backend: Trellis 2 over a HF Space (screenshot)
+### SLIDE 5c — A concrete backend: Hunyuan3D-2.1 over a HF Space (screenshot)
 
-- File: `TestModules/src/ai_engines/reconstruction_3d/strategies/trellis_reconstruction_strategy.py`
-- Screenshot the `_call_space` method, lines **154–241**: two-step Space API
-  (`/image_to_3d` → `/extract_glb`), lazy client, error wrapping.
-- Optional second crop: `reconstruction_quality.py` **PRESETS** table (lines 46–65) — FAST /
-  BALANCED / HIGH map to resolution + sampling steps + decimation + texture size.
-- Caption: "Local backends (TripoSR/OpenLRM) and remote (Trellis Space) behind the same ABC."
+- File: `TestModules/src/ai_engines/reconstruction_3d/strategies/hunyuan3d2_reconstruction_strategy.py`
+- Screenshot the `_generate_with_fallback` method, lines **258–358**: two-step Space API
+  (`/generation_all` → `/shape_generation`), lazy client (`_client` property, lines 172–189),
+  error wrapping (`Hunyuan3D2GenerationError`).
+- Optional second crop: `_prepare_cutout_for_hunyuan`, lines **55–128** — alpha-threshold +
+  tight-crop cleanup that stops the model rendering a warped floor under the object.
+- Caption: "Local backends (TripoSR/OpenLRM) and remote (Hunyuan3D-2.1 Space, current default)
+  behind the same ABC."
 
 ### SLIDE 6 — Backend endpoint wiring (screenshot)
 

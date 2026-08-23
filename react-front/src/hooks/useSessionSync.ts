@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { API_BASE_URL, getSessionObjects, getUidCacheStatus, syncCheckSession } from "../api/images";
 import { toCutoutAlphaBounds } from "./useSessionJobs";
+import type { JobInfo } from "../types/api";
 import type { CutoutObject } from "../types/session";
 
 const POLL_INTERVAL_MS = 2000;
@@ -15,6 +16,9 @@ interface UseSessionSyncOptions {
   selectedObjectId: number | null;
   setSelectedObjectId: React.Dispatch<React.SetStateAction<number | null>>;
   setBackgroundSrc: React.Dispatch<React.SetStateAction<string | null>>;
+  /** Fed straight from every sync-check response — server truth, no local
+   * fields to preserve, so this is a plain replace unlike `objects`. */
+  setJobs: React.Dispatch<React.SetStateAction<JobInfo[]>>;
   /** Objects the user deleted client-side; the server still returns them. */
   isDeleted: (objectId: number) => boolean;
 }
@@ -32,6 +36,7 @@ export function useSessionSync(options: UseSessionSyncOptions) {
     setObjects,
     setSelectedObjectId,
     setBackgroundSrc,
+    setJobs,
     isDeleted,
   } = options;
 
@@ -137,13 +142,19 @@ export function useSessionSync(options: UseSessionSyncOptions) {
     try {
       const result = await syncCheckSession(uid, lastChangedRef.current);
       setLastChanged(result.last_changed);
+      // Jobs are applied unconditionally, not gated on needs_refresh: a job
+      // moving queued -> running -> done doesn't bump the session's
+      // last_changed (only object/session mutations do), so needs_refresh
+      // can stay false across an entire job's lifecycle. Plain replace is
+      // safe since JobInfo carries no local-only fields to preserve.
+      setJobs(result.jobs);
       if (result.needs_refresh) {
         await reconcile(uid, result.last_changed);
       }
     } catch {
       // Non-fatal — sync-check failures don't interrupt the session.
     }
-  }, [reconcile, setLastChanged]);
+  }, [reconcile, setLastChanged, setJobs]);
 
   // Poll while there's in-flight work — another client/tab could commit in
   // the meantime. Idle sessions never poll.

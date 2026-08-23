@@ -2,7 +2,7 @@
 
 ## Lazy loading
 
-Heavy stacks (HF depth pipelines, SAM predictor, LaMa, SD pipe, Trellis client) are created behind module-level **`functools.lru_cache`** factories keyed by model identity where needed. Plain facade/strategy instances do **not** cache GPU tensors themselves.
+Heavy stacks (HF depth pipelines, SAM predictor, LaMa, SD pipe) are created behind module-level **`functools.lru_cache`** factories keyed by model identity where needed. Plain facade/strategy instances do **not** cache GPU tensors themselves. The Hunyuan3D-2.1 `gradio_client.Client` is instead created lazily on first `generate()` call and cached on the strategy instance (see [reconstruction-3d/operations.md](../reconstruction-3d/operations.md)).
 
 ## Boundaries
 

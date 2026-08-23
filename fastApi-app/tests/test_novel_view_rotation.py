@@ -91,7 +91,10 @@ def storage_sandbox(monkeypatch: pytest.MonkeyPatch) -> Path:
     images_dir.mkdir(parents=True, exist_ok=True)
     glb_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(settings, "IMAGE_STORAGE_DIR", str(images_dir))
-    monkeypatch.setattr("api.novel_view.get_3d_storage_dir", lambda: glb_dir)
+    # The GLB cache-or-generate helper lives in core/object_3d.py (shared with
+    # core/jobs/handlers.py's generate_3d job), not api/novel_view.py anymore
+    # -- patch its own get_3d_storage_dir reference.
+    monkeypatch.setattr("core.object_3d.get_3d_storage_dir", lambda: glb_dir)
     assert settings.get_image_storage_dir() == images_dir
 
     cutout = np.zeros((4, 4, 4), dtype=np.uint8)
@@ -116,6 +119,10 @@ def glb_dir(storage_sandbox: Path) -> Path:
 def fake_client(monkeypatch: pytest.MonkeyPatch) -> _FakeInferenceClient:
     client = _FakeInferenceClient()
     monkeypatch.setattr("api.novel_view.get_inference_client", lambda: client)
+    # run_generate_3d on a cache miss goes through core/object_3d.py's own
+    # get_inference_client reference (shared with core/jobs/handlers.py's
+    # generate_3d job), not api.novel_view's -- patch that one too.
+    monkeypatch.setattr("core.object_3d.get_inference_client", lambda: client)
     return client
 
 

@@ -556,9 +556,8 @@ def _compute_depth_rescale(
         result.scale_factor,
     )
 
-
 def _load_object_metadata_for_rescale(base_dir: Path, object_uuid: str) -> ObjectMetadata:
-    metadata = get_object_by_uuid(base_dir, object_uuid)
+    metadata = get_object_by_uuid(object_uuid)
     if metadata is None:
         raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
 
@@ -584,14 +583,12 @@ def _compute_session_depth_map(base_dir: Path, session_id: str) -> np.ndarray:
 
 
 def _persist_rescale_metadata(
-    base_dir: Path,
     object_uuid: str,
     *,
     target_depth: float,
     display_scale: float,
 ) -> None:
     set_object_rescale_state(
-        base_dir,
         object_uuid,
         average_depth=target_depth,
         display_scale=display_scale,
@@ -639,7 +636,6 @@ def rescale_cutout_by_depth(
     )
 
     _persist_rescale_metadata(
-        base_dir,
         object_uuid,
         target_depth=target_depth,
         display_scale=display_scale,

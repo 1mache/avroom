@@ -38,11 +38,33 @@ def _logs_dir() -> Path:
     return Path(__file__).resolve().parent / "logs"
 
 
+def _resolve_log_dir() -> Path | None:
+    """Resolve the log-file directory from `LOG_DIR`, or `None` to disable file logging.
+
+    `LOG_DIR` unset -> the historical `fastApi-app/logs/` default (unchanged
+    local behavior). `LOG_DIR=disabled` -> no file handler at all, since a
+    container's stdout already goes to CloudWatch and a rotating file on an
+    ephemeral filesystem is pure waste. Any other value is used as-is
+    (relative paths resolve against this file's directory).
+    """
+    raw = os.environ.get("LOG_DIR")
+    if raw is None:
+        return _logs_dir()
+    if raw.strip().lower() == "disabled":
+        return None
+
+    configured = Path(raw.strip()).expanduser()
+    if not configured.is_absolute():
+        configured = Path(__file__).resolve().parent / configured
+    return configured
+
+
 def setup_logging(level: str | None = None) -> None:
-    """Configure root + uvicorn loggers with shared stdout and rotating file handlers.
+    """Configure root + uvicorn loggers with shared stdout and (optionally) rotating file handlers.
 
     The level is resolved from the `level` argument, falling back to the
-    `LOG_LEVEL` environment variable, then to `INFO`.
+    `LOG_LEVEL` environment variable, then to `INFO`. The file handler is
+    skipped entirely when `LOG_DIR=disabled` (see `_resolve_log_dir`).
 
     Idempotent: existing handlers on the root and uvicorn loggers are removed
     before new ones are attached, so reloads (e.g. `uvicorn --reload`) do not
@@ -52,32 +74,34 @@ def setup_logging(level: str | None = None) -> None:
     resolved_level: str = (level or os.environ.get("LOG_LEVEL") or _DEFAULT_LEVEL).upper()
     numeric_level: int = logging.getLevelNamesMapping().get(resolved_level, logging.INFO)
 
-    logs_dir: Path = _logs_dir()
-    logs_dir.mkdir(parents=True, exist_ok=True)
-    log_file_path: Path = logs_dir / "app.log"
-
     formatter = logging.Formatter(fmt=_LOG_FORMAT, datefmt=_DATE_FORMAT)
 
     stream_handler = logging.StreamHandler(stream=sys.stdout)
     stream_handler.setFormatter(formatter)
     stream_handler.setLevel(numeric_level)
 
-    file_handler = RotatingFileHandler(
-        filename=log_file_path,
-        maxBytes=_LOG_FILE_MAX_BYTES,
-        backupCount=_LOG_FILE_BACKUP_COUNT,
-        encoding="utf-8",
-    )
-    file_handler.setFormatter(formatter)
-    file_handler.setLevel(numeric_level)
+    handlers: list[logging.Handler] = [stream_handler]
+
+    logs_dir = _resolve_log_dir()
+    if logs_dir is not None:
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(
+            filename=logs_dir / "app.log",
+            maxBytes=_LOG_FILE_MAX_BYTES,
+            backupCount=_LOG_FILE_BACKUP_COUNT,
+            encoding="utf-8",
+        )
+        file_handler.setFormatter(formatter)
+        file_handler.setLevel(numeric_level)
+        handlers.append(file_handler)
 
     root_logger = logging.getLogger()
     for handler in list(root_logger.handlers):
         root_logger.removeHandler(handler)
         handler.close()
     root_logger.setLevel(numeric_level)
-    root_logger.addHandler(stream_handler)
-    root_logger.addHandler(file_handler)
+    for handler in handlers:
+        root_logger.addHandler(handler)
 
     # Route uvicorn's own loggers through the same handlers so HTTP and app
     # logs share one format. `propagate=False` prevents the root logger from
@@ -88,8 +112,8 @@ def setup_logging(level: str | None = None) -> None:
             uv_logger.removeHandler(handler)
             handler.close()
         uv_logger.setLevel(_CLAMPED_LOGGERS.get(name, numeric_level))
-        uv_logger.addHandler(stream_handler)
-        uv_logger.addHandler(file_handler)
+        for handler in handlers:
+            uv_logger.addHandler(handler)
         uv_logger.propagate = False
 
     # Apply level clamps to any remaining noisy third-party loggers.

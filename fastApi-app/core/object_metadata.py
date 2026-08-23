@@ -1,25 +1,25 @@
 from __future__ import annotations
 
-"""Filesystem-backed metadata for finalized session objects.
+"""Postgres-backed metadata for finalized session objects.
 
 Each processed object receives a UUID at inpaint time alongside the existing
-sequential ``object_id``.  Metadata is stored per object as JSON and indexed
-globally by UUID for O(1) lookup.
+sequential ``object_id``. Metadata (and the UUID -> (session, object) index)
+now lives in the `objects` table (`db/models.py::ObjectRow`) instead of a
+per-object JSON file plus a separate global index file.
 """
 
-import json
 import logging
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
 
-from core.object_storage import list_object_ids, object_meta_path
+from db.models import ObjectRow
+from db.session import session_scope
 from schemas.image import CutoutBounds, DEFAULT_SOURCE_ELEVATION_DEG
-from settings import get_image_storage_dir
 
 logger = logging.getLogger(__name__)
 
@@ -111,53 +111,55 @@ class ObjectMetadata(BaseModel):
     ]
 
 
-class ObjectIndexEntry(BaseModel):
-    """Lightweight pointer from UUID to session-local object id."""
-
-    session_id: str
-    object_id: int
-
-
-def get_object_index_file() -> Path:
-    """Return path to the global UUID index (sibling of sessions.json)."""
-    return get_image_storage_dir().parent / "object_index.json"
-
-
-def _load_object_index() -> dict[str, ObjectIndexEntry]:
-    index_path = get_object_index_file()
-    if not index_path.exists():
-        return {}
-    try:
-        raw = json.loads(index_path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict):
-            return {}
-        return {
-            str(key): ObjectIndexEntry.model_validate(value)
-            for key, value in raw.items()
-        }
-    except (json.JSONDecodeError, ValueError):
-        logger.warning("Malformed object index at %s — treating as empty", index_path)
-        return {}
-
-
-def _save_object_index(index: dict[str, ObjectIndexEntry]) -> None:
-    index_path = get_object_index_file()
-    index_path.parent.mkdir(parents=True, exist_ok=True)
-    serializable = {key: entry.model_dump() for key, entry in index.items()}
-    index_path.write_text(json.dumps(serializable, indent=2), encoding="utf-8")
-
-
-def save_object_metadata(base_dir: Path, metadata: ObjectMetadata) -> None:
-    """Persist object metadata JSON and register the UUID in the global index."""
-    path = object_meta_path(base_dir, metadata.session_id, metadata.object_id)
-    path.write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
-
-    index = _load_object_index()
-    index[metadata.uuid] = ObjectIndexEntry(
-        session_id=metadata.session_id,
-        object_id=metadata.object_id,
+def _row_to_metadata(row: ObjectRow) -> ObjectMetadata:
+    return ObjectMetadata(
+        uuid=row.uuid,
+        session_id=row.session_id,
+        object_id=row.object_id,
+        name=row.name,
+        average_depth=row.average_depth,
+        source_elevation_deg=row.source_elevation_deg,
+        content_hash=row.content_hash,
+        created_at=row.created_at.isoformat(),
+        clone_root_uuid=row.clone_root_uuid,
+        clone_root_label=row.clone_root_label,
+        clone_index=row.clone_index,
+        offset_x=row.offset_x,
+        offset_y=row.offset_y,
+        display_scale=row.display_scale,
     )
-    _save_object_index(index)
+
+
+def save_object_metadata(metadata: ObjectMetadata) -> None:
+    """Persist a new object metadata row.
+
+    Ensures the owning session row exists first (auto-provisioning it under
+    the local dev user if not) so this matches the old JSON-sidecar
+    behavior, where object metadata and session registration were fully
+    decoupled files.
+    """
+    from core.repositories.session_repo import register_uid
+
+    register_uid(metadata.session_id)
+    with session_scope() as db:
+        db.add(
+            ObjectRow(
+                uuid=metadata.uuid,
+                session_id=metadata.session_id,
+                object_id=metadata.object_id,
+                name=metadata.name,
+                average_depth=metadata.average_depth,
+                source_elevation_deg=metadata.source_elevation_deg,
+                content_hash=metadata.content_hash,
+                created_at=datetime.fromisoformat(metadata.created_at),
+                clone_root_uuid=metadata.clone_root_uuid,
+                clone_root_label=metadata.clone_root_label,
+                clone_index=metadata.clone_index,
+                offset_x=metadata.offset_x,
+                offset_y=metadata.offset_y,
+                display_scale=metadata.display_scale,
+            )
+        )
     logger.info(
         "Saved object metadata: uuid=%s session_id=%s object_id=%d average_depth=%.2f source_elevation=%.2f",
         metadata.uuid,
@@ -168,64 +170,77 @@ def save_object_metadata(base_dir: Path, metadata: ObjectMetadata) -> None:
     )
 
 
-def load_object_metadata(base_dir: Path, session_id: str, object_id: int) -> ObjectMetadata | None:
+def load_object_metadata(session_id: str, object_id: int) -> ObjectMetadata | None:
     """Load metadata for one session object, or ``None`` if absent."""
-    path = object_meta_path(base_dir, session_id, object_id)
-    if not path.exists():
-        return None
-    try:
-        return ObjectMetadata.model_validate_json(path.read_text(encoding="utf-8"))
-    except ValueError:
-        logger.warning("Malformed metadata file: %s", path)
-        return None
+    with session_scope() as db:
+        row = db.execute(
+            select(ObjectRow).where(
+                ObjectRow.session_id == session_id, ObjectRow.object_id == object_id
+            )
+        ).scalar_one_or_none()
+        return _row_to_metadata(row) if row is not None else None
 
 
-def get_object_by_uuid(base_dir: Path, object_uuid: str) -> ObjectMetadata | None:
-    """Resolve metadata by UUID using the global index."""
-    index = _load_object_index()
-    entry = index.get(object_uuid)
-    if entry is None:
-        return None
-    return load_object_metadata(base_dir, entry.session_id, entry.object_id)
+def get_object_by_uuid(object_uuid: str) -> ObjectMetadata | None:
+    """Resolve metadata by UUID."""
+    with session_scope() as db:
+        row = db.get(ObjectRow, object_uuid)
+        return _row_to_metadata(row) if row is not None else None
 
 
-def _update_object_fields(
-    base_dir: Path,
-    object_uuid: str,
-    updates: dict[str, Any],
-) -> ObjectMetadata:
-    """Rewrite one object's metadata JSON with *updates* applied.
+def list_object_ids(session_id: str) -> list[int]:
+    """Return sorted list of object ids for *session_id*."""
+    with session_scope() as db:
+        rows = db.execute(
+            select(ObjectRow.object_id)
+            .where(ObjectRow.session_id == session_id)
+            .order_by(ObjectRow.object_id)
+        ).scalars().all()
+        return list(rows)
 
-    The UUID index is left alone on purpose: only ``session_id`` /
-    ``object_id`` are indexed and neither is updatable here.
+
+def next_object_id(session_id: str) -> int:
+    """Return the next available object id for *session_id* (``0`` if none exist).
+
+    Relies on the canvas-writer lock (``core/inference_pool/session_runtime.py``)
+    already serializing inpaint/duplicate per session on a single instance —
+    see ``docs/backend/concurrency.md`` — rather than a row lock here.
+    """
+    with session_scope() as db:
+        highest = db.execute(
+            select(func.max(ObjectRow.object_id)).where(ObjectRow.session_id == session_id)
+        ).scalar_one()
+        return 0 if highest is None else highest + 1
+
+
+def _update_object_fields(object_uuid: str, updates: dict[str, Any]) -> ObjectMetadata:
+    """Apply *updates* to one object's row and return the resulting metadata.
 
     Raises:
-        FileNotFoundError: When no metadata record exists for *object_uuid*.
+        FileNotFoundError: When no metadata record exists for *object_uuid*
+            (kept as `FileNotFoundError` for compatibility with existing
+            callers that already catch it as "object not found").
     """
-    metadata = get_object_by_uuid(base_dir, object_uuid)
-    if metadata is None:
-        raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
+    with session_scope() as db:
+        row = db.get(ObjectRow, object_uuid)
+        if row is None:
+            raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
+        for key, value in updates.items():
+            setattr(row, key, value)
+        db.flush()
+        return _row_to_metadata(row)
 
-    updated = metadata.model_copy(update=updates)
-    path = object_meta_path(base_dir, updated.session_id, updated.object_id)
-    path.write_text(updated.model_dump_json(indent=2), encoding="utf-8")
-    return updated
 
-
-def set_object_name(base_dir: Path, object_uuid: str, name: str | None) -> ObjectMetadata:
+def set_object_name(object_uuid: str, name: str | None) -> ObjectMetadata:
     """Update the optional name on an existing object metadata record."""
-    updated = _update_object_fields(base_dir, object_uuid, {"name": name})
+    updated = _update_object_fields(object_uuid, {"name": name})
     logger.info("Updated object name: uuid=%s name=%r", object_uuid, name)
     return updated
 
 
-def set_object_offset(base_dir: Path, object_uuid: str, offset_x: float, offset_y: float) -> ObjectMetadata:
+def set_object_offset(object_uuid: str, offset_x: float, offset_y: float) -> ObjectMetadata:
     """Update the persisted drag offset on an existing object metadata record."""
-    updated = _update_object_fields(
-        base_dir,
-        object_uuid,
-        {"offset_x": offset_x, "offset_y": offset_y},
-    )
+    updated = _update_object_fields(object_uuid, {"offset_x": offset_x, "offset_y": offset_y})
     logger.info(
         "Updated object offset: uuid=%s offset_x=%.2f offset_y=%.2f",
         object_uuid,
@@ -235,9 +250,9 @@ def set_object_offset(base_dir: Path, object_uuid: str, offset_x: float, offset_
     return updated
 
 
-def set_object_average_depth(base_dir: Path, object_uuid: str, average_depth: float) -> ObjectMetadata:
+def set_object_average_depth(object_uuid: str, average_depth: float) -> ObjectMetadata:
     """Update ``average_depth`` after a depth-based rescale placement."""
-    updated = _update_object_fields(base_dir, object_uuid, {"average_depth": average_depth})
+    updated = _update_object_fields(object_uuid, {"average_depth": average_depth})
     logger.info(
         "Updated object average_depth: uuid=%s average_depth=%.2f",
         object_uuid,
@@ -247,7 +262,6 @@ def set_object_average_depth(base_dir: Path, object_uuid: str, average_depth: fl
 
 
 def set_object_rescale_state(
-    base_dir: Path,
     object_uuid: str,
     *,
     average_depth: float,
@@ -255,7 +269,6 @@ def set_object_rescale_state(
 ) -> ObjectMetadata:
     """Persist depth and cumulative UI scale after a smart-paste / rescale call."""
     updated = _update_object_fields(
-        base_dir,
         object_uuid,
         {"average_depth": average_depth, "display_scale": display_scale},
     )
@@ -268,35 +281,31 @@ def set_object_rescale_state(
     return updated
 
 
-def delete_session_metadata(base_dir: Path, session_id: str, object_ids: list[int]) -> int:
-    """Remove metadata JSON files and prune UUID index entries for a session."""
-    index = _load_object_index()
-    removed = 0
-    uuids_to_remove: list[str] = []
-
-    for object_id in object_ids:
-        meta = load_object_metadata(base_dir, session_id, object_id)
-        if meta is not None:
-            uuids_to_remove.append(meta.uuid)
-
-        path = object_meta_path(base_dir, session_id, object_id)
-        if path.exists():
-            path.unlink()
-            removed += 1
-
-    for object_uuid in uuids_to_remove:
-        index.pop(object_uuid, None)
-
-    if uuids_to_remove:
-        _save_object_index(index)
-
-    logger.debug(
-        "Deleted session metadata: session_id=%s files_removed=%d index_pruned=%d",
-        session_id,
-        removed,
-        len(uuids_to_remove),
-    )
+def delete_session_metadata(session_id: str, object_ids: list[int]) -> int:
+    """Delete metadata rows for the given object ids within one session."""
+    if not object_ids:
+        return 0
+    with session_scope() as db:
+        rows = db.execute(
+            select(ObjectRow).where(
+                ObjectRow.session_id == session_id, ObjectRow.object_id.in_(object_ids)
+            )
+        ).scalars().all()
+        removed = len(rows)
+        for row in rows:
+            db.delete(row)
+    logger.debug("Deleted session metadata: session_id=%s rows_removed=%d", session_id, removed)
     return removed
+
+
+def remove_object_index_entry(object_uuid: str) -> None:
+    """Delete one object's metadata row by UUID. No-op if already absent."""
+    with session_scope() as db:
+        row = db.get(ObjectRow, object_uuid)
+        if row is None:
+            return
+        db.delete(row)
+    logger.debug("Removed object metadata row: uuid=%s", object_uuid)
 
 
 def create_object_metadata(
@@ -314,7 +323,7 @@ def create_object_metadata(
     offset_y: float = 0.0,
     display_scale: float = 1.0,
 ) -> ObjectMetadata:
-    """Build a new metadata record with a fresh UUID and timestamp."""
+    """Build a new metadata record with a fresh UUID and timestamp (not persisted)."""
     return ObjectMetadata(
         uuid=str(uuid.uuid4()),
         session_id=session_id,
@@ -355,38 +364,38 @@ def format_clone_name(root_label: str, clone_index: int) -> str:
     return f"{root_label}-copy{clone_index}"
 
 
-def _iter_clones_of_root(base_dir: Path, session_id: str, root_uuid: str) -> Iterator[ObjectMetadata]:
+def _iter_clones_of_root(session_id: str, root_uuid: str) -> Iterator[ObjectMetadata]:
     """Yield metadata for every finalized object in the session cloned from *root_uuid*."""
+    with session_scope() as db:
+        rows = db.execute(
+            select(ObjectRow).where(
+                ObjectRow.session_id == session_id, ObjectRow.clone_root_uuid == root_uuid
+            )
+        ).scalars().all()
+        for row in rows:
+            yield _row_to_metadata(row)
 
-    for object_id in list_object_ids(base_dir, session_id):
-        meta = load_object_metadata(base_dir, session_id, object_id)
-        if meta is not None and meta.clone_root_uuid == root_uuid:
-            yield meta
 
-
-def _existing_clone_label(
-    base_dir: Path,
-    session_id: str,
-    root_uuid: str,
-) -> str | None:
+def _existing_clone_label(session_id: str, root_uuid: str) -> str | None:
     """Return the clone_root_label already used by clones of *root_uuid*, if any."""
 
-    for meta in _iter_clones_of_root(base_dir, session_id, root_uuid):
+    for meta in _iter_clones_of_root(session_id, root_uuid):
         if meta.clone_root_label is not None:
             return meta.clone_root_label
     return None
 
 
-def count_clones_of_root(base_dir: Path, session_id: str, root_uuid: str) -> int:
+def count_clones_of_root(session_id: str, root_uuid: str) -> int:
     """Return how many finalized objects in the session are clones of *root_uuid*."""
+    with session_scope() as db:
+        return db.execute(
+            select(func.count()).where(
+                ObjectRow.session_id == session_id, ObjectRow.clone_root_uuid == root_uuid
+            )
+        ).scalar_one()
 
-    return sum(1 for _ in _iter_clones_of_root(base_dir, session_id, root_uuid))
 
-
-def resolve_clone_lineage(
-    base_dir: Path,
-    source: ObjectMetadata,
-) -> tuple[str, str, int]:
+def resolve_clone_lineage(source: ObjectMetadata) -> tuple[str, str, int]:
     """Resolve ``(root_uuid, root_label, next_clone_index)`` for cloning *source*.
 
     Lineage is sticky: cloning a clone keeps the original root UUID/label so
@@ -398,10 +407,10 @@ def resolve_clone_lineage(
         root_label = source.clone_root_label
     else:
         root_uuid = source.uuid
-        existing_label = _existing_clone_label(base_dir, source.session_id, root_uuid)
+        existing_label = _existing_clone_label(source.session_id, root_uuid)
         root_label = existing_label or default_object_label(source.object_id, source.name)
 
-    next_index = count_clones_of_root(base_dir, source.session_id, root_uuid)
+    next_index = count_clones_of_root(source.session_id, root_uuid)
     return root_uuid, root_label, next_index
 
 
@@ -434,7 +443,6 @@ def _nudge_clone_offset(source: ObjectMetadata, bounds: CutoutBounds | None) -> 
 
 
 def build_clone_metadata(
-    base_dir: Path,
     source: ObjectMetadata,
     new_object_id: int,
     source_bounds: CutoutBounds | None = None,
@@ -446,7 +454,7 @@ def build_clone_metadata(
     doesn't land exactly on top of the source -- see _nudge_clone_offset.
     """
 
-    root_uuid, root_label, clone_index = resolve_clone_lineage(base_dir, source)
+    root_uuid, root_label, clone_index = resolve_clone_lineage(source)
     clone_name = format_clone_name(root_label, clone_index)
     offset_x, offset_y = _nudge_clone_offset(source, source_bounds)
     return create_object_metadata(
@@ -463,14 +471,3 @@ def build_clone_metadata(
         offset_y=offset_y,
         display_scale=source.display_scale,
     )
-
-
-def remove_object_index_entry(object_uuid: str) -> None:
-    """Remove one UUID from the global object index if present."""
-
-    index = _load_object_index()
-    if object_uuid not in index:
-        return
-    index.pop(object_uuid, None)
-    _save_object_index(index)
-    logger.debug("Removed object index entry: uuid=%s", object_uuid)

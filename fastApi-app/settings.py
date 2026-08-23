@@ -6,9 +6,7 @@ This module centralizes configuration such as the image storage directory so tha
 both the API layer and core logic can share the same behavior.
 """
 
-import json
 import os
-from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -64,186 +62,63 @@ def get_image_storage_dir() -> Path:
     """Resolve the directory used to persist uploaded images on disk.
 
     The directory is determined as follows:
-    - If `IMAGE_STORAGE_DIR` is set here and path exists, that path is used.
+    - If the `IMAGE_STORAGE_DIR` env var is set, that path is used (created if
+      it doesn't exist yet — unlike the old behavior, a not-yet-existing
+      configured path is no longer silently ignored).
     - Otherwise, a local `tmp/images/` directory in project root is used.
+
+    Only meaningful when :func:`get_storage_backend` is ``"local"``; under the
+    ``"s3"`` backend this still backs :func:`get_scratch_dir`'s sibling
+    sidecar-free layout for any local-only callers, but blob storage itself
+    goes through ``core/storage``.
     """
 
     project_root = _project_root()
-    configured_dir = IMAGE_STORAGE_DIR.strip()
+    configured_dir = os.environ.get("IMAGE_STORAGE_DIR", IMAGE_STORAGE_DIR).strip()
     if configured_dir:
         configured_path = Path(configured_dir).expanduser()
         if not configured_path.is_absolute():
             configured_path = project_root / configured_path
-        if configured_path.exists():
-            return configured_path
+        return configured_path
 
     return project_root / DEFAULT_IMAGE_STORAGE_SUBDIR
 
 
 def get_3d_storage_dir() -> Path:
-    """Resolve the directory used to persist generated GLB models on disk."""
+    """Resolve the directory used to persist generated GLB models on disk.
+
+    Overridable via the `THREED_STORAGE_DIR` env var (relative paths are
+    resolved against the project root), mirroring :func:`get_image_storage_dir`.
+    """
+    configured_dir = os.environ.get("THREED_STORAGE_DIR", "").strip()
+    if configured_dir:
+        configured_path = Path(configured_dir).expanduser()
+        if not configured_path.is_absolute():
+            configured_path = _project_root() / configured_path
+        return configured_path
+
     return _project_root() / DEFAULT_3D_STORAGE_SUBDIR
 
 
-def get_sessions_file() -> Path:
-    """Return path to tmp/sessions.json, one level above the image storage dir."""
-    return get_image_storage_dir().parent / "sessions.json"
+def get_scratch_dir() -> Path:
+    """Resolve the directory for ephemeral, node-local caches.
 
-
-def get_names_file() -> Path:
-    """Return path to tmp/names.json, a uid->name mapping sibling of sessions.json."""
-    return get_image_storage_dir().parent / "names.json"
-
-
-def get_session_timestamps_file() -> Path:
-    """Return path to tmp/session_timestamps.json, sibling of sessions.json."""
-    return get_image_storage_dir().parent / "session_timestamps.json"
-
-
-def _read_json(path: Path) -> object | None:
-    """Read one JSON sidecar file, returning ``None`` when absent or malformed.
-
-    Every sidecar here is regenerable state, so a corrupted file is treated as
-    "no data" rather than an error the caller has to handle.
+    Mask candidates, the depth-map cache, and the camera-calibration cache are
+    all recomputable and hot; they always live on local disk here regardless
+    of `STORAGE_BACKEND`, so the API process and its inference workers must
+    share one host (see docs/backend/concurrency.md). Overridable via
+    `SCRATCH_DIR`; defaults to the same directory as
+    :func:`get_image_storage_dir` so existing local-mode behavior is
+    unchanged.
     """
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, ValueError):
-        return None
+    configured_dir = os.environ.get("SCRATCH_DIR", "").strip()
+    if configured_dir:
+        configured_path = Path(configured_dir).expanduser()
+        if not configured_path.is_absolute():
+            configured_path = _project_root() / configured_path
+        return configured_path
 
-
-def _write_json(path: Path, payload: object) -> None:
-    """Write one JSON sidecar file, creating its parent directory if needed."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
-def _read_str_mapping(path: Path) -> dict[str, str]:
-    """Read a JSON sidecar known to hold a flat ``str -> str`` mapping."""
-    data = _read_json(path)
-    if not isinstance(data, dict):
-        return {}
-    return {str(key): str(value) for key, value in data.items()}
-
-
-def load_session_uids() -> list[str]:
-    """Load all registered session uids from sessions.json, newest last."""
-    data = _read_json(get_sessions_file())
-    if not isinstance(data, list):
-        return []
-    return data
-
-
-def load_names() -> dict[str, str]:
-    """Load the uid->name mapping from names.json.
-
-    Returns an empty dict if the file is absent or malformed so callers never
-    have to handle missing-names specially.
-    """
-    return _read_str_mapping(get_names_file())
-
-
-def set_session_name(uid: str, name: str) -> None:
-    """Persist a human-readable name for a session uid.
-
-    Names are unique across sessions.  If `name` is already assigned to a
-    *different* uid, raises ValueError so the caller can surface a 409 to the
-    client without knowing the storage details.
-    """
-    names = load_names()
-
-    existing_uid = next((k for k, v in names.items() if v == name), None)
-    if existing_uid is not None and existing_uid != uid:
-        raise ValueError(f"Name '{name}' is already used by another session.")
-
-    names[uid] = name
-    _write_json(get_names_file(), names)
-
-
-def deregister_uid(uid: str) -> None:
-    """Remove uid from sessions.json. No-op if uid is not present."""
-    uids = load_session_uids()
-    filtered = [u for u in uids if u != uid]
-    if len(filtered) == len(uids):
-        return
-
-    _write_json(get_sessions_file(), filtered)
-
-
-def remove_session_name(uid: str) -> None:
-    """Remove uid's name entry from names.json. No-op if uid has no name."""
-    names = load_names()
-    if names.pop(uid, None) is None:
-        return
-
-    _write_json(get_names_file(), names)
-
-
-def _load_session_timestamps() -> dict[str, str]:
-    """Load uid->last_changed ISO timestamps from session_timestamps.json."""
-    return _read_str_mapping(get_session_timestamps_file())
-
-
-def _save_session_timestamps(timestamps: dict[str, str]) -> None:
-    """Persist the uid->last_changed mapping to session_timestamps.json."""
-    _write_json(get_session_timestamps_file(), timestamps)
-
-
-def touch_session(uid: str) -> str:
-    """Record a fresh last-changed timestamp for one session and return it."""
-    timestamps = _load_session_timestamps()
-    now = datetime.now(UTC).isoformat()
-    timestamps[uid] = now
-    _save_session_timestamps(timestamps)
-    return now
-
-
-def get_session_last_changed(uid: str) -> str | None:
-    """Return the persisted last-changed timestamp for a session, if any."""
-    return _load_session_timestamps().get(uid)
-
-
-def clear_session_last_changed(uid: str) -> None:
-    """Remove one session's last-changed entry. No-op when absent."""
-    timestamps = _load_session_timestamps()
-    if timestamps.pop(uid, None) is None:
-        return
-    _save_session_timestamps(timestamps)
-
-
-def is_session_registered(uid: str) -> bool:
-    """Return whether ``uid`` appears in sessions.json."""
-    return uid in load_session_uids()
-
-
-class SessionNotFoundError(LookupError):
-    """Raised when a sync-check targets a uid absent from sessions.json."""
-
-
-def evaluate_session_sync(uid: str, client_last_changed: str | None) -> tuple[str, bool]:
-    """Compare client and server session timestamps.
-
-    Returns:
-        Tuple of ``(server_last_changed, needs_refresh)``. ``server_last_changed``
-        is an empty string when the session exists but has no recorded timestamp.
-    """
-    if not is_session_registered(uid):
-        raise SessionNotFoundError(uid)
-    server_last_changed = get_session_last_changed(uid) or ""
-    needs_refresh = client_last_changed != server_last_changed
-    return server_last_changed, needs_refresh
-
-
-def register_uid(uid: str) -> None:
-    """Append uid to sessions.json, creating the file if absent."""
-
-    uids = load_session_uids()
-    if uid not in uids:
-        uids.append(uid)
-
-    _write_json(get_sessions_file(), uids)
+    return get_image_storage_dir()
 
 
 def get_inference_worker_count() -> int:
@@ -355,4 +230,158 @@ def get_upload_allowed_mime_types() -> frozenset[str]:
     )
     values = {part.strip() for part in raw.split(",") if part.strip()}
     return frozenset(values or {"image/jpeg", "image/png", "image/webp"})
+
+
+# --- AWS deployment prep: storage backend, database, auth, CORS -----------
+#
+# Everything below stays behind an env-driven switch so the app runs exactly
+# as before with no env vars set. See docs/deployment/aws-runbook.md.
+
+
+def get_storage_backend() -> str:
+    """Return which `core.storage.ObjectStore` backs durable blobs.
+
+    ``"local"`` (default) keeps writing under :func:`get_image_storage_dir` /
+    :func:`get_3d_storage_dir`, unchanged from today. ``"s3"`` routes the same
+    keys through an S3 bucket instead. Any other value falls back to
+    ``"local"`` rather than failing startup.
+    """
+    raw = os.environ.get("STORAGE_BACKEND", "local").strip().lower()
+    return raw if raw in {"local", "s3"} else "local"
+
+
+def get_s3_bucket() -> str:
+    """Return the S3 bucket name for durable blobs (`STORAGE_BACKEND=s3` only)."""
+    return os.environ.get("S3_BUCKET", "").strip()
+
+
+def get_s3_prefix() -> str:
+    """Return the key prefix under which all blobs are stored in the bucket."""
+    return os.environ.get("S3_PREFIX", "avroom").strip().strip("/")
+
+
+def get_s3_region() -> str:
+    """Return the AWS region for the S3 client (boto3 falls back to its own
+    default resolution — env/credentials file/instance profile — if empty)."""
+    return os.environ.get("S3_REGION", "").strip()
+
+
+def get_auth_mode() -> str:
+    """Return the auth mode: ``"single_user"`` (default, local dev) or ``"jwt"``.
+
+    In ``single_user`` mode every request is treated as one fixed,
+    auto-provisioned local user — no login, no token, identical UX to today.
+    In ``jwt`` mode requests must carry a valid ``Authorization: Bearer``
+    token. Any other value falls back to ``"single_user"``, so a typo'd env
+    var degrades to local-dev behavior rather than an unrecognized mode.
+    """
+    raw = os.environ.get("AUTH_MODE", "single_user").strip().lower()
+    return raw if raw in {"single_user", "jwt"} else "single_user"
+
+
+def get_database_url() -> str:
+    """Return the SQLAlchemy database URL.
+
+    Defaults to the docker-compose Postgres service so `docker compose up db`
+    plus an unmodified `.env` is enough to run locally with real persistence.
+    Host port 5433 (not 5432): a native Postgres install may already own 5432
+    on the host, and `docker-compose.yml` maps the container's 5432 there to
+    avoid the conflict.
+    """
+    return os.environ.get(
+        "DATABASE_URL",
+        "postgresql+psycopg://avroom:avroom@localhost:5433/avroom",
+    ).strip()
+
+
+def get_jwt_secret() -> str:
+    """Return the JWT signing secret.
+
+    No safe default exists for this one: an empty/default secret would let
+    anyone forge tokens. Callers in `jwt` auth mode must fail loudly if this
+    is unset, rather than silently signing with a well-known string.
+    """
+    return os.environ.get("JWT_SECRET", "").strip()
+
+
+def get_jwt_expire_minutes() -> int:
+    """Return how long an issued JWT stays valid, in minutes."""
+    return max(1, _env_int("JWT_EXPIRE_MINUTES", 60 * 24 * 7))
+
+
+def get_cors_allow_origins() -> list[str]:
+    """Return the list of origins the API accepts CORS requests from.
+
+    Comma-separated via `CORS_ALLOW_ORIGINS`; defaults to the two local Vite
+    dev origins so local dev needs no env var, matching today's hardcoded
+    `main.py` list.
+    """
+    raw = os.environ.get(
+        "CORS_ALLOW_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    )
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
+def get_debug_image_save() -> bool:
+    """Return whether the AI pipeline's per-stage debug image dumps are written.
+
+    `TestModules`' `DebugImageSaver` writes dozens of PNGs per `/segment` call
+    to a fixed local directory (`TestModules/outputs/`) that nothing ever
+    reads back. Default on (matches today's behavior everywhere); set to
+    `false` in containers, where that directory is pure waste.
+    """
+    return _env_bool("DEBUG_IMAGE_SAVE", True)
+
+
+def get_notify_enabled() -> bool:
+    """Return whether AI-pipeline completion emails are sent at all."""
+    return _env_bool("NOTIFY_ENABLED", True)
+
+
+def get_notify_backend() -> str:
+    """Return which transport sends notification emails: ``"smtp"`` or ``"ses"``.
+
+    No dedicated env var is needed for the normal case: this derives from
+    `get_storage_backend()`, which deploy already flips to ``"s3"``. So local
+    dev (unset) lands on SMTP (Mailpit, no credentials) and an AWS deploy
+    lands on SES (IAM role, no credentials) with nothing else to configure.
+    `NOTIFY_BACKEND` remains as an explicit override for testing either path
+    outside its default environment.
+    """
+    raw = os.environ.get("NOTIFY_BACKEND", "").strip().lower()
+    if raw in {"smtp", "ses"}:
+        return raw
+    return "ses" if get_storage_backend() == "s3" else "smtp"
+
+
+def get_notify_from() -> str:
+    """Return the ``From`` address on notification emails."""
+    return os.environ.get("NOTIFY_FROM", "avroom@avroom.local").strip()
+
+
+def get_smtp_host() -> str:
+    """Return the SMTP host. Defaults to the local Mailpit container."""
+    return os.environ.get("SMTP_HOST", "localhost").strip()
+
+
+def get_smtp_port() -> int:
+    """Return the SMTP port. Defaults to Mailpit's unauthenticated listener."""
+    return _env_int("SMTP_PORT", 1025)
+
+
+def get_smtp_user() -> str:
+    """Return the SMTP username, empty when the relay needs no auth (e.g. Mailpit)."""
+    return os.environ.get("SMTP_USER", "").strip()
+
+
+def get_smtp_password() -> str:
+    """Return the SMTP password, used only when `get_smtp_user()` is non-empty."""
+    return os.environ.get("SMTP_PASSWORD", "").strip()
+
+
+def get_notify_ses_region() -> str:
+    """Return the AWS region for the SES client (boto3 falls back to its own
+    default resolution — env/credentials file/instance profile — if empty)."""
+    return os.environ.get("NOTIFY_SES_REGION", "").strip()
 

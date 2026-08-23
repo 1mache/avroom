@@ -9,6 +9,19 @@ What changed in this refresh:
 - Depth rescale / smart-paste are UI-only: server persists `display_scale` + `average_depth`; cutout PNG stays pristine.
 - Updated rescale/smart-paste API responses (no `cutout_b64`; added `display_scale`).
 - Frontend renders objects at `displayScale` via CSS transform; session restore reads `display_scale` from `ObjectInfo`.
+- Corrected the 3D reconstruction backend across every doc that named one: `Reconstruction3DFacade`'s default primary strategy is now **`Hunyuan3D2ReconstructionStrategy`** (Hugging Face Space `es3d-fi/hunyuan3d-2-1`, a mirror of `tencent/Hunyuan3D-2.1`, via `gradio_client`), with automatic fallback to **`TriposrReconstructionStrategy`** on failure — not TripoSR-as-default and not Trellis. See [ai-pipeline/ai-engines/reconstruction-3d/README.md](ai-pipeline/ai-engines/reconstruction-3d/README.md).
+- Corrected the wiring status of 3D reconstruction: it **is** invoked in production, via `core/inference_pool`'s `JobKind.GENERATE_3D` from `POST /3d/test-3d` and `POST /images/novel-view` — previous docs said it was test-only / not on any HTTP path.
+- Noted `TrellisReconstructionStrategy` and `Vfusion3dReconstructionStrategy` are optional backends reachable only by explicit injection — never constructed by the facade's default or fallback path.
+- Noted Hunyuan3D-2.1 and TripoSR each map `ReconstructionQuality` via their own local tables, not the shared `GenerationParams`/`PRESETS` dict (that table is Trellis-specific).
+- Updated `docs/presentation-plan.md` slide 5c to screenshot the Hunyuan3D-2.1 strategy (the backend actually running) instead of the unused Trellis strategy.
+
+Previous refresh (2026-08-14):
+
+- Documented the entire `/debug` router for the first time (it existed on the backend before this refresh but had no docs coverage): `POST /debug/validate`, `POST /debug/depth-map`, `POST /debug/sam-everything` — see [backend/api-endpoints.md](backend/api-endpoints.md#debug-endpoints), [backend/schemas.md](backend/schemas.md#debug), and the `DEBUG_ENDPOINTS` gate in [backend/settings-and-storage.md](backend/settings-and-storage.md).
+- Documented the new Pipeline Debug screen (`DebugScreen`), reachable from the dashboard header's flask icon: [frontend/components.md](frontend/components.md#debugscreen), [frontend/user-flow.md](frontend/user-flow.md#pipeline-debug-screen), [frontend/api-integration.md](frontend/api-integration.md#debug-endpoints), [frontend/state-and-types.md](frontend/state-and-types.md#typesdebugts), [frontend/styling.md](frontend/styling.md).
+- Documented `ImageValidator.validate_all` (runs every technical check without early-exit, unlike `validate()`) and SAM `predict_everything`/`get_all_masks_for_image` (prompt-free segmentation, added for the debug endpoints) plus its new quality-threshold params — see [ai-pipeline/ai-engines/segmentation/contracts.md](ai-pipeline/ai-engines/segmentation/contracts.md) and [components.md](ai-pipeline/ai-engines/segmentation/components.md).
+- Documented `TestModules/src/utils/mask_visualizer.py` (`distinct_color`, `colorize_depth`, `overlay_masks`) — [ai-pipeline/utils/components.md](ai-pipeline/utils/components.md).
+- Fixed a stale line-number reference to the CORS middleware block in `main.py` (moved when `expose_headers` was added) and fixed a dead link to a nonexistent `.cursor/skills/` path in this file.
 
 If you change architecture, run the `update-docs` skill (see [`CLAUDE.md`](../CLAUDE.md) for how skills are invoked in this repo) to keep these files in sync with the code.
 

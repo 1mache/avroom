@@ -1,14 +1,14 @@
 import React from "react";
 
-import type { SegmentMaskOption } from "../../types/api";
+import type { SegmentMaskResult } from "../../types/api";
 
 export interface MaskPickerModalProps {
-  masks: SegmentMaskOption[];
+  masks: SegmentMaskResult[];
   onSelect: (maskId: string) => void;
   onClose: () => void;
 }
 
-const toDataUrl = (mask: SegmentMaskOption): string =>
+const toDataUrl = (mask: SegmentMaskResult): string =>
   `data:image/${mask.format};base64,${mask.cutout_b64}`;
 
 // Selecting a mask closes this modal immediately and fires inpainting detached

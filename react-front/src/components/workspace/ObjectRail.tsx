@@ -1,7 +1,14 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
+import type { JobInfo } from "../../types/api";
 import { effectiveCutoutSrc, type ObjectRotation } from "../../types/session";
 import { EyeIcon, EyeOffIcon, RevertIcon } from "../icons";
+
+const JOB_KIND_LABEL: Record<JobInfo["kind"], string> = {
+  segment: "Segmenting",
+  inpaint: "Removing",
+  generate_3d: "Building 3D",
+};
 
 // Grace period before the rail retracts, so clipping the edge of the panel on
 // the way somewhere else doesn't snap it shut mid-reach.
@@ -16,13 +23,13 @@ interface ObjectEntry {
   hidden: boolean;
 }
 
-interface PendingEntry {
-  jobId: string;
-}
-
 export interface ObjectRailProps {
   objects: ObjectEntry[];
-  pending: PendingEntry[];
+  /** This session's job backlog — queued/running render as spinner rows,
+   * failed/conflict render as dismissible error rows. Done segment jobs
+   * (driving the mask picker) and done/deleted inpaint/3D jobs render
+   * nothing here. */
+  jobs: JobInfo[];
   selectedObjectId: number | null;
   /** Objects currently showing their pre-rotation cutout instead of the result. */
   showOriginalIds: ReadonlySet<number>;
@@ -35,6 +42,7 @@ export interface ObjectRailProps {
   onToggleHidden: (objectId: number) => void;
   onToggleShowOriginal: (objectId: number) => void;
   onRenameObject: (objectId: number, uuid: string, name: string | null) => void;
+  onDismissJob: (jobId: string) => void;
 }
 
 /**
@@ -46,7 +54,7 @@ export interface ObjectRailProps {
  */
 export const ObjectRail: React.FC<ObjectRailProps> = ({
   objects,
-  pending,
+  jobs,
   selectedObjectId,
   showOriginalIds,
   disabled,
@@ -58,7 +66,11 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
   onToggleHidden,
   onToggleShowOriginal,
   onRenameObject,
+  onDismissJob,
 }) => {
+  const pending = jobs.filter((job) => job.status === "queued" || job.status === "running");
+  const failed = jobs.filter((job) => job.status === "failed");
+
   const [open, setOpen] = useState(false);
   const [editingObjectId, setEditingObjectId] = useState<number | null>(null);
   const [draftName, setDraftName] = useState("");
@@ -141,7 +153,7 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
     }
   }, []);
 
-  const total = objects.length + pending.length;
+  const total = objects.length + pending.length + failed.length;
 
   return (
     <div
@@ -165,7 +177,10 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
           />
         ))}
         {pending.map((job) => (
-          <span key={job.jobId} className="rail-notch is-working" />
+          <span key={job.job_id} className="rail-notch is-working" />
+        ))}
+        {failed.map((job) => (
+          <span key={job.job_id} className="rail-notch is-failed" />
         ))}
       </div>
 
@@ -275,15 +290,40 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
             );
           })}
 
-          {/* In-flight removals stand in for objects that don't exist yet. */}
+          {/* In-flight jobs stand in for objects/results that don't exist yet. */}
           {pending.map((job) => (
-            <div key={job.jobId} className="rail-row is-pending">
+            <div key={job.job_id} className="rail-row is-pending">
               <div className="rail-thumb rail-thumb-empty" aria-busy="true">
                 <span className="tool-spinner" />
               </div>
               <div className="rail-row-body">
-                <span className="rail-name">Removing</span>
+                <span className="rail-name">
+                  {JOB_KIND_LABEL[job.kind]}
+                  {job.status === "queued" ? " (queued)" : ""}
+                </span>
               </div>
+            </div>
+          ))}
+
+          {/* A job that failed keeps its error on the row until explicitly
+              dismissed -- see core/repositories/job_repo.py's module docstring. */}
+          {failed.map((job) => (
+            <div key={job.job_id} className="rail-row is-failed">
+              <div className="rail-thumb rail-thumb-empty" aria-hidden="true" />
+              <div className="rail-row-body">
+                <span className="rail-name" title={job.error ?? undefined}>
+                  {JOB_KIND_LABEL[job.kind]} failed
+                </span>
+              </div>
+              <button
+                type="button"
+                className="rail-action"
+                data-tip="Dismiss"
+                aria-label={`Dismiss failed ${JOB_KIND_LABEL[job.kind].toLowerCase()} job`}
+                onClick={() => onDismissJob(job.job_id)}
+              >
+                ×
+              </button>
             </div>
           ))}
 

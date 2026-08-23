@@ -20,11 +20,18 @@ avroom/
 │   │   └── utils/        # MaskRefiner, DebugImageSaver, MaskOverlapRGBAComposer
 │   └── tests/            # Standalone test scripts
 ├── fastApi-app/          # FastAPI microservice (the IPE - Image Processing Engine)
-│   ├── api/routes.py     # upload, segment, inpaint, legacy click endpoints
+│   ├── api/routes.py     # upload, segment/inpaint job submission, legacy click endpoints
+│   ├── api/jobs.py       # GET /jobs/active, GET/DELETE /jobs/{job_id}
 │   ├── core/             # image_processing.py - bridges API to ObjectRemover
+│   │   ├── jobs/         # handlers.py (per-kind job bodies) + dispatcher.py (claim loop)
+│   │   ├── repositories/ # session_repo.py, job_repo.py - Postgres-backed session/job registries
+│   │   ├── auth/         # single_user.py (local dev user) + identity.py (current_user_id() seam)
+│   │   └── notifications/ # notify_pipeline_event() - email on inpaint/3D-gen completion
+│   ├── db/                # SQLAlchemy models (users/sessions/objects/jobs) + engine/session
+│   ├── alembic/           # Postgres schema migrations (`alembic upgrade head`)
 │   ├── schemas/          # Pydantic request/response models
-│   ├── settings.py       # Image storage dir config
-│   └── tmp               # Runtime temp object storage (gitignored)
+│   ├── settings.py       # Storage dirs, DATABASE_URL, auth mode, CORS, etc.
+│   └── tmp               # Runtime blob storage — cutouts/GLBs/caches (gitignored; metadata is in Postgres, not here)
 └── react-front/          # React/TypeScript frontend (MVP state)
     └── src/
         ├── api/images.ts  # uploadImage(), segmentImage(), inpaintMask() fetch calls
@@ -40,8 +47,12 @@ avroom/
 # Install all Python deps (includes editable TestModules install)
 pip install -r requirements.txt
 
-# Run FastAPI server (from fastApi-app/)
+# Start local Postgres (session/object metadata) — required before the app or its tests will run
+docker compose up -d db          # from repo root; host port 5433, not 5432 (see Session & Object Metadata below)
 cd fastApi-app
+alembic upgrade head             # create/update schema
+
+# Run FastAPI server (from fastApi-app/)
 uvicorn main:app --reload
 # Runs on http://127.0.0.1:8000
 
@@ -97,6 +108,34 @@ Reuse these instead of re-implementing them per module:
 - `core/object_storage.py` — all `{uid}_{object_id}_…` path construction, plus `legacy_object_cutout_path` / `legacy_object_glb_path` for pre-numbering names and `remove_file(path) -> int` for "delete if present, count it" loops.
 - `core/depth_cache.py` — `memory_image_key(bytes)` builds the `memory://<sha256>` key the AI pipeline caches model state under.
 - `settings.py` — `_read_json` / `_write_json` / `load_session_uids` back every JSON sidecar (sessions, names, timestamps); `_env_int` / `_env_float` / `_env_bool` back every env-var getter.
+
+## Session & Object Metadata (Postgres)
+
+Session and object metadata (previously four JSON sidecars — `sessions.json`, `names.json`, `session_timestamps.json`, `object_index.json` — plus one `{uid}_{id}_meta.json` per object) now lives in Postgres. Blob artifacts (cutout PNGs, GLBs, novel-view caches) are unaffected and still live on local disk under `core/object_storage.py`'s path helpers — only *metadata* moved.
+
+- **`db/models.py`** — `User`, `SessionRow` (table `sessions`, the `uid` used everywhere else), `ObjectRow` (table `objects`). `db/session.py` exposes `get_engine()` (per-process lazy singleton) and `session_scope()`.
+- **`core/repositories/session_repo.py`** — replaces the old sidecar functions 1:1 by name (`register_uid`, `touch_session`, `set_session_name`, `evaluate_session_sync`, `SessionNotFoundError`, `delete_session`, …), now DB-backed.
+- **`core/object_metadata.py`** — same public functions as before (`save_object_metadata`, `get_object_by_uuid`, `list_object_ids`, `build_clone_metadata`, …) but each opens its own short DB session instead of reading/writing a JSON file; `base_dir`/`storage_dir` parameters were dropped since metadata no longer lives under the image storage dir. `list_object_ids` / `next_object_id` moved here from `core/object_storage.py` (they used to scan the filesystem; now they query the `objects` table — the real fix for a `next_object_id` dir-scan race described below).
+- **Local dev user**: `AUTH_MODE=single_user` (the default — see `settings.get_auth_mode()`) auto-provisions one fixed user (`local@avroom.dev`, `core/auth/single_user.py::LOCAL_USER_ID`) that every session is attached to. No login, no token, identical UX to before. `AUTH_MODE=jwt` (real per-user auth, ownership checks on every route) is not implemented yet — the schema already supports it (`sessions.user_id` FK), only route-level "who is asking" resolution is still hardcoded to the local user.
+- **Local Postgres runs via `docker-compose.yml`** (repo root): `docker compose up -d db`. Host port is **5433**, not 5432 — a native Postgres install may already own 5432 on the host (this bit us during development on Windows). `DATABASE_URL` defaults to `postgresql+psycopg://avroom:avroom@localhost:5433/avroom` accordingly (`settings.get_database_url()`).
+- **Schema is managed by Alembic**, not `Base.metadata.create_all()` in application code — run `alembic upgrade head` from `fastApi-app/` after `docker compose up -d db` (both locally and once hosted against RDS) before starting the app. `alembic/env.py` resolves its target DB from `settings.get_database_url()`, the same URL the app itself uses, so there is exactly one place that decides which database this points at. `fastApi-app/tests/conftest.py`'s `_clean_database` fixture is the one exception: it calls `Base.metadata.create_all()` directly and truncates every table before each test, since tests want a schema-matches-models guarantee and per-test isolation, not migration history.
+- **Tests never run against the dev database.** `conftest.py`'s `_use_test_database()` runs at import time (before any test module or `db.session.get_engine()` can execute) and repoints `DATABASE_URL` at `<dbname>_test` (e.g. `avroom_test`), creating that database via a maintenance connection if it doesn't exist yet. This exists because `_clean_database` truncates `objects`/`sessions`/`users` before every test, and `settings.get_database_url()`'s default is otherwise identical between app and test process — without the swap, running `pytest` against a normal local setup wipes live session data. Gotcha if touching this: `str(sqlalchemy.engine.URL)` masks the password as `***`; building the env var string requires `url.render_as_string(hide_password=False)`.
+- `save_object_metadata` auto-provisions its session row (owned by the local user) if the session hasn't been registered yet, matching the old sidecars' decoupled behavior where object metadata and session registration were independent files.
+
+Three races the old filesystem/JSON approach had are now closed: `next_object_id` (used to be a dir-scan max, now a DB query — still relies on the existing canvas-writer lock to serialize concurrent inpaint/duplicate per session on a single instance, see `docs/backend/concurrency.md`, rather than a row lock); `count_clones_of_root` (used to be an O(n) per-file JSON read, now `COUNT(*)`); `PATCH /images/objects/{uuid}` (still a read-then-write, but against one row under the object's own uuid rather than a shared JSON file).
+
+## Durable Job Queue
+
+Segment, inpaint, and 3D generation are **queued, not blocking**. `POST /images/segment`, `POST /images/inpaint`, and `POST /3d/test-3d` insert a `JobRow` (`db/models.py`, table `jobs`) and return `202 {job_id}` immediately — no route does GPU work on the request thread anymore. Full mechanics, including the two Mermaid sequence diagrams and the region-lease interaction, live in `docs/backend/concurrency.md`; the summary:
+
+- **`core/repositories/job_repo.py`** — `create_job`, `claim_next_job` (`SELECT ... FOR UPDATE SKIP LOCKED ORDER BY created_at`, plain FIFO across every user/session), `finish_job`/`fail_job`/`delete_job`, `list_session_jobs`, `list_active_jobs`, `reserved_mask_ids`, `mark_running_orphans_failed` (the startup sweep — a `running` row with no live process behind it becomes `failed`; `queued` rows need no sweep, a fresh dispatcher just claims them).
+- **`core/jobs/handlers.py`** — `run_segment_job` / `run_inpaint_job` / `run_generate_3d_job`: the former route bodies verbatim, including the canvas-writer/region-lease sandwich inpaint always used. A handler raising `SessionConflictError` becomes job status `"conflict"` (what used to be an HTTP 409); anything else becomes `"failed"` with the exception text in `error`.
+- **`core/jobs/dispatcher.py`** — `max(1, INFERENCE_WORKERS)` daemon threads polling `claim_next_job()` every 0.5s. Started/stopped in `main.py`'s lifespan, alongside `mark_running_orphans_failed()` on startup.
+- **Result shape**: a successful `inpaint`/`generate_3d` job **deletes its own row** — the `ObjectRow` / GLB file already *is* the durable result. A successful `segment` job stays `done` with `result={"mask_ids":[...]}` until consumed (an inpaint submitted with `from_job_id`) or dismissed (`DELETE /jobs/{job_id}`) — **several segment results can be queued at once**, consumed one at a time.
+- **Delivery is polling, not push**: `POST /images/{uid}/sync-check` now also returns that session's `jobs` list (unconditionally, not gated on `needs_refresh` — a job's status can change without bumping `last_changed`); `GET /jobs/active` is the same idea across every session for the dashboard's per-card dot; `GET /jobs/{job_id}` inflates a done segment job's `mask_ids` into full candidates on read.
+- **Identity seam**: `core/auth/identity.py::current_user_id()` resolves "who is asking" — today it always returns the fixed local user (same as `session_repo._get_or_create_session_row`, which now calls this too instead of `core.auth.single_user` directly), but it is the **one** function a future `AUTH_MODE=jwt` needs to change. Every `/jobs` route and all three submit routes depend on it; job listing/reads filter `WHERE user_id = :caller`, which is the entire result-routing mechanism for multiple users sharing one queue.
+- **The pinning fix**: `reserved_mask_ids(session_id)` (in `job_repo.py`) protects mask ids belonging to an unconsumed `done` segment job **and** to any `queued`/`running` inpaint job, unioned with the existing in-memory `pinned_mask_ids` at the segment call site. This exists because queuing widened a real race — a submitted inpaint can now sit `queued` for an arbitrary time before a dispatcher thread actually takes its in-memory lease, so a concurrent segment's candidate wipe needs to know about that not-yet-running inpaint too, not just live leases.
+- **Novel-view rotation is deliberately NOT queued** — it stays exactly as it was (a detached blocking request with a local `rotation` marker on the object; see "Rotation flow" below).
 
 ## Python Code Style
 
@@ -154,15 +193,52 @@ Not wired into segment/inpaint/removal pipelines.
 - `predict_everything` is on `ImageSegmentationStrategy` as a non-abstract method (default raises `NotImplementedError`) since prompt-free segmentation is SAM-specific, not a general strategy capability. `ImageSegmentationFacade.get_all_masks_for_image` exposes it at the facade level, alongside the existing point-prompted `get_mask_at_point` / `get_all_masks_for_position`.
 - `X-Mask-Count`/`X-Elapsed-Ms` response headers require `expose_headers` on the CORS middleware (`main.py`) — `allow_headers` only covers request headers, so without it browser JS reads both as `null`.
 
-## Trellis 2 3D Generation
+## 3D Reconstruction (Hunyuan3D-2.1)
 
-`TrellisModule/` (package `avroom_trellis`) wraps Microsoft's Trellis 2 image-to-3D model **via the public Hugging Face Space** (`microsoft/TRELLIS.2`) using `gradio_client`. Local install is not supported on this machine (Linux + 24 GB VRAM only).
+`TestModules/src/ai_engines/reconstruction_3d/` (part of the `avroom_object_removal` package — there is no separate 3D package anymore) owns image-to-GLB generation via `Reconstruction3DFacade`. **Default primary backend is `Hunyuan3D2ReconstructionStrategy`**, which calls Tencent's Hunyuan3D-2.1 model **via a public Hugging Face Space** (`gradio_client`, default space id `es3d-fi/hunyuan3d-2-1`, a mirror of `tencent/Hunyuan3D-2.1`). If the primary call raises, the facade automatically retries once against `TriposrReconstructionStrategy` (local PyTorch, `stabilityai/TripoSR` weights) with identical arguments before giving up. OpenLRM, Trellis (Microsoft's Trellis 2, the previous default before this backend was swapped in), and VFusion3D also exist as strategies but are reachable only by injecting them explicitly into `Reconstruction3DFacade(...)` — the facade never constructs them on its own.
 
-Public API: `Trellis3DGenerator().generate(image, *, quality=Quality.FAST, output="bytes")`. Accepts BGRA `np.ndarray` from `ObjectRemover`, PNG `bytes`, `PIL.Image`, or `pathlib.Path`. Returns GLB as `bytes` / `Path` / `BytesIO`.
+Public API: `Reconstruction3DFacade().generate(image, *, quality=ReconstructionQuality.HIGH, output="bytes")`. Accepts BGRA `np.ndarray` from `ObjectRemover`, PNG `bytes`, `PIL.Image`, or `pathlib.Path`. Returns GLB as `bytes` / `Path` / `BytesIO`.
 
-The Space is queued (Zero GPU). One generation takes seconds of compute plus queue wait. Module is **not** wired into FastAPI yet.
+The Hunyuan3D-2.1 Space is queued; one generation takes tens of seconds of compute plus queue wait. **Wired into FastAPI** via `core/inference_pool` (`JobKind.GENERATE_3D`) from two call sites: `POST /3d/test-3d` (`fastApi-app/api/model_3d.py`, now itself a durable job — see "Durable Job Queue" above — that queues a `generate_3d` `JobRow` and returns `202`) and `POST /images/novel-view` (`fastApi-app/api/novel_view.py`, still a direct blocking call, via the shared `core/object_3d.py::ensure_object_glb` cache-or-generate helper both call sites use). It is not part of the `/images/click`/`/images/inpaint` object-removal path.
 
-Install: `pip install -e ./TrellisModule` (or `pip install -r requirements.txt` which includes it).
+See [docs/ai-pipeline/ai-engines/reconstruction-3d/README.md](docs/ai-pipeline/ai-engines/reconstruction-3d/README.md) for the full strategy list, quality-preset mapping, and error types.
+
+## Email Notifications on Pipeline Completion
+
+`core/notifications/notify_pipeline_event(uid, event, *, ok=True, detail=None)` emails a
+session's owner when a slow AI operation finishes — currently wired at the two call sites that
+warrant it: inpainting (`api/routes.py`, after the object is persisted) and 3D generation
+(`api/model_3d.py`, after the GLB is written), both on success and on failure. It is deliberately
+**not** a generic hook on every AI call — segment/click/upload are sub-second and the user is
+still watching the response.
+
+The function takes no dependency on `core.inference_pool` (a free-form `event` string, not a
+`JobKind`) so it can be called from anywhere, including the AI pipeline rewrite happening in
+parallel on another branch. It never raises and never blocks the request: the send happens on a
+daemon thread, and any failure (missing recipient, dead mail server) is logged at `WARNING` and
+swallowed — a notification failing must never turn an already-successful AI request into a 500.
+
+The email body/subject always name the session — its display name, falling back to the uid when
+unnamed (`core/repositories/session_repo.py::get_session_notify_target`) — so the recipient can
+tell which room finished.
+
+**Transport is zero-config in both environments**, chosen by `settings.get_notify_backend()`:
+```
+NOTIFY_BACKEND unset  →  "ses" if STORAGE_BACKEND == "s3" else "smtp"
+```
+No dedicated env var needs setting — it rides the same switch a cloud deploy already flips.
+Local (`smtp`) talks to a **Mailpit** container (`docker-compose.yml`'s `mailpit` service, started
+by `run.bat` alongside Postgres) — no auth, no TLS, no credentials; every notification is viewable
+at `http://localhost:8025`, nothing reaches a real inbox. Cloud (`ses`) uses **boto3 SES**
+(`core/notifications/ses_backend.py`; boto3 is already a dependency for the `STORAGE_BACKEND=s3`
+path) — credentials resolve from the deployed instance's IAM role, nothing in env either. All
+seven `NOTIFY_*`/`SMTP_*` vars in `.env.example` are optional overrides, not required config.
+
+The local dev user's email (`core/auth/single_user.py::LOCAL_USER_EMAIL`) is
+`avroom-team@proton.me` — the team inbox — not a personal address; local notifications land in
+Mailpit regardless, so this only matters if `NOTIFY_ENABLED=false`/Mailpit is bypassed. Alembic
+migration `0002_local_user_email` updates the row on machines that provisioned the local user
+before this change.
 
 ## Frontend Notes
 
@@ -178,7 +254,7 @@ The product has **two screens plus an upload step, plus a separate debug screen*
 - **Cutout is armed, not confirmed.** Pressing scissors sets `cutMode`; the next click on the photo becomes the segmentation seed and fires `runSegment` immediately, disarming the tool. Escape cancels. There is no separate "Cut Out" button any more.
 - **Smart paste is a stub** — a local boolean with no behavior behind it; drag-and-drop is still plain dragging.
 - **Trash arms a confirm dialog, then permanently deletes.** Clicking it opens a `ConfirmDialog` in `WorkspaceScreen`, not an immediate delete — deletion calls `DELETE /images/objects/{uuid}` and can't be undone. On confirm, `useSessionJobs.deleteObject` awaits the request (uuid-keyed, same precondition as duplicate — pre-UUID objects can't be deleted), then removes the object locally on success; failure surfaces through the generic error modal. The backend removes the cutout, GLB, novel-view caches, and metadata, but **never repaints the background** — the inpainted hole stays. Object ids can be reused after deletion (`next_object_id` is `max(existing)+1`).
-- **`ObjectRail`** (`components/workspace/ObjectRail.tsx`) replaces the old `ObjectPanel`. It hides in the right screen edge and slides out on hover of that edge, retracting after a ~220 ms grace once the pointer leaves (suppressed while a rename input is focused). Retracted, its spine still shows one notch per object — bright for the selected one, grey for hidden, pulsing while work is in flight. Each row carries an eye toggle, and a revert toggle when that object has a rotation result.
+- **`ObjectRail`** (`components/workspace/ObjectRail.tsx`) replaces the old `ObjectPanel`. It hides in the right screen edge and slides out on hover of that edge, retracting after a ~220 ms grace once the pointer leaves (suppressed while a rename input is focused). Retracted, its spine still shows one notch per object — bright for the selected one, grey for hidden, pulsing while work is in flight, red for a failed job. Each row carries an eye toggle, and a revert toggle when that object has a rotation result. It also takes the session's `jobs` list directly (not a `pending: PendingEntry[]` prop anymore — see "Concurrent job state" below): queued/running jobs render as spinner rows labeled by kind (`Segmenting`/`Removing`/`Building 3D`), failed jobs render as dismissible red rows (`onDismissJob`, `DELETE /jobs/{job_id}`).
 - **Design tokens** live at the top of `src/style.css`: graphite chrome (`--chrome-*`), cyan accent (`--cyan`, `--cyan-bright`), IBM Plex Sans for UI and IBM Plex Mono for counters/status readouts (loaded in `index.html`). Radii stay at 2–3 px throughout.
 
 ### Multi-object preview & selection model
@@ -196,11 +272,13 @@ All segmented objects for a session stay composited on the inpainted background 
 
 ### Concurrent job state (`src/hooks/`)
 
-The backend (`docs/backend/concurrency.md`) allows a second non-overlapping inpaint to run while the first is still in flight, via a per-session canvas-writer lock and region leases — there is no job-id/poll protocol, concurrency is just multiple blocking HTTP requests in flight at once. The frontend mirrors that: inpaint is not single-flighted on a page-wide boolean. Three hooks split the concern:
+Segment and inpaint are queued server-side now (see "Durable Job Queue" above): `segmentImage`/`inpaintMask` return `{job_id}` immediately, and the *result* — mask candidates, or the finished object — shows up later via polling. This is what makes work submitted right before navigating away from a session survive: it's a durable Postgres row, not React state, so re-entering the session (or the next sync tick, if you're still there) picks it back up instead of the result being silently dropped on an unmounted component. Three hooks split the concern:
 
-- **`useSessionJobs`** owns `objects`, `selectedObjectId`, and job state. Segment stays single-flight (it drives one interactive `MaskPickerModal`), but selecting a mask (`selectMask`) closes the picker immediately and fires `inpaintMask` detached — a `PendingInpaintJob` placeholder (keyed by a client-side `jobId`, not `object_id`, since that doesn't exist until the response lands) renders in `ObjectRail` while it runs, and the caller is free to click a new point and start another segment/inpaint elsewhere. Each pending job captures `normalizedClickPos` at selection time rather than reading live click state at resolution time, since the user may have moved on to a different point before the response arrives. A `highestCommittedObjectIdRef` guard only ever applies a returned `background_b64` when its `object_id` exceeds the highest applied so far — the canvas writer lock makes `object_id` a valid commit order server-side, so this only guards against out-of-order *network* delivery of concurrent responses. All mutations use functional `setState` updaters since multiple promises can resolve into this state concurrently. An `imageIdRef` check in every `.then()`/`.catch()` drops stale responses if the user switched sessions while a job was in flight.
-- **`useSessionSync`** polls `POST /images/{uid}/sync-check` every ~2s while `hasPendingWork` is true, plus once on window focus/visibilitychange — idle sessions never poll. On `needs_refresh`, it re-fetches `/objects` + `/cache` and **merges** into local state rather than replacing it: existing objects keep their local `offset`/`hidden`/`glbData`, new ones are appended, vanished ones are dropped (clearing selection if selected). The background URL gets a `?t=<lastChanged>` cache-bust query param on reconcile. `recordLocalMutation` (an alias for the same check) is also called after every local mutation (upload, inpaint success, rename, session rename) to seed `lastChanged` early; since the client's prior timestamp is now stale by definition, this always triggers one redundant-but-harmless reconcile fetch of the state we just produced locally.
-- **`useConflictNotices`** turns backend 409s (mask overlaps an in-flight removal, segment click inside a lease, canvas-writer timeout) into a dismissible, auto-expiring inline notice instead of the modal error dialog — a 409 here is expected traffic under the region-lease model, not a failure. Any error that isn't an `ApiError` with `status === 409` is rethrown, landing back in the caller's `try/catch` and the normal error modal. `setSessionName`'s 409 (duplicate name) is a different, real conflict and is never routed through this hook.
+- **`useSessionJobs`** owns `objects`, `selectedObjectId`, and `jobs: JobInfo[]` (fed from `useSessionSync`, replaced wholesale each poll — `JobInfo` carries no local-only fields to preserve, unlike `objects`). `runSegment`/`selectMask` just submit and return — no local loading state, no single-flight restriction; several segment clicks in a row all queue. A **picker-chain effect** watches `jobs` for the oldest not-yet-dismissed `done` segment job and opens `MaskPickerModal` on it; `dismissedSegmentJobIdsRef` (reset on remount) tracks pickers closed without choosing, so re-entering a session replays the same chain. `selectMask(jobId, maskId)` submits inpaint with `from_job_id: jobId` so the source segment row is consumed atomically. `hasPendingWork` is `jobs.some(status is queued/running) || isDuplicating || isDeleting || any rotation pending`. A **conflict effect** watches `jobs` for a job that resolved to status `"conflict"` and fires `onConflict` once per job (routed to `useConflictNotices`, the same inline notice a synchronous 409 used to produce) then auto-dismisses that row. The out-of-order-response guard `highestCommittedObjectIdRef` used to protect (`selectMask`'s own response applying an older `background_b64` over a newer one) is now moot: `backgroundSrc` no longer comes from a specific job's response at all, only from `useSessionSync`'s reconcile re-fetching current cache status — there is nothing left to arrive out of order. The ref still exists, tracking the high-water object id for `duplicateObject`/`loadRestoredObjects`. An `imageIdRef` check in every callback drops stale results if the user switched sessions mid-flight.
+- **`useSessionSync`** polls `POST /images/{uid}/sync-check` every ~2s while `hasPendingWork` is true, plus once on window focus/visibilitychange — idle sessions never poll. Every response's `jobs` field is applied to `useSessionJobs`'s `jobs` state **unconditionally**, not gated on `needs_refresh` — a job moving `queued → running → done` doesn't bump the session's `last_changed` (only object/session mutations do), so `needs_refresh` can stay `false` across an entire job's lifecycle. On `needs_refresh` specifically, it also re-fetches `/objects` + `/cache` and **merges** into local object state rather than replacing it: existing objects keep their local `offset`/`hidden`/`glbData`, new ones are appended, vanished ones are dropped (clearing selection if selected). The background URL gets a `?t=<lastChanged>` cache-bust query param on reconcile. `recordLocalMutation` (an alias for the same check) is also called after every local mutation (upload, job submit, rename, session rename) to seed `lastChanged` early.
+- **`useConflictNotices`** turns a job's `"conflict"` status (mask overlaps an in-flight removal, segment click inside a lease, canvas-writer timeout — same causes as the old synchronous 409, just detected later, at execution instead of submit) into a dismissible, auto-expiring inline notice instead of the modal error dialog. Any error that isn't an `ApiError` with `status === 409` is rethrown, landing back in the caller's `try/catch` and the normal error modal — `WorkspaceScreen`'s `handleJobConflict` manufactures that `ApiError(409, ...)` shape from the job's `error` text so this hook doesn't need to know jobs exist. `setSessionName`'s 409 (duplicate name) is a different, real conflict and is never routed through this hook.
+
+3D generation (`POST /3d/test-3d`) is also queued now but is **not** watched through `useSessionJobs`/`jobs` — `WorkspaceScreen.handleRotate` submits it directly (`submitGenerate3D`) and awaits `waitForJobDone` (a small poll loop in `api/images.ts`, 800ms interval) before reading the GLB back via `fetchCached3DModel`, preserving the existing awaited-under-a-spinner UX (`isPreparing3D`). `waitForJobDone` treats a 404 as success, not failure: a successful `generate_3d` job's row is deleted by the dispatcher (same as inpaint — its real result is the GLB file, already on disk by the time the row disappears), and this is only safe because the caller polls a job id it just submitted itself.
 
 `api/images.ts`'s `handleJsonResponse` throws a typed `ApiError` (with `.status` and `.detail` parsed from FastAPI's `{"detail": ...}` envelope) instead of a plain `Error`, so callers can distinguish 409 from a real failure by status code rather than string-matching the message.
 
@@ -212,7 +290,7 @@ The backend (`docs/backend/concurrency.md`) allows a second non-overlapping inpa
 
 Per the spec, the following are planned but absent from the codebase:
 - Java SpringBoot core server (auth, project management, DB)
-- PostgreSQL + S3 storage
+- S3 blob storage (Postgres metadata is implemented — see "Session & Object Metadata (Postgres)" above; blobs are still local disk only)
 - Collaboration (Spectator/Partner/CoAdmin roles, Operational Transformation)
 - Drag-and-drop / Smart Paste
 - Depth adjustment

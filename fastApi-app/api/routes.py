@@ -11,28 +11,25 @@ import os
 
 from PIL import Image, UnidentifiedImageError
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
 from pathlib import Path
 
 from core.image_processing import (
-    build_object_metadata_for_inpaint,
     debug_click_image_path,
     get_image_path,
 )
 from core.image_codec import to_base64_ascii
 from core.image_validation import ImageValidationError, ImageValidator
-from core.inference_pool.client import InferenceJobError, get_inference_client
+from core.auth.identity import current_user_id
+from core.inference_pool.client import get_inference_client
 from core.inference_pool.session_runtime import (
     SessionConflictError,
     acquire_canvas_writer,
-    assert_segment_click_allowed,
-    drop_lease,
-    pinned_mask_ids,
     release_canvas_writer,
-    try_admit_inpaint,
 )
-from core.mask_cache import delete_candidate, delete_candidates
+from core.mask_cache import delete_candidates
+from core.repositories.job_repo import create_job, delete_job, get_job, list_session_jobs
 from core.depth_cache import delete_session_depth_maps
 from core.normal_cache import delete_session_normal_maps, warm_normals_for_session
 from core.camera_calib_cache import delete_session_camera_calib, save_camera_calib
@@ -41,26 +38,23 @@ from core.object_metadata import (
     ObjectMetadata,
     build_clone_metadata,
     get_object_by_uuid,
+    list_object_ids,
     load_object_metadata,
+    next_object_id,
     remove_object_index_entry,
     save_object_metadata,
     set_object_name,
     set_object_offset,
-    delete_session_metadata,
 )
 from schemas.image import (
     ClickRequest,
     ClickResultResponse,
     DuplicateObjectResponse,
     ImageUploadResponse,
-    InpaintMaskRequest,
-    InpaintMaskResponse,
     ObjectInfo,
     ObjectListResponse,
     ObjectMetadataResponse,
-    SegmentMaskOption,
     SegmentRequest,
-    SegmentResponse,
     SessionInfo,
     SessionPreviewRequest,
     SessionSyncCheckRequest,
@@ -76,6 +70,7 @@ from schemas.image import (
     BatchRequest,
     BatchResponse,
 )
+from schemas.jobs import JobSubmitResponse, SubmitInpaintRequest
 from core.object_storage import (
     copy_object_artifacts,
     current_background_path,
@@ -83,8 +78,6 @@ from core.object_storage import (
     delete_object_artifact_files,
     legacy_object_cutout_path,
     legacy_object_glb_path,
-    list_object_ids,
-    next_object_id,
     object_cutout_path,
     object_glb_path,
     remove_file,
@@ -93,24 +86,23 @@ from core.object_storage import (
     session_preview_path,
 )
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes, scale_cutout_bounds
-from settings import (
-    clear_session_last_changed,
-    deregister_uid,
-    get_3d_storage_dir,
-    get_image_storage_dir,
-    get_session_last_changed,
+from core.repositories.session_repo import (
+    SessionNotFoundError,
+    delete_session as delete_session_row,
     evaluate_session_sync,
     is_session_registered,
+    list_sessions_with_names,
     load_names,
-    load_session_uids,
     register_uid,
-    remove_session_name,
+    set_session_name,
+    touch_session,
+)
+from settings import (
+    get_3d_storage_dir,
+    get_image_storage_dir,
     get_upload_validation_enabled,
     get_camera_calibration_enabled,
     get_normal_map_enabled,
-    SessionNotFoundError,
-    set_session_name,
-    touch_session,
 )
 
 router = APIRouter(prefix="/images", tags=["images"])
@@ -121,11 +113,9 @@ logger = logging.getLogger(__name__)
 async def get_sessions() -> list[SessionInfo]:
     """Return all image UIDs registered via upload, with optional human-readable names."""
     logger.info("Sessions list requested")
-    uids = load_session_uids()
-    names = load_names()
     result = [
-        SessionInfo(uid=u, name=names.get(u), last_changed=get_session_last_changed(u))
-        for u in uids
+        SessionInfo(uid=uid, name=name, last_changed=last_changed)
+        for uid, name, last_changed in list_sessions_with_names()
     ]
     logger.info("Sessions list returned: count=%d", len(result))
     return result
@@ -317,172 +307,62 @@ def handle_click(request: ClickRequest) -> ClickResultResponse:
     )
 
 
-@router.post("/segment", response_model=SegmentResponse)
-def segment_image(request: SegmentRequest) -> SegmentResponse:
-    """Return all mask candidates for a click without running inpainting."""
+@router.post("/segment", response_model=JobSubmitResponse, status_code=202)
+async def segment_image(
+    request: SegmentRequest, user_id: str = Depends(current_user_id)
+) -> JobSubmitResponse:
+    """Queue segmentation for a click and return immediately.
 
+    The actual work (and any 409-equivalent conflict against an in-flight
+    inpaint's region) is resolved when the dispatcher claims the job — see
+    `core/jobs/handlers.py::run_segment_job`. Poll `GET /jobs/{job_id}` (or
+    `POST /images/{uid}/sync-check`, which now embeds the session's jobs) for
+    the result.
+    """
     logger.info(
-        "Segmentation requested: image_id=%s x=%d y=%d verify=%s",
+        "Segmentation queued: image_id=%s x=%d y=%d verify=%s user_id=%s",
         request.image_id,
         request.x,
         request.y,
         request.verify.value,
+        user_id,
     )
+    payload = {
+        "x": request.x,
+        "y": request.y,
+        "options": request.options.model_dump() if request.options else None,
+        "verify": request.verify.value,
+    }
+    job = create_job(user_id, request.image_id, "segment", payload)
+    return JobSubmitResponse(job_id=job.id)
 
-    storage_dir: Path = get_image_storage_dir()
 
-    try:
-        assert_segment_click_allowed(request.image_id, request.x, request.y)
-        candidates = get_inference_client().run_segment(
-            image_id=request.image_id,
-            base_dir=storage_dir,
-            x=request.x,
-            y=request.y,
-            options=request.options,
-            exclude_mask_ids=frozenset(pinned_mask_ids(request.image_id)),
-            verify=request.verify.value,
-        )
-    except SessionConflictError as exc:
-        logger.warning("Segmentation rejected due to session conflict: %s", exc)
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except ValueError as exc:
-        logger.exception("Segmentation failed due to invalid input")
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except InferenceJobError as exc:
-        if str(exc) == "no viable mask":
-            logger.warning(
-                "Auto mask pick found no viable candidate: image_id=%s",
-                request.image_id,
-            )
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        logger.exception("Segmentation failed")
-        raise HTTPException(status_code=500, detail=f"Segmentation failed: {exc}") from exc
-    except FileNotFoundError as exc:
-        logger.exception("Segmentation failed due to missing file")
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Segmentation failed")
-        raise HTTPException(status_code=500, detail=f"Segmentation failed: {exc}") from exc
+@router.post("/inpaint", response_model=JobSubmitResponse, status_code=202)
+async def inpaint_mask(
+    request: SubmitInpaintRequest, user_id: str = Depends(current_user_id)
+) -> JobSubmitResponse:
+    """Queue inpainting of one selected cached mask candidate and return immediately.
 
-    masks: list[SegmentMaskOption] = []
-    for mask_id, cutout_bytes in candidates:
-        # Frontend previews object pixels directly. Raw refined masks stay
-        # server-side because they are model inputs, not user-facing images.
-        masks.append(
-            SegmentMaskOption(
-                mask_id=mask_id,
-                cutout_b64=to_base64_ascii(cutout_bytes),
-                format="png",
-                cutout_bounds=extract_cutout_bounds_from_png_bytes(cutout_bytes),
-            )
-        )
-
+    If `from_job_id` names the segment job this mask came from, that job's
+    row is consumed here (removed from the picker backlog) — the mask id
+    stays protected from a concurrent segment's candidate wipe because this
+    new inpaint job is now itself in `reserved_mask_ids` until it runs.
+    """
     logger.info(
-        "Segmentation complete: image_id=%s candidates=%d verify=%s",
-        request.image_id,
-        len(masks),
-        request.verify.value,
-    )
-    return SegmentResponse(image_id=request.image_id, masks=masks)
-
-
-@router.post("/inpaint", response_model=InpaintMaskResponse)
-def inpaint_mask(request: InpaintMaskRequest) -> InpaintMaskResponse:
-    """Inpaint background using one user-selected cached mask candidate."""
-
-    logger.info(
-        "Inpainting requested: image_id=%s mask_id=%s verify=%s",
+        "Inpainting queued: image_id=%s mask_id=%s from_job_id=%s user_id=%s",
         request.image_id,
         request.mask_id,
-        request.verify.value,
+        request.from_job_id,
+        user_id,
     )
+    job = create_job(user_id, request.image_id, "inpaint", {"mask_id": request.mask_id})
 
-    storage_dir: Path = get_image_storage_dir()
-    lease = None
+    if request.from_job_id is not None:
+        source = get_job(user_id, request.from_job_id)
+        if source is not None and source.kind == "segment":
+            delete_job(request.from_job_id)
 
-    try:
-        lease = try_admit_inpaint(request.image_id, request.mask_id, storage_dir)
-    except FileNotFoundError as exc:
-        logger.exception("Inpainting failed due to missing cached mask or image")
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except SessionConflictError as exc:
-        logger.warning("Inpainting rejected due to session conflict: %s", exc)
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    try:
-        try:
-            acquire_canvas_writer(request.image_id)
-        except SessionConflictError as exc:
-            logger.warning("Inpainting rejected due to canvas writer timeout: %s", exc)
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-        try:
-            background_bytes, cutout_bytes, image_format = get_inference_client().run_inpaint(
-                image_id=request.image_id,
-                mask_id=request.mask_id,
-                base_dir=storage_dir,
-            )
-        except FileNotFoundError as exc:
-            logger.exception("Inpainting failed due to missing cached mask or image")
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except ValueError as exc:
-            logger.exception("Inpainting failed due to invalid input")
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except Exception as exc:
-            logger.exception("Inpainting failed")
-            raise HTTPException(status_code=500, detail=f"Inpainting failed: {exc}") from exc
-
-        # Allocate next sequential object id for this session.
-        object_id = next_object_id(storage_dir, request.image_id)
-
-        object_metadata = build_object_metadata_for_inpaint(
-            image_id=request.image_id,
-            mask_id=request.mask_id,
-            object_id=object_id,
-            base_dir=storage_dir,
-        )
-        save_object_metadata(storage_dir, object_metadata)
-
-        # Background always written to the single cumulative canvas path (overwrites → becomes new canvas).
-        background_image_path = current_background_path(storage_dir, request.image_id)
-        background_image_path.write_bytes(background_bytes)
-
-        # Cutout written to the per-object numbered path (never overwrites a prior object).
-        cutout_image_path = object_cutout_path(storage_dir, request.image_id, object_id)
-        cutout_image_path.write_bytes(cutout_bytes)
-
-        # Selected candidate is promoted; remove only that mask's temp files.
-        delete_candidate(storage_dir, request.image_id, request.mask_id)
-        touch_session(request.image_id)
-    finally:
-        if lease is not None:
-            drop_lease(request.image_id, lease)
-        release_canvas_writer(request.image_id)
-
-    background_b64 = to_base64_ascii(background_bytes)
-    cutout_b64 = to_base64_ascii(cutout_bytes)
-    cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_bytes)
-
-    logger.info(
-        "Inpainting complete: image_id=%s mask_id=%s background_bytes=%d cutout_bytes=%d object_id=%d object_uuid=%s",
-        request.image_id,
-        request.mask_id,
-        len(background_bytes),
-        len(cutout_bytes),
-        object_id,
-        object_metadata.uuid,
-    )
-
-    return InpaintMaskResponse(
-        image_id=request.image_id,
-        background_b64=background_b64,
-        cutout_b64=cutout_b64,
-        format=image_format,
-        cutout_bounds=cutout_bounds,
-        object_id=object_id,
-        object_uuid=object_metadata.uuid,
-        source_elevation_deg=object_metadata.source_elevation_deg,
-    )
+    return JobSubmitResponse(job_id=job.id)
 
 
 @router.post("/{uid}/batch", response_model=BatchResponse)
@@ -516,20 +396,20 @@ def run_batch(uid: str, request: BatchRequest) -> BatchResponse:
 async def delete_session(uid: str) -> Response:
     """Delete a session and all its associated files from disk.
 
-    Removes the uid from sessions.json, removes its name from names.json if
-    present, and deletes every file associated with that uid: the original
-    uploaded image, processed background and cutout PNGs, candidate mask
-    files, debug overlay, and any cached 3D model.  Missing files are
-    silently ignored so the endpoint is safe to call more than once.
+    Deletes the session's DB row (cascading to every object row under it) and
+    every file associated with that uid: the original uploaded image,
+    processed background and cutout PNGs, candidate mask files, debug
+    overlay, and any cached 3D model. Missing files are silently ignored so
+    the endpoint is safe to call more than once.
     """
     logger.info("Session delete requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
     removed = 0
 
     try:
-        deregister_uid(uid)
-        remove_session_name(uid)
-        clear_session_last_changed(uid)
+        # Snapshot object ids before the DB delete cascades them away.
+        obj_ids = list_object_ids(uid)
+        delete_session_row(uid)
 
         for path in storage_dir.glob(f"{uid}.*"):
             path.unlink(missing_ok=True)
@@ -548,15 +428,12 @@ async def delete_session(uid: str) -> Response:
 
         delete_candidates(storage_dir, uid)
 
-        # Collect per-object ids before deleting files (list_object_ids scans disk).
-        obj_ids = list_object_ids(storage_dir, uid)
-
-        # Remove all numbered per-object cutouts and GLB files.
+        # Remove all numbered per-object cutouts and GLB files (metadata rows
+        # already gone via the session-delete cascade above).
         for oid in obj_ids:
             removed += remove_file(object_cutout_path(storage_dir, uid, oid))
             removed += remove_file(object_glb_path(three_d_dir, uid, oid))
 
-        delete_session_metadata(storage_dir, uid, obj_ids)
         removed += delete_session_depth_maps(storage_dir, uid)
         removed += delete_session_normal_maps(storage_dir, uid)
         removed += delete_session_camera_calib(storage_dir, uid)
@@ -596,8 +473,15 @@ async def set_name(uid: str, request: SetNameRequest) -> SessionInfo:
 
 
 @router.post("/{uid}/sync-check", response_model=SessionSyncCheckResponse)
-async def sync_check_session(uid: str, request: SessionSyncCheckRequest) -> SessionSyncCheckResponse:
-    """Compare a client-held session timestamp against server truth."""
+async def sync_check_session(
+    uid: str, request: SessionSyncCheckRequest, user_id: str = Depends(current_user_id)
+) -> SessionSyncCheckResponse:
+    """Compare a client-held session timestamp against server truth.
+
+    Also returns this session's jobs (queued/running/done/failed/conflict) —
+    the polling channel the frontend uses to notice queued work has landed,
+    since this endpoint is already polled every ~2s while work is pending.
+    """
     logger.debug(
         "Session sync-check requested: uid=%s client_last_changed=%r",
         uid,
@@ -623,9 +507,11 @@ async def sync_check_session(uid: str, request: SessionSyncCheckRequest) -> Sess
             uid,
             server_last_changed,
         )
+    jobs = list_session_jobs(user_id, uid)
     return SessionSyncCheckResponse(
         last_changed=server_last_changed,
         needs_refresh=needs_refresh,
+        jobs=jobs,
     )
 
 
@@ -703,7 +589,7 @@ async def get_object_by_uuid_endpoint(object_uuid: str) -> ObjectMetadataRespons
     """Return metadata for one object searchable by its UUID."""
     logger.info("Object metadata requested: uuid=%s", object_uuid)
     storage_dir = get_image_storage_dir()
-    metadata = get_object_by_uuid(storage_dir, object_uuid)
+    metadata = get_object_by_uuid(object_uuid)
     if metadata is None:
         logger.warning("Object metadata not found: uuid=%s", object_uuid)
         raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
@@ -734,18 +620,18 @@ async def update_object(object_uuid: str, request: UpdateObjectRequest) -> Objec
     )
     storage_dir = get_image_storage_dir()
 
-    metadata = get_object_by_uuid(storage_dir, object_uuid)
+    metadata = get_object_by_uuid(object_uuid)
     if metadata is None:
         logger.warning("Object update failed — not found: uuid=%s", object_uuid)
         raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
 
     fields = request.model_fields_set
     if "name" in fields:
-        metadata = set_object_name(storage_dir, object_uuid, request.name)
+        metadata = set_object_name(object_uuid, request.name)
     if "offset_x" in fields or "offset_y" in fields:
         next_offset_x = request.offset_x if request.offset_x is not None else metadata.offset_x
         next_offset_y = request.offset_y if request.offset_y is not None else metadata.offset_y
-        metadata = set_object_offset(storage_dir, object_uuid, next_offset_x, next_offset_y)
+        metadata = set_object_offset(object_uuid, next_offset_x, next_offset_y)
 
     touch_session(metadata.session_id)
     response = _metadata_to_response(metadata, storage_dir, get_3d_storage_dir())
@@ -766,7 +652,7 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
     storage_dir = get_image_storage_dir()
     three_d_dir = get_3d_storage_dir()
 
-    source = get_object_by_uuid(storage_dir, object_uuid)
+    source = get_object_by_uuid(object_uuid)
     if source is None:
         logger.warning("Object duplicate failed — not found: uuid=%s", object_uuid)
         raise HTTPException(
@@ -825,8 +711,8 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
         try:
-            new_object_id = next_object_id(storage_dir, source.session_id)
-            clone_metadata = build_clone_metadata(storage_dir, source, new_object_id, source_bounds)
+            new_object_id = next_object_id(source.session_id)
+            clone_metadata = build_clone_metadata(source, new_object_id, source_bounds)
             copy_object_artifacts(
                 base_dir=storage_dir,
                 glb_dir=three_d_dir,
@@ -834,7 +720,7 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
                 source_object_id=source.object_id,
                 dest_object_id=new_object_id,
             )
-            save_object_metadata(storage_dir, clone_metadata)
+            save_object_metadata(clone_metadata)
             touch_session(source.session_id)
         finally:
             release_canvas_writer(source.session_id)
@@ -867,8 +753,8 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
 def delete_object(object_uuid: str) -> Response:
     """Permanently delete one object and all its per-object artifacts.
 
-    Removes the cutout, any GLB, all novel-view / preview caches, the
-    metadata JSON, and the UUID index entry. Session-level artifacts —
+    Removes the cutout, any GLB, all novel-view / preview caches, and the
+    metadata row. Session-level artifacts —
     background canvas, depth cache, camera calibration, the original upload,
     and the dashboard preview thumbnail — are shared with surviving objects
     and are never touched here. In particular the background canvas already
@@ -882,7 +768,7 @@ def delete_object(object_uuid: str) -> Response:
     storage_dir = get_image_storage_dir()
     three_d_dir = get_3d_storage_dir()
 
-    target = get_object_by_uuid(storage_dir, object_uuid)
+    target = get_object_by_uuid(object_uuid)
     if target is None:
         logger.warning("Object delete failed — not found: uuid=%s", object_uuid)
         raise HTTPException(
@@ -906,7 +792,6 @@ def delete_object(object_uuid: str) -> Response:
                 glb_dir=three_d_dir,
                 uid=target.session_id,
                 object_id=target.object_id,
-                include_metadata=True,
             )
             if target.object_id == 0:
                 removed += delete_legacy_object_artifacts(
@@ -1048,9 +933,9 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
     """
     logger.info("Objects list requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
-    # TODO: validate uid against sessions.json and return 404 for unknown sessions.
+    # TODO: validate uid against the sessions table and return 404 for unknown sessions.
     # Currently returns 200 + empty list for unknown UIDs, consistent with /{uid}/cache.
-    obj_ids = list_object_ids(storage_dir, uid)
+    obj_ids = list_object_ids(uid)
     three_d_dir = get_3d_storage_dir()
 
     # TODO: this loop performs blocking I/O per object synchronously on the async event loop.
@@ -1074,7 +959,7 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
             has_3d = resolve_object_glb_path(three_d_dir, uid, oid).exists()
             # Metadata is absent for objects created before it was introduced;
             # those fall back to nulls plus an unmoved (0, 0) offset.
-            meta = load_object_metadata(storage_dir, uid, oid)
+            meta = load_object_metadata(uid, oid)
             objects_list.append(
                 ObjectInfo(
                     object_id=oid,
@@ -1110,7 +995,7 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     """Return which processed artifacts are cached on disk for the given UID."""
     logger.info("Cache status requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
-    obj_ids = list_object_ids(storage_dir, uid)
+    obj_ids = list_object_ids(uid)
 
     # Derive cutout bounds from the latest (highest-id) object.
     latest_object_id = max(obj_ids) if obj_ids else None
@@ -1171,7 +1056,7 @@ async def get_cutout(uid: str) -> FileResponse:
     """
     logger.info("Cutout requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
-    obj_ids = list_object_ids(storage_dir, uid)
+    obj_ids = list_object_ids(uid)
     if not obj_ids:
         logger.warning("Cutout not found: uid=%s (no object ids)", uid)
         raise HTTPException(status_code=404, detail="Cutout not found")

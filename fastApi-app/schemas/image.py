@@ -11,6 +11,9 @@ from avroom_object_removal.ai_engines.novel_view import (
     ZoomDirection,
 )
 
+from schemas.common import CutoutBounds  # re-exported: many modules import CutoutBounds from here
+from schemas.jobs import JobInfo
+
 # Fallback source elevation used whenever an object predates elevation
 # estimation or its metadata could not be read. Kept here so the schemas, the
 # stored metadata model and the novel-view endpoint cannot drift apart.
@@ -61,6 +64,13 @@ class SessionSyncCheckResponse(BaseModel):
     needs_refresh: Annotated[
         bool,
         Field(description="True when the client must re-poll session data from the server."),
+    ]
+    jobs: Annotated[
+        list[JobInfo],
+        Field(
+            default_factory=list,
+            description="This session's non-done jobs plus unconsumed segment results, oldest first.",
+        ),
     ]
 
 
@@ -199,17 +209,6 @@ class SegmentRequest(ClickRequest):
     ] = VerifyMode.MANUAL
 
 
-class CutoutBounds(BaseModel):
-    """Tight visible-object bounds inside the cutout image."""
-
-    left: Annotated[int, Field(ge=0, description="Left-most visible pixel, inclusive.")]
-    top: Annotated[int, Field(ge=0, description="Top-most visible pixel, inclusive.")]
-    right: Annotated[int, Field(ge=0, description="Right-most visible bound, exclusive.")]
-    bottom: Annotated[int, Field(ge=0, description="Bottom-most visible bound, exclusive.")]
-    natural_width: Annotated[int, Field(gt=0, description="Full cutout image width in pixels.")]
-    natural_height: Annotated[int, Field(gt=0, description="Full cutout image height in pixels.")]
-
-
 class ClickResultResponse(BaseModel):
     """Segmentation result returned from a click on an image.
 
@@ -238,82 +237,6 @@ class ClickResultResponse(BaseModel):
         Field(default=None, description="Tight visible-object bounds inside the cutout PNG."),
     ]
 
-
-class SegmentMaskOption(BaseModel):
-    """One user-selectable segmentation candidate."""
-
-    mask_id: Annotated[
-        str,
-        Field(pattern=r"^\d+$", description="Identifier for the cached refined mask and cutout candidate."),
-    ]
-    cutout_b64: Annotated[
-        str,
-        Field(description="Base64-encoded BGRA cutout preview for this candidate."),
-    ]
-    format: Annotated[
-        str,
-        Field(description="Preview image format, currently 'png'."),
-    ]
-    cutout_bounds: Annotated[
-        CutoutBounds | None,
-        Field(default=None, description="Tight visible-object bounds inside this cutout PNG."),
-    ]
-
-
-class SegmentResponse(BaseModel):
-    """Segmentation-only response with all candidate masks."""
-
-    image_id: Annotated[
-        str,
-        Field(description="Identifier of the image that was segmented."),
-    ]
-    masks: Annotated[
-        list[SegmentMaskOption],
-        Field(description="User-selectable mask candidates in model return order."),
-    ]
-
-
-class InpaintMaskRequest(BaseModel):
-    """Request payload for inpainting one selected cached mask."""
-
-    image_id: Annotated[
-        str,
-        Field(description="Identifier of the image whose mask candidate should be inpainted."),
-    ]
-    mask_id: Annotated[
-        str,
-        Field(min_length=1, pattern=r"^\d+$", description="Identifier of the selected cached mask candidate."),
-    ]
-    verify: Annotated[
-        VerifyMode,
-        Field(
-            description="Accepted for API symmetry with segment; auto inpaint retry is not implemented yet.",
-        ),
-    ] = VerifyMode.MANUAL
-
-
-class InpaintMaskResponse(ClickResultResponse):
-    """Final result returned after selected-mask inpainting."""
-
-    object_id: Annotated[
-        int,
-        Field(
-            default=0,
-            ge=0,
-            description="Zero-based integer id assigned to this newly created object within the session.",
-        ),
-    ]
-    object_uuid: Annotated[
-        str,
-        Field(description="Server-generated UUID for this object; primary searchable key."),
-    ]
-    source_elevation_deg: Annotated[
-        float,
-        Field(
-            default=DEFAULT_SOURCE_ELEVATION_DEG,
-            description="Estimated Zero123 source elevation for this object (degrees).",
-        ),
-    ]
 
 
 class UpdateObjectRequest(BaseModel):

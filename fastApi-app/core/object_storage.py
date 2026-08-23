@@ -9,7 +9,6 @@ from :mod:`mask_cache`, which handles *temporary* segmentation candidates
 """
 
 import logging
-import re
 import shutil
 from pathlib import Path
 
@@ -44,12 +43,6 @@ def object_cutout_path(base_dir: Path, uid: str, object_id: int) -> Path:
         Absolute (or relative, depending on *base_dir*) :class:`~pathlib.Path`.
     """
     return base_dir / f"{uid}_{object_id}_cutout.png"
-
-
-def object_meta_path(base_dir: Path, session_id: str, object_id: int) -> Path:
-    """Return the canonical path for one object's metadata JSON file."""
-
-    return base_dir / f"{session_id}_{object_id}_meta.json"
 
 
 def _novel_view_stem(uid: str, object_id: int, azimuth_deg: float, relative_elevation_deg: float) -> str:
@@ -176,58 +169,6 @@ def resolve_object_glb_path(glb_dir: Path, uid: str, object_id: int) -> Path:
         )
         return legacy
     return numbered
-
-
-def list_object_ids(base_dir: Path, uid: str) -> list[int]:
-    """Return sorted list of object ids for *uid* found in *base_dir*.
-
-    Scans *base_dir* for files matching the pattern
-    ``^{uid}_(<digits>)_cutout\\.png$``.  Because ``\\d+`` only matches
-    decimal digits, candidate files like ``{uid}_mask_3_cutout.png`` are
-    **not** picked up — "mask_3" is not all-digits.
-
-    Additionally, if the legacy file ``{uid}_cutout.png`` exists, id ``0`` is
-    included (deduplicated).
-
-    Args:
-        base_dir: Directory that contains session artifacts.
-        uid: Session UID.
-
-    Returns:
-        Sorted ascending list of integer object ids.
-    """
-    pattern = re.compile(r"^" + re.escape(uid) + r"_(\d+)_cutout\.png$")
-    ids: set[int] = set()
-
-    if base_dir.is_dir():
-        for entry in base_dir.iterdir():
-            m = pattern.match(entry.name)
-            if m:
-                ids.add(int(m.group(1)))
-
-        if legacy_object_cutout_path(base_dir, uid).exists():
-            ids.add(0)
-
-    return sorted(ids)
-
-
-def next_object_id(base_dir: Path, uid: str) -> int:
-    """Return the next available object id for *uid*.
-
-    If no objects have been finalised yet, returns ``0``.  Otherwise returns
-    ``max(existing_ids) + 1``.
-
-    Args:
-        base_dir: Directory that contains session artifacts.
-        uid: Session UID.
-
-    Returns:
-        Non-negative integer to use as the id for the next object.
-    """
-    existing = list_object_ids(base_dir, uid)
-    if not existing:
-        return 0
-    return max(existing) + 1
 
 
 def current_background_path(base_dir: Path, uid: str) -> Path:
@@ -385,12 +326,13 @@ def delete_object_artifact_files(
     glb_dir: Path,
     uid: str,
     object_id: int,
-    include_metadata: bool = True,
 ) -> int:
     """Delete per-object artifact files for *object_id*. Returns files removed.
 
     Used to roll back a failed clone so ``list_object_ids`` never sees a cutout
-    without matching metadata.
+    without matching metadata. Metadata itself lives in Postgres
+    (`core/object_metadata.py`), not on disk — callers delete that row
+    separately.
     """
 
     removed = remove_file(object_cutout_path(base_dir, uid, object_id))
@@ -399,9 +341,6 @@ def delete_object_artifact_files(
     for novel_path in list_object_novel_view_paths(base_dir, uid, object_id):
         novel_path.unlink(missing_ok=True)
         removed += 1
-
-    if include_metadata:
-        removed += remove_file(object_meta_path(base_dir, uid, object_id))
 
     logger.debug(
         "Deleted object artifact files: uid=%s object_id=%d removed=%d",

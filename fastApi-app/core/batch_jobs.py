@@ -25,8 +25,9 @@ from core.inference_pool.session_runtime import (
     try_admit_inpaint,
 )
 from core.mask_cache import delete_candidate, load_refined_mask, save_candidate
-from core.object_metadata import get_object_by_uuid, save_object_metadata
-from core.object_storage import current_background_path, next_object_id, object_cutout_path, object_glb_path
+from core.object_metadata import get_object_by_uuid, next_object_id, save_object_metadata
+from core.object_storage import current_background_path, object_cutout_path, object_glb_path
+from core.repositories.session_repo import get_session_last_changed, touch_session
 from schemas.image import (
     BatchBoxSource,
     BatchClicksSource,
@@ -36,7 +37,7 @@ from schemas.image import (
     BatchRequest,
     BatchResponse,
 )
-from settings import get_3d_storage_dir, get_session_last_changed, touch_session
+from settings import get_3d_storage_dir
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ def run_session_batch(image_id: str, request: BatchRequest, base_dir: Path) -> B
 
     if isinstance(request.source, BatchObjectsSource):
         for object_uuid in request.source.uuids:
-            meta = get_object_by_uuid(base_dir, object_uuid)
+            meta = get_object_by_uuid(object_uuid)
             if meta is None or meta.session_id != image_id:
                 created.append(
                     BatchObjectResult(status="skipped", error="unknown object uuid")
@@ -217,14 +218,14 @@ def _inpaint_one_job(image_id: str, mask_id: str, base_dir: Path) -> BatchObject
             mask_id=mask_id,
             base_dir=base_dir,
         )
-        object_id = next_object_id(base_dir, image_id)
+        object_id = next_object_id(image_id)
         object_metadata = build_object_metadata_for_inpaint(
             image_id=image_id,
             mask_id=mask_id,
             object_id=object_id,
             base_dir=base_dir,
         )
-        save_object_metadata(base_dir, object_metadata)
+        save_object_metadata(object_metadata)
         current_background_path(base_dir, image_id).write_bytes(background_bytes)
         object_cutout_path(base_dir, image_id, object_id).write_bytes(cutout_bytes)
         delete_candidate(base_dir, image_id, mask_id)

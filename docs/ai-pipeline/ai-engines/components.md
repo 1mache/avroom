@@ -10,7 +10,7 @@ Pattern everywhere under [`TestModules/src/ai_engines/`](../../../TestModules/sr
 | Segmentation | `ImageSegmentationFacade` | SAM (`SamSegmentationStrategy`) |
 | Inpainting | `ImageInpaintingFacade` | LaMa + optional SD (`HybridInpaintingStrategy`) |
 | Novel view | `NovelViewFacade` | Facade default: Stable Zero123; HTTP: MeshRender (`MeshRenderNovelViewStrategy`) |
-| Reconstruction 3D | `Reconstruction3DFacade` | OpenLRM local (`OpenLrmReconstructionStrategy`, default); Trellis HF Space (`TrellisReconstructionStrategy`) when injected |
+| Reconstruction 3D | `Reconstruction3DFacade` | Hunyuan3D-2.1 HF Space (`Hunyuan3D2ReconstructionStrategy`, default), automatic fallback to TripoSR (`TriposrReconstructionStrategy`); OpenLRM/Trellis/VFusion3D when injected |
 | Content validation | `ContentValidationFacade` | CLIP zero-shot (`ClipZeroShotContentValidationStrategy` via composite) |
 | Inpainting verification | `InpaintingVerificationFacade` | CLIP labels on padded crop (`ClipLabelInpaintingVerificationStrategy`) |
 | Normal mapping | `NormalMappingFacade` | Metric3D ViT (`Metric3DNormalMappingStrategy`; debug only) |

@@ -1,7 +1,7 @@
 // App-level view models for the result stage. These are derived from API DTOs
 // (see types/api.ts) but carry client-only state (drag offset, hidden flag,
 // glbData) that the backend never sees.
-import type { SegmentMaskOption } from "./api";
+import type { SegmentMaskResult } from "./api";
 
 export interface ClickPosition {
   x: number;
@@ -116,19 +116,11 @@ export function effectiveDisplayBounds(
   };
 }
 
-// One in-flight inpaint. Captured at mask-selection time — not read from live
-// UI state at resolution time — because the user may click a new point (and
-// start a second concurrent job) before this one's response lands.
-export interface PendingInpaintJob {
-  jobId: string;
-  maskId: string;
-  kind?: "inpaint" | "batch";
-  batchId?: string;
-  normalizedClickPos: ClickPosition | null;
-  startedAt: number;
-}
-
+// Driven by the head of the session's server-side segment-job backlog (see
+// useSessionJobs' segmentQueue effect), not by a single in-flight request —
+// multiple segment results can be waiting at once, consumed one at a time.
+// `jobId` is threaded through to selectMask (as SubmitInpaintRequest.from_job_id,
+// so the source job row is consumed atomically) and to dismissal.
 export type SegmentPickerState =
   | { status: "idle" }
-  | { status: "loading" }
-  | { status: "choosing"; maskOptions: SegmentMaskOption[] };
+  | { status: "choosing"; jobId: string; maskOptions: SegmentMaskResult[] };

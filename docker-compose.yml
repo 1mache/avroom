@@ -1,0 +1,54 @@
+# Local dev infra only — not a deployment artifact.
+#
+# Normal workflow: `docker compose up db` (or `up -d db`), then run the
+# FastAPI server and React dev server on the host exactly as documented in
+# CLAUDE.md / run.ps1. The `api` service below is included for parity with
+# the eventual container image (see fastApi-app/Dockerfile once it exists)
+# but is not required for local development.
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: avroom
+      POSTGRES_PASSWORD: avroom
+      POSTGRES_DB: avroom
+    ports:
+      # Host port 5433, not 5432 -- a native Postgres install may already own
+      # 5432 on the host (Windows in particular). Container-internal port
+      # stays 5432, so the `api` service's DATABASE_URL below is unaffected.
+      - "5433:5432"
+    volumes:
+      - avroom-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U avroom"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    # Local-mode notification transport (see fastApi-app/core/notifications/).
+    # No auth, no TLS, no credentials to configure. SMTP on 1025, mail
+    # viewable at http://localhost:8025.
+    image: axllent/mailpit
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+
+  api:
+    build:
+      context: .
+      dockerfile: fastApi-app/Dockerfile
+    profiles: ["full"]
+    env_file:
+      - fastApi-app/.env
+    environment:
+      DATABASE_URL: postgresql+psycopg://avroom:avroom@db:5432/avroom
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  avroom-db:

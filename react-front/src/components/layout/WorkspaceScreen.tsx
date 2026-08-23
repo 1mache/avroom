@@ -2,15 +2,18 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
 import {
   API_BASE_URL,
+  ApiError,
   PREVIEW_API_READY,
+  deleteJob,
   fetchCached3DModel,
-  generate3DModel,
   getSessionObjects,
   getUidCacheStatus,
   saveSessionPreview,
   setObjectOffset,
   setSessionName as saveSessionName,
   warmSessionMaps,
+  submitGenerate3D,
+  waitForJobDone,
 } from "../../api/images";
 import { useConflictNotices, type ConflictContext } from "../../hooks/useConflictNotices";
 import { useSessionJobs, type JobErrorContext } from "../../hooks/useSessionJobs";
@@ -167,7 +170,27 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     capturePreviewRef.current();
   }, []);
 
-  const jobs = useSessionJobs(imageId, { onError: handleJobError, onMutated: handleMutated });
+  // A queued segment/inpaint job resolving to "conflict" (its mask/click
+  // overlapped an in-flight removal) reuses the same inline notice a
+  // synchronous 409 used to produce, by constructing the ApiError shape
+  // conflictNotices.notify expects.
+  const handleJobConflict = useCallback(
+    (job: { kind: string; error?: string | null }) => {
+      const context: ConflictContext = job.kind === "segment" ? "segment" : "inpaint";
+      try {
+        conflictNotices.notify(new ApiError(409, job.error ?? ""), context);
+      } catch (rethrown) {
+        setError(errorMessage(rethrown, "Unexpected error."));
+      }
+    },
+    [conflictNotices],
+  );
+
+  const jobs = useSessionJobs(imageId, {
+    onError: handleJobError,
+    onMutated: handleMutated,
+    onConflict: handleJobConflict,
+  });
 
   const sync = useSessionSync({
     imageId,
@@ -177,6 +200,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     selectedObjectId: jobs.selectedObjectId,
     setSelectedObjectId: jobs.setSelectedObjectId,
     setBackgroundSrc: jobs.setBackgroundSrc,
+    setJobs: jobs.setJobs,
     isDeleted: jobs.isObjectDeleted,
   });
 
@@ -499,14 +523,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
   const handleMaskSelected = useCallback(
     (maskId: string) => {
-      const normalized =
-        pickPoint && naturalSize
-          ? { x: pickPoint.x / naturalSize.width, y: pickPoint.y / naturalSize.height }
-          : null;
-      jobs.selectMask(maskId, normalized, verifyMode);
+      if (jobs.currentSegmentJobId) {
+        jobs.selectMask(jobs.currentSegmentJobId, maskId);
+      }
       setPickPoint(null);
     },
-    [jobs.selectMask, pickPoint, naturalSize, verifyMode],
+    [jobs.selectMask, jobs.currentSegmentJobId],
   );
 
   const handleMaskPickerClosed = useCallback(() => {
@@ -596,7 +618,26 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
     try {
       const cached = await fetchCached3DModel(imageId, targetObjectId);
-      const buffer = cached ?? (await generate3DModel(imageId, targetObjectId));
+      let buffer = cached;
+      if (!buffer) {
+        // Queued now instead of one blocking request: submit, wait for the
+        // dispatcher to finish it, then read the GLB it wrote to disk. If a
+        // generate_3d job for this object is already queued/running (the
+        // user exited mid-generation and clicked Rotate again on return),
+        // attach to that job instead of submitting a duplicate.
+        const jobId =
+          jobs.jobs.find(
+            (job) =>
+              job.kind === "generate_3d" &&
+              job.object_id === targetObjectId &&
+              (job.status === "queued" || job.status === "running"),
+          )?.job_id ?? (await submitGenerate3D(imageId, targetObjectId));
+        await waitForJobDone(jobId);
+        buffer = await fetchCached3DModel(imageId, targetObjectId);
+        if (!buffer) {
+          throw new Error("3D generation finished but no model was found.");
+        }
+      }
       jobs.setObjects((prev) =>
         prev.map((o) => (o.objectId === targetObjectId ? { ...o, glbData: buffer } : o)),
       );
@@ -618,6 +659,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     jobs.selectedObjectId,
     jobs.setObjects,
     jobs.setSelectedObjectId,
+    jobs.jobs,
     glbData,
   ]);
 
@@ -1053,14 +1095,26 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
   const photoSrc = jobs.backgroundSrc ?? originalSrc;
 
+  const activeJobs = jobs.jobs.filter((job) => job.status === "queued" || job.status === "running");
+  const segmentingCount = activeJobs.filter((job) => job.kind === "segment").length;
+  const removingCount = activeJobs.filter((job) => job.kind === "inpaint").length;
+  // Rotate's spinner has to survive exit/return: unlike segment/inpaint,
+  // generate_3d isn't watched through pendingJobs-style local state at all —
+  // handleRotate awaits it directly (see there) — so without this, exiting
+  // mid-generation and coming back shows the button idle even though a
+  // generate_3d job is still queued/running server-side for this object.
+  const activeGenerate3DJobId = activeJobs.find(
+    (job) => job.kind === "generate_3d" && job.object_id === jobs.selectedObjectId,
+  )?.job_id;
+
   const status = jobs.isBatching
     ? "batch cutting"
     : isSmartPasting
       ? "smart pasting"
-    : jobs.isSegmenting
-    ? "finding masks"
-    : jobs.pendingJobs.length > 0
-      ? `removing ${jobs.pendingJobs.length}`
+      : segmentingCount > 0
+        ? `finding masks${segmentingCount > 1 ? ` (${segmentingCount})` : ""}`
+        : removingCount > 0
+          ? `removing ${removingCount}`
       : jobs.objects.some((o) => o.rotation?.status === "pending")
         ? "rotating"
         : jobs.isDuplicating
@@ -1070,6 +1124,13 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             : mapsWarming
               ? "preparing maps"
               : null;
+
+  const handleDismissJob = useCallback((jobId: string) => {
+    jobs.setJobs((prev) => prev.filter((job) => job.job_id !== jobId));
+    void deleteJob(jobId).catch(() => {
+      // Non-fatal — worst case the entry reappears on the next sync tick.
+    });
+  }, [jobs.setJobs]);
 
   return (
     <div className="workspace">
@@ -1087,7 +1148,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         verifyMode={verifyMode}
         onVerifyModeChange={setVerifyMode}
         rotateMode={rotateMode}
-        isPreparing3D={isPreparing3D}
+        isPreparing3D={isPreparing3D || Boolean(activeGenerate3DJobId)}
         onRotate={handleRotate}
         isDuplicating={jobs.isDuplicating}
         onCopy={handleCopy}
@@ -1223,7 +1284,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         {imageId ? (
           <ObjectRail
             objects={jobs.objects}
-            pending={jobs.pendingJobs}
+            jobs={jobs.jobs}
             selectedObjectId={jobs.selectedObjectId}
             showOriginalIds={showOriginalIds}
             disabled={isPreparing3D}
@@ -1256,6 +1317,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             onToggleHidden={handleToggleHidden}
             onToggleShowOriginal={handleToggleShowOriginal}
             onRenameObject={handleRenameObject}
+            onDismissJob={handleDismissJob}
           />
         ) : null}
       </main>

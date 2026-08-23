@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sys
 import tempfile
 from pathlib import Path
@@ -17,13 +16,14 @@ if str(_APP_ROOT) not in sys.path:
     sys.path.insert(0, str(_APP_ROOT))
 
 import settings  # noqa: E402
+from core.repositories import session_repo  # noqa: E402
 from core.object_metadata import (  # noqa: E402
     create_object_metadata,
     get_object_by_uuid,
+    list_object_ids,
     save_object_metadata,
 )
 from core.object_storage import (  # noqa: E402
-    list_object_ids,
     object_cutout_path,
     object_glb_path,
     object_novel_view_path,
@@ -91,7 +91,7 @@ def _seed_object(
         source_elevation_deg=18.0,
         name=name,
     )
-    save_object_metadata(images_dir, meta)
+    save_object_metadata(meta)
     assert cutout_bytes
     return meta.uuid
 
@@ -110,8 +110,8 @@ def _build_client() -> Any:
 def test_delete_removes_all_artifacts_and_index_entry(
     storage_sandbox: Path, glb_dir: Path
 ) -> None:
-    settings.register_uid("sess-1")
-    before = settings.touch_session("sess-1")
+    session_repo.register_uid("sess-1")
+    before = session_repo.touch_session("sess-1")
     object_uuid = _seed_object(storage_sandbox, glb_dir, object_id=0)
 
     with _build_client() as client:
@@ -122,15 +122,9 @@ def test_delete_removes_all_artifacts_and_index_entry(
     assert not object_glb_path(glb_dir, "sess-1", 0).exists()
     assert not object_novel_view_path(storage_sandbox, "sess-1", 0, 40.0, 0.0).exists()
     assert not object_novel_view_preview_path(storage_sandbox, "sess-1", 0, 40.0, 0.0).exists()
-    assert not (storage_sandbox / "sess-1_0_meta.json").exists()
-    assert get_object_by_uuid(storage_sandbox, object_uuid) is None
+    assert get_object_by_uuid(object_uuid) is None
 
-    index_path = settings.get_image_storage_dir().parent / "object_index.json"
-    if index_path.exists():
-        index = json.loads(index_path.read_text(encoding="utf-8"))
-        assert object_uuid not in index
-
-    after = settings.get_session_last_changed("sess-1")
+    after = session_repo.get_session_last_changed("sess-1")
     assert after is not None
     assert after >= before
 
@@ -181,7 +175,7 @@ def test_legacy_object_zero_cleans_up_unnumbered_files(
     assert response.status_code == 204
     assert not legacy_cutout.exists()
     assert not legacy_glb.exists()
-    assert list_object_ids(storage_sandbox, "sess-1") == []
+    assert list_object_ids("sess-1") == []
 
 
 def test_background_depth_and_preview_survive(storage_sandbox: Path, glb_dir: Path) -> None:
@@ -216,7 +210,7 @@ def test_second_object_untouched_by_deleting_first(
 
     assert response.status_code == 204
     assert object_cutout_path(storage_sandbox, "sess-1", 1).exists()
-    remaining = get_object_by_uuid(storage_sandbox, second_uuid)
+    remaining = get_object_by_uuid(second_uuid)
     assert remaining is not None
     assert remaining.name == "Sofa"
-    assert list_object_ids(storage_sandbox, "sess-1") == [1]
+    assert list_object_ids("sess-1") == [1]

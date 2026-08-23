@@ -8,6 +8,11 @@ export interface SessionCardProps {
   uid: string;
   name: string | null;
   lastChanged: string | null;
+  /** Session has a queued/running job (segment, inpaint, or 3D generation). */
+  isBusy?: boolean;
+  /** Session has a failed/conflict job waiting to be seen. Takes precedence
+   * over isBusy in the dot's color when both are somehow true at once. */
+  isFailed?: boolean;
   onOpen: (uid: string) => void;
   onRequestDelete: (uid: string) => void;
 }
@@ -21,6 +26,8 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   uid,
   name,
   lastChanged,
+  isBusy = false,
+  isFailed = false,
   onOpen,
   onRequestDelete,
 }) => {
@@ -30,6 +37,14 @@ export const SessionCard: React.FC<SessionCardProps> = ({
 
   return (
     <div className="session-card">
+      {isFailed || isBusy ? (
+        <span
+          className={`session-card-dot${isFailed ? " is-failed" : " is-busy"}`}
+          aria-label={isFailed ? "A job in this session failed" : "This session has work in progress"}
+          data-tip={isFailed ? "A job failed" : "Working…"}
+        />
+      ) : null}
+
       <button
         type="button"
         className="session-card-frame"

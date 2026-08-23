@@ -8,6 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from api.routes import router as images_router
+from api.sessions import router as sessions_router
+from api.object_views import router as object_views_router
 from api.model_3d import router as model_3d_router
 from api.novel_view import router as novel_view_router
 from api.debug_vision import router as debug_vision_router
@@ -80,6 +82,8 @@ async def read_root() -> dict[str, str]:
 
 
 app.include_router(images_router)
+app.include_router(sessions_router)
+app.include_router(object_views_router)
 app.include_router(model_3d_router)
 app.include_router(novel_view_router)
 app.include_router(debug_vision_router)

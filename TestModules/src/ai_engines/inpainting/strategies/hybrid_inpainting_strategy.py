@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from ....utils.debug_image_saver import DebugImageSaver
+from ....utils.mask_bool import mask_pixel_count, mask_to_bool
 from ....utils.mask_refiner import MaskRefiner
 from ...inpainting_verification.crop import (
     GEMINI_CROP_PAD_RATIO,
@@ -76,14 +77,6 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
             "mask_dilate_pixels": params.mask_dilate_pixels,
             "compose_dilate_pixels": params.compose_dilate_pixels,
         }
-
-    @staticmethod
-    def _mask_pixel_count(mask: np.ndarray) -> int:
-        if mask.ndim == 3:
-            mask = mask[:, :, 0]
-        if mask.dtype == np.uint8 or (mask.size and float(mask.max()) > 1.0):
-            return int(np.count_nonzero(mask > 127))
-        return int(np.count_nonzero(mask > 0.5))
 
     def _snapshot_params(self, kwargs: dict[str, Any], strength: float) -> InpaintSdParams:
         refiner = self._refiner
@@ -180,7 +173,7 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
                     next_params = InpaintSdParams.from_json(verdict.param_fixes_json)
                 except (KeyError, ValueError, TypeError):
                     next_params = None
-            mask_px = self._mask_pixel_count(mask)
+            mask_px = mask_pixel_count(mask)
             if not verdict.ok and next_params is not None:
                 logger.info(
                     "Inpaint verify ok=%s attempt=%d retries_left=%d mask_px=%d "
@@ -253,10 +246,10 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
             )
             cumulative_compose_dilate += retry_params.compose_dilate_pixels
             if retry_params.mask_dilate_pixels > 0:
-                mask_before = self._mask_pixel_count(mask)
+                mask_before = mask_pixel_count(mask)
                 mask = self._mask_refiner.dilate_mask(mask, pixels=retry_params.mask_dilate_pixels)
                 cumulative_mask_dilate += retry_params.mask_dilate_pixels
-                mask_after = self._mask_pixel_count(mask)
+                mask_after = mask_pixel_count(mask)
                 logger.info(
                     "Hybrid mask dilate: +%d px cumulative=%d pixels %d->%d",
                     retry_params.mask_dilate_pixels,
@@ -305,7 +298,7 @@ class HybridInpaintingStrategy(ImageInpaintingStrategy):
 
         # Color-nudge the mask interior toward the boundary mean. We avoid
         # touching the dilated edge band so reimagined geometry isn't warped.
-        mask_bool = (mask > 127) if (mask.dtype == np.uint8 or mask.max() > 1) else (mask > 0.5)
+        mask_bool = mask_to_bool(mask)
         if mask_bool.any() and len(final_result.shape) == 3:
             mask_uint = (mask * 255).astype(np.uint8) if mask.max() <= 1 else mask.astype(np.uint8)
             kernel = np.ones((3, 3), np.uint8)

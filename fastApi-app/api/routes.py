@@ -1,102 +1,67 @@
+"""Upload plus finalized-object mutation routes (update/duplicate/delete/rescale).
+
+The remaining two thirds of what used to be one 1150-line file now live in
+``api/sessions.py`` (session lifecycle + pipeline submission) and
+``api/object_views.py`` (read-only artifact serving) — see the module
+docstrings there. This file keeps upload, warm-maps, and every route under
+``/objects/{uuid}`` together because several tests import ``router`` from
+this module directly (mounting only this router, bypassing ``main.py``) and
+monkeypatch settings/helper functions by their `api.routes.<name>` path —
+moving those call sites to another module would silently break that
+patching. Same ``/images`` prefix as the other two routers; all three are
+mounted together in ``main.py``.
+"""
+
 from __future__ import annotations
 
 from typing import Annotated
 
 import uuid
 import logging
-import base64
-import binascii
-import io
-import os
 
-from PIL import Image, UnidentifiedImageError
-
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile
 from pathlib import Path
 
-from core.image_processing import (
-    debug_click_image_path,
-    get_image_path,
-)
-from core.image_codec import to_base64_ascii
-from core.image_validation import ImageValidationError, ImageValidator
-from core.auth.identity import current_user_id
+from core.image_validation import ImageValidator
 from core.inference_pool.client import get_inference_client
 from core.inference_pool.session_runtime import (
     SessionConflictError,
     acquire_canvas_writer,
     release_canvas_writer,
 )
-from core.mask_cache import delete_candidates
-from core.repositories.job_repo import create_job, delete_job, get_job, list_session_jobs
-from core.depth_cache import delete_session_depth_maps
-from core.normal_cache import delete_session_normal_maps, warm_normals_for_session
-from core.camera_calib_cache import delete_session_camera_calib, save_camera_calib
+from core.camera_calib_cache import save_camera_calib
 from core.session_preview import write_upload_preview
+from core.normal_cache import warm_normals_for_session
 from core.object_metadata import (
     ObjectMetadata,
     build_clone_metadata,
     get_object_by_uuid,
-    list_object_ids,
-    load_object_metadata,
     next_object_id,
     remove_object_index_entry,
     save_object_metadata,
     set_object_name,
     set_object_offset,
+    to_object_metadata_response,
 )
 from schemas.image import (
-    ClickRequest,
-    ClickResultResponse,
     DuplicateObjectResponse,
     ImageUploadResponse,
-    ObjectInfo,
-    ObjectListResponse,
     ObjectMetadataResponse,
-    SegmentRequest,
-    SessionInfo,
-    SessionPreviewRequest,
-    SessionSyncCheckRequest,
-    SessionSyncCheckResponse,
-    WarmSessionMapsResponse,
-    SetNameRequest,
-    UpdateObjectRequest,
     RescaleByDepthRequest,
     RescaleByDepthResponse,
     SmartPasteRequest,
     SmartPasteResponse,
-    UidCacheStatusResponse,
-    BatchRequest,
-    BatchResponse,
+    UpdateObjectRequest,
+    WarmSessionMapsResponse,
 )
-from schemas.jobs import JobSubmitResponse, SubmitInpaintRequest
 from core.object_storage import (
     copy_object_artifacts,
-    current_background_path,
     delete_legacy_object_artifacts,
     delete_object_artifact_files,
-    legacy_object_cutout_path,
-    legacy_object_glb_path,
-    object_cutout_path,
-    object_glb_path,
-    remove_file,
     resolve_object_cutout_path,
-    resolve_object_glb_path,
-    session_preview_path,
 )
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes, scale_cutout_bounds
-from core.repositories.session_repo import (
-    SessionNotFoundError,
-    delete_session as delete_session_row,
-    evaluate_session_sync,
-    is_session_registered,
-    list_sessions_with_names,
-    load_names,
-    register_uid,
-    set_session_name,
-    touch_session,
-)
+from core.repositories.session_repo import is_session_registered, register_uid, touch_session
 from settings import (
     get_3d_storage_dir,
     get_image_storage_dir,
@@ -107,18 +72,6 @@ from settings import (
 
 router = APIRouter(prefix="/images", tags=["images"])
 logger = logging.getLogger(__name__)
-
-
-@router.get("/sessions")
-async def get_sessions() -> list[SessionInfo]:
-    """Return all image UIDs registered via upload, with optional human-readable names."""
-    logger.info("Sessions list requested")
-    result = [
-        SessionInfo(uid=uid, name=name, last_changed=last_changed)
-        for uid, name, last_changed in list_sessions_with_names()
-    ]
-    logger.info("Sessions list returned: count=%d", len(result))
-    return result
 
 
 @router.post("/upload", response_model=ImageUploadResponse)
@@ -242,279 +195,6 @@ async def upload_image(
     )
 
 
-@router.post("/click", response_model=ClickResultResponse)
-def handle_click(request: ClickRequest) -> ClickResultResponse:
-    """Handle a user's click on a previously uploaded image.
-
-    The coordinates are expressed in pixels with origin at the top-left of the image.
-    This endpoint loads the stored image, performs segmentation based on
-    the click, and returns background and cutout images as base64-encoded strings.
-    """
-
-    logger.info(
-        "Click received: image_id=%s x=%d y=%d",
-        request.image_id,
-        request.x,
-        request.y,
-    )
-
-    storage_dir: Path = get_image_storage_dir()
-
-    try:
-        background_bytes, cutout_bytes, image_format = get_inference_client().run_click(
-            image_id=request.image_id,
-            base_dir=storage_dir,
-            x=request.x,
-            y=request.y,
-            options=request.options,
-        )
-    except ValueError as exc:
-        logger.exception("Click processing failed due to invalid input")
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except FileNotFoundError as exc:
-        logger.exception("Click processing failed due to missing file")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Click processing failed")
-        raise HTTPException(status_code=500, detail=f"Click processing failed: {exc}") from exc
-
-    # Legacy endpoint: writes the pre-numbering artifact names, which
-    # resolve_object_cutout_path still reads back as object id 0.
-    current_background_path(storage_dir, request.image_id).write_bytes(background_bytes)
-    legacy_object_cutout_path(storage_dir, request.image_id).write_bytes(cutout_bytes)
-    touch_session(request.image_id)
-
-    background_b64 = to_base64_ascii(background_bytes)
-    cutout_b64 = to_base64_ascii(cutout_bytes)
-    # Frontend uses these bounds to clamp drag by visible object, not by the
-    # transparent padding that exists around most cutouts.
-    cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_bytes)
-
-    logger.info(
-        "Click processed: image_id=%s background_bytes=%d cutout_bytes=%d format=%s",
-        request.image_id,
-        len(background_bytes),
-        len(cutout_bytes),
-        image_format,
-    )
-
-    return ClickResultResponse(
-        image_id=request.image_id,
-        background_b64=background_b64,
-        cutout_b64=cutout_b64,
-        format=image_format,
-        cutout_bounds=cutout_bounds,
-    )
-
-
-@router.post("/segment", response_model=JobSubmitResponse, status_code=202)
-async def segment_image(
-    request: SegmentRequest, user_id: str = Depends(current_user_id)
-) -> JobSubmitResponse:
-    """Queue segmentation for a click and return immediately.
-
-    The actual work (and any 409-equivalent conflict against an in-flight
-    inpaint's region) is resolved when the dispatcher claims the job — see
-    `core/jobs/handlers.py::run_segment_job`. Poll `GET /jobs/{job_id}` (or
-    `POST /images/{uid}/sync-check`, which now embeds the session's jobs) for
-    the result.
-    """
-    logger.info(
-        "Segmentation queued: image_id=%s x=%d y=%d verify=%s user_id=%s",
-        request.image_id,
-        request.x,
-        request.y,
-        request.verify.value,
-        user_id,
-    )
-    payload = {
-        "x": request.x,
-        "y": request.y,
-        "options": request.options.model_dump() if request.options else None,
-        "verify": request.verify.value,
-    }
-    job = create_job(user_id, request.image_id, "segment", payload)
-    return JobSubmitResponse(job_id=job.id)
-
-
-@router.post("/inpaint", response_model=JobSubmitResponse, status_code=202)
-async def inpaint_mask(
-    request: SubmitInpaintRequest, user_id: str = Depends(current_user_id)
-) -> JobSubmitResponse:
-    """Queue inpainting of one selected cached mask candidate and return immediately.
-
-    If `from_job_id` names the segment job this mask came from, that job's
-    row is consumed here (removed from the picker backlog) — the mask id
-    stays protected from a concurrent segment's candidate wipe because this
-    new inpaint job is now itself in `reserved_mask_ids` until it runs.
-    """
-    logger.info(
-        "Inpainting queued: image_id=%s mask_id=%s from_job_id=%s user_id=%s",
-        request.image_id,
-        request.mask_id,
-        request.from_job_id,
-        user_id,
-    )
-    job = create_job(user_id, request.image_id, "inpaint", {"mask_id": request.mask_id})
-
-    if request.from_job_id is not None:
-        source = get_job(user_id, request.from_job_id)
-        if source is not None and source.kind == "segment":
-            delete_job(request.from_job_id)
-
-    return JobSubmitResponse(job_id=job.id)
-
-
-@router.post("/{uid}/batch", response_model=BatchResponse)
-def run_batch(uid: str, request: BatchRequest) -> BatchResponse:
-    """Discover or select objects, peel with auto verify, then generate GLBs."""
-
-    logger.info("Batch requested: uid=%s source=%s", uid, request.source.kind)
-    if not is_session_registered(uid):
-        raise HTTPException(status_code=404, detail=f"Unknown session uid={uid}")
-    from core.batch_jobs import run_session_batch
-
-    try:
-        result = run_session_batch(uid, request, get_image_storage_dir())
-    except SessionConflictError as exc:
-        logger.warning("Batch rejected due to session conflict: %s", exc)
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except FileNotFoundError as exc:
-        logger.exception("Batch failed due to missing file")
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        logger.exception("Batch failed due to invalid input")
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Batch failed")
-        raise HTTPException(status_code=500, detail=f"Batch failed: {exc}") from exc
-    logger.info("Batch finished: uid=%s batch_id=%s", uid, result.batch_id)
-    return result
-
-
-@router.delete("/{uid}", status_code=204)
-async def delete_session(uid: str) -> Response:
-    """Delete a session and all its associated files from disk.
-
-    Deletes the session's DB row (cascading to every object row under it) and
-    every file associated with that uid: the original uploaded image,
-    processed background and cutout PNGs, candidate mask files, debug
-    overlay, and any cached 3D model. Missing files are silently ignored so
-    the endpoint is safe to call more than once.
-    """
-    logger.info("Session delete requested: uid=%s", uid)
-    storage_dir = get_image_storage_dir()
-    removed = 0
-
-    try:
-        # Snapshot object ids before the DB delete cascades them away.
-        obj_ids = list_object_ids(uid)
-        delete_session_row(uid)
-
-        for path in storage_dir.glob(f"{uid}.*"):
-            path.unlink(missing_ok=True)
-            removed += 1
-
-        three_d_dir = get_3d_storage_dir()
-        for path in (
-            current_background_path(storage_dir, uid),
-            legacy_object_cutout_path(storage_dir, uid),
-            session_preview_path(storage_dir, uid),
-            debug_click_image_path(storage_dir, uid),
-            # Legacy single GLB (written by earlier backend versions).
-            legacy_object_glb_path(three_d_dir, uid),
-        ):
-            removed += remove_file(path)
-
-        delete_candidates(storage_dir, uid)
-
-        # Remove all numbered per-object cutouts and GLB files (metadata rows
-        # already gone via the session-delete cascade above).
-        for oid in obj_ids:
-            removed += remove_file(object_cutout_path(storage_dir, uid, oid))
-            removed += remove_file(object_glb_path(three_d_dir, uid, oid))
-
-        removed += delete_session_depth_maps(storage_dir, uid)
-        removed += delete_session_normal_maps(storage_dir, uid)
-        removed += delete_session_camera_calib(storage_dir, uid)
-
-        # Cached novel-view results and their preview placeholders, one file
-        # per (object, snapped pose) pair -- glob rather than reconstructing
-        # every possible filename.
-        for path in storage_dir.glob(f"{uid}_*_novel_az*_el*.png"):
-            path.unlink(missing_ok=True)
-            removed += 1
-
-    except Exception as exc:
-        logger.error("Session delete failed: uid=%s error=%s", uid, exc)
-        raise HTTPException(status_code=500, detail=f"Session delete failed: {exc}") from exc
-
-    logger.info("Session deleted: uid=%s files_removed=%d", uid, removed)
-    return Response(status_code=204)
-
-
-@router.post("/{uid}/name", response_model=SessionInfo)
-async def set_name(uid: str, request: SetNameRequest) -> SessionInfo:
-    """Assign a human-readable name to a session.
-
-    Names are unique across all sessions.  Returns 409 if the name is already
-    taken by a different session.
-    """
-    logger.info("Set name requested: uid=%s name=%r", uid, request.name)
-    try:
-        set_session_name(uid, request.name)
-    except ValueError as exc:
-        logger.error("Name conflict: uid=%s name=%r reason=%s", uid, request.name, exc)
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-    last_changed = touch_session(uid)
-    logger.info("Name set: uid=%s name=%r", uid, request.name)
-    return SessionInfo(uid=uid, name=request.name, last_changed=last_changed)
-
-
-@router.post("/{uid}/sync-check", response_model=SessionSyncCheckResponse)
-async def sync_check_session(
-    uid: str, request: SessionSyncCheckRequest, user_id: str = Depends(current_user_id)
-) -> SessionSyncCheckResponse:
-    """Compare a client-held session timestamp against server truth.
-
-    Also returns this session's jobs (queued/running/done/failed/conflict) —
-    the polling channel the frontend uses to notice queued work has landed,
-    since this endpoint is already polled every ~2s while work is pending.
-    """
-    logger.debug(
-        "Session sync-check requested: uid=%s client_last_changed=%r",
-        uid,
-        request.client_last_changed,
-    )
-    try:
-        server_last_changed, needs_refresh = evaluate_session_sync(
-            uid,
-            request.client_last_changed,
-        )
-    except SessionNotFoundError:
-        logger.warning("Session sync-check failed — unknown uid: %s", uid)
-        raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'") from None
-    if needs_refresh:
-        logger.info(
-            "Session sync-check mismatch: uid=%s last_changed=%r",
-            uid,
-            server_last_changed,
-        )
-    else:
-        logger.debug(
-            "Session sync-check match: uid=%s last_changed=%r",
-            uid,
-            server_last_changed,
-        )
-    jobs = list_session_jobs(user_id, uid)
-    return SessionSyncCheckResponse(
-        last_changed=server_last_changed,
-        needs_refresh=needs_refresh,
-        jobs=jobs,
-    )
-
-
 @router.post("/{uid}/warm-maps", response_model=WarmSessionMapsResponse)
 def warm_session_maps_endpoint(uid: str) -> WarmSessionMapsResponse:
     """Ensure depth and normal maps exist for the session's current canvas.
@@ -556,53 +236,6 @@ def warm_session_maps_endpoint(uid: str) -> WarmSessionMapsResponse:
     )
 
 
-def _metadata_to_response(
-    metadata: ObjectMetadata,
-    storage_dir: Path,
-    three_d_dir: Path,
-) -> ObjectMetadataResponse:
-    """Build API response from stored metadata plus derived artifact flags."""
-    cutout_path = resolve_object_cutout_path(storage_dir, metadata.session_id, metadata.object_id)
-    cutout_bounds = None
-    if cutout_path.exists():
-        cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_path.read_bytes())
-    has_3d = resolve_object_glb_path(three_d_dir, metadata.session_id, metadata.object_id).exists()
-    return ObjectMetadataResponse(
-        uuid=metadata.uuid,
-        session_id=metadata.session_id,
-        object_id=metadata.object_id,
-        name=metadata.name,
-        average_depth=metadata.average_depth,
-        source_elevation_deg=metadata.source_elevation_deg,
-        content_hash=metadata.content_hash,
-        created_at=metadata.created_at,
-        has_3d=has_3d,
-        cutout_bounds=cutout_bounds,
-        offset_x=metadata.offset_x,
-        offset_y=metadata.offset_y,
-        display_scale=metadata.display_scale,
-    )
-
-
-@router.get("/objects/{object_uuid}", response_model=ObjectMetadataResponse)
-async def get_object_by_uuid_endpoint(object_uuid: str) -> ObjectMetadataResponse:
-    """Return metadata for one object searchable by its UUID."""
-    logger.info("Object metadata requested: uuid=%s", object_uuid)
-    storage_dir = get_image_storage_dir()
-    metadata = get_object_by_uuid(object_uuid)
-    if metadata is None:
-        logger.warning("Object metadata not found: uuid=%s", object_uuid)
-        raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
-    response = _metadata_to_response(metadata, storage_dir, get_3d_storage_dir())
-    logger.info(
-        "Object metadata returned: uuid=%s session_id=%s object_id=%d",
-        object_uuid,
-        metadata.session_id,
-        metadata.object_id,
-    )
-    return response
-
-
 @router.patch("/objects/{object_uuid}", response_model=ObjectMetadataResponse)
 async def update_object(object_uuid: str, request: UpdateObjectRequest) -> ObjectMetadataResponse:
     """Partially update one object identified by UUID: name and/or drag offset.
@@ -634,7 +267,7 @@ async def update_object(object_uuid: str, request: UpdateObjectRequest) -> Objec
         metadata = set_object_offset(object_uuid, next_offset_x, next_offset_y)
 
     touch_session(metadata.session_id)
-    response = _metadata_to_response(metadata, storage_dir, get_3d_storage_dir())
+    response = to_object_metadata_response(metadata, storage_dir, get_3d_storage_dir())
     logger.info("Object updated: uuid=%s fields=%s", object_uuid, sorted(fields))
     return response
 
@@ -921,230 +554,3 @@ def smart_paste_object(
         display_scale=result.display_scale,
         cutout_bounds=cutout_bounds,
     )
-
-
-@router.get("/{uid}/objects", response_model=ObjectListResponse)
-async def get_session_objects(uid: str) -> ObjectListResponse:
-    """Return all processed objects for a session with cutout thumbnails.
-
-    Scans the storage directory for finalized per-object cutout PNGs and
-    returns them as base64 thumbnails alongside their tight alpha bounds and
-    a flag indicating whether a GLB 3D model has been generated.
-    """
-    logger.info("Objects list requested: uid=%s", uid)
-    storage_dir = get_image_storage_dir()
-    # TODO: validate uid against the sessions table and return 404 for unknown sessions.
-    # Currently returns 200 + empty list for unknown UIDs, consistent with /{uid}/cache.
-    obj_ids = list_object_ids(uid)
-    three_d_dir = get_3d_storage_dir()
-
-    # TODO: this loop performs blocking I/O per object synchronously on the async event loop.
-    # For MVP session sizes this is acceptable; move to a thread pool executor if sessions
-    # grow to many large objects.
-    objects_list: list[ObjectInfo] = []
-    for oid in obj_ids:
-        try:
-            cutout_path = resolve_object_cutout_path(storage_dir, uid, oid)
-            if not cutout_path.exists():
-                logger.warning(
-                    "Objects list: cutout missing for uid=%s object_id=%d path=%s — skipping",
-                    uid,
-                    oid,
-                    cutout_path,
-                )
-                continue
-            cutout_bytes = cutout_path.read_bytes()
-            cutout_b64 = to_base64_ascii(cutout_bytes)
-            cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_bytes)
-            has_3d = resolve_object_glb_path(three_d_dir, uid, oid).exists()
-            # Metadata is absent for objects created before it was introduced;
-            # those fall back to nulls plus an unmoved (0, 0) offset.
-            meta = load_object_metadata(uid, oid)
-            objects_list.append(
-                ObjectInfo(
-                    object_id=oid,
-                    uuid=meta.uuid if meta is not None else None,
-                    name=meta.name if meta is not None else None,
-                    average_depth=meta.average_depth if meta is not None else None,
-                    source_elevation_deg=(
-                        meta.source_elevation_deg if meta is not None else None
-                    ),
-                    cutout_b64=cutout_b64,
-                    format="png",
-                    cutout_bounds=cutout_bounds,
-                    has_3d=has_3d,
-                    offset_x=meta.offset_x if meta is not None else 0.0,
-                    offset_y=meta.offset_y if meta is not None else 0.0,
-                    display_scale=meta.display_scale if meta is not None else 1.0,
-                )
-            )
-        except FileNotFoundError as exc:
-            logger.warning(
-                "Objects list: file not found for uid=%s object_id=%d error=%s — skipping",
-                uid,
-                oid,
-                exc,
-            )
-
-    logger.info("Objects list returned: uid=%s count=%d", uid, len(objects_list))
-    return ObjectListResponse(uid=uid, objects=objects_list)
-
-
-@router.get("/{uid}/cache", response_model=UidCacheStatusResponse)
-async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
-    """Return which processed artifacts are cached on disk for the given UID."""
-    logger.info("Cache status requested: uid=%s", uid)
-    storage_dir = get_image_storage_dir()
-    obj_ids = list_object_ids(uid)
-
-    # Derive cutout bounds from the latest (highest-id) object.
-    latest_object_id = max(obj_ids) if obj_ids else None
-    cutout_path_to_check = (
-        resolve_object_cutout_path(storage_dir, uid, latest_object_id)
-        if latest_object_id is not None
-        else None
-    )
-    cutout_bounds = None
-    if cutout_path_to_check is not None and cutout_path_to_check.exists():
-        # Session restore should not need to re-run segmentation just to recover
-        # drag bounds, so cache metadata derives from stored PNG on demand.
-        cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_path_to_check.read_bytes())
-
-    three_d_dir = get_3d_storage_dir()
-    has_3d = any(
-        resolve_object_glb_path(three_d_dir, uid, oid).exists() for oid in obj_ids
-    )
-
-    names = load_names()
-    status = UidCacheStatusResponse(
-        uid=uid,
-        name=names.get(uid),
-        has_background=current_background_path(storage_dir, uid).exists(),
-        has_cutout=bool(obj_ids),
-        has_3d=has_3d,
-        cutout_bounds=cutout_bounds,
-    )
-    logger.info(
-        "Cache status: uid=%s background=%s cutout=%s 3d=%s",
-        uid,
-        status.has_background,
-        status.has_cutout,
-        status.has_3d,
-    )
-    return status
-
-
-@router.get("/{uid}/background")
-async def get_background(uid: str) -> FileResponse:
-    """Serve the cached background PNG for the given UID."""
-    logger.info("Background requested: uid=%s", uid)
-    path = current_background_path(get_image_storage_dir(), uid)
-    if not path.exists():
-        logger.warning("Background not found: uid=%s path=%s", uid, path)
-        raise HTTPException(status_code=404, detail="Background not found")
-    logger.info("Background served: uid=%s path=%s", uid, path)
-    return FileResponse(path, media_type="image/png")
-
-
-@router.get("/{uid}/cutout")
-async def get_cutout(uid: str) -> FileResponse:
-    """Serve the cached cutout PNG for the given UID.
-
-    Returns the latest (highest-id) object cutout for the session, falling back
-    to the legacy ``{uid}_cutout.png`` file for sessions created before the
-    numbered-object scheme was introduced.
-    """
-    logger.info("Cutout requested: uid=%s", uid)
-    storage_dir = get_image_storage_dir()
-    obj_ids = list_object_ids(uid)
-    if not obj_ids:
-        logger.warning("Cutout not found: uid=%s (no object ids)", uid)
-        raise HTTPException(status_code=404, detail="Cutout not found")
-    path = resolve_object_cutout_path(storage_dir, uid, max(obj_ids))
-    if not path.exists():
-        logger.warning("Cutout not found: uid=%s path=%s", uid, path)
-        raise HTTPException(status_code=404, detail="Cutout not found")
-    logger.info("Cutout served: uid=%s path=%s", uid, path)
-    return FileResponse(path, media_type="image/png")
-
-
-@router.get("/{uid}/original")
-async def get_original_image(uid: str) -> FileResponse:
-    """Serve the original uploaded image for the given UID."""
-    logger.info("Original image requested: uid=%s", uid)
-    storage_dir = get_image_storage_dir()
-    try:
-        path = get_image_path(uid, storage_dir)
-    except FileNotFoundError:
-        logger.warning("Original image not found: uid=%s", uid)
-        raise HTTPException(status_code=404, detail="Original image not found")
-    suffix = path.suffix.lower().lstrip(".")
-    media_type = "image/jpeg" if suffix in ("jpg", "jpeg") else f"image/{suffix}"
-    logger.info("Original image served: uid=%s path=%s", uid, path)
-    return FileResponse(path, media_type=media_type)
-
-
-@router.get("/{uid}/preview")
-async def get_session_preview(uid: str) -> FileResponse:
-    """Serve the dashboard thumbnail for the given UID.
-
-    Written at upload time (a downscaled copy of the original) and
-    overwritten by the frontend after each edit settles, so it always shows
-    the room roughly as the user left it. Returns 404 when absent — callers
-    (the dashboard card) fall back to a placeholder rather than treating this
-    as an error.
-    """
-    logger.info("Session preview requested: uid=%s", uid)
-    path = session_preview_path(get_image_storage_dir(), uid)
-    if not path.exists():
-        logger.warning("Session preview not found: uid=%s path=%s", uid, path)
-        raise HTTPException(status_code=404, detail="Preview not found")
-    logger.info("Session preview served: uid=%s path=%s", uid, path)
-    return FileResponse(path, media_type="image/jpeg")
-
-
-@router.post("/{uid}/preview", status_code=204)
-async def save_session_preview(uid: str, request: SessionPreviewRequest) -> Response:
-    """Store a client-composited dashboard thumbnail for the given UID.
-
-    Called fire-and-forget from the frontend, debounced, after edits settle
-    (see ``composeSessionPreview`` / ``saveSessionPreview`` in the React app).
-    Does not call ``touch_session``: the mutation that triggered this preview
-    already bumped ``last_changed`` well before the debounced capture runs,
-    so the dashboard's cache-buster is already correct, and bumping it again
-    here would spin an extra, pointless sync-check reconcile in the open
-    workspace.
-    """
-    logger.info("Session preview save requested: uid=%s", uid)
-    if not is_session_registered(uid):
-        logger.warning("Session preview save failed — unknown uid: %s", uid)
-        raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'")
-
-    try:
-        image_bytes = base64.b64decode(request.image_b64, validate=True)
-    except (ValueError, binascii.Error) as exc:
-        logger.warning("Session preview save rejected — invalid base64: uid=%s detail=%s", uid, exc)
-        raise HTTPException(status_code=422, detail="image_b64 is not valid base64.") from exc
-
-    try:
-        with Image.open(io.BytesIO(image_bytes)) as img:
-            img.verify()
-    except (UnidentifiedImageError, OSError) as exc:
-        logger.warning("Session preview save rejected — not a valid image: uid=%s detail=%s", uid, exc)
-        raise HTTPException(status_code=422, detail="image_b64 does not decode to a valid image.") from exc
-
-    storage_dir = get_image_storage_dir()
-    storage_dir.mkdir(parents=True, exist_ok=True)
-    path = session_preview_path(storage_dir, uid)
-    tmp_path = path.with_suffix(f"{path.suffix}.tmp")
-    try:
-        tmp_path.write_bytes(image_bytes)
-        os.replace(tmp_path, path)
-    except OSError as exc:
-        logger.error("Session preview save failed: uid=%s error=%s", uid, exc)
-        tmp_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail=f"Preview save failed: {exc}") from exc
-
-    logger.info("Session preview saved: uid=%s path=%s size_bytes=%d", uid, path, len(image_bytes))
-    return Response(status_code=204)
-

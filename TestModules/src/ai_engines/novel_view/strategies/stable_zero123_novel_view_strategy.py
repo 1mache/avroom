@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from ....utils.torch_device import auto_device
 from ..novel_view_preprocess import (
     DEFAULT_MODEL_SIZE,
     composite_model_output_on_canvas,
@@ -150,7 +151,7 @@ class StableZero123NovelViewStrategy(NovelViewStrategy):
         model_size: int = DEFAULT_MODEL_SIZE,
     ) -> None:
         self._model_id = _resolve_model_id(model_id)
-        self._device = device or self._auto_device()
+        self._device = device or auto_device()
         self._guidance_scale = guidance_scale
         self._num_inference_steps = num_inference_steps
         self._model_size = model_size
@@ -160,15 +161,6 @@ class StableZero123NovelViewStrategy(NovelViewStrategy):
             self._device,
             guidance_scale,
         )
-
-    @staticmethod
-    def _auto_device() -> str:
-        try:
-            import torch
-
-            return "cuda" if torch.cuda.is_available() else "cpu"
-        except ModuleNotFoundError:
-            return "cpu"
 
     def synthesize(
         self,

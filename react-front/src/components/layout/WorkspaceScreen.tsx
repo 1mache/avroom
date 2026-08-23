@@ -3,19 +3,18 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   API_BASE_URL,
   ApiError,
-  PREVIEW_API_READY,
   deleteJob,
-  fetchCached3DModel,
   getSessionObjects,
   getUidCacheStatus,
-  saveSessionPreview,
-  setObjectOffset,
   setSessionName as saveSessionName,
   warmSessionMaps,
-  submitGenerate3D,
-  waitForJobDone,
 } from "../../api/images";
+import { useAreaSelect } from "../../hooks/useAreaSelect";
 import { useConflictNotices, type ConflictContext } from "../../hooks/useConflictNotices";
+import { useDashboardPreview } from "../../hooks/useDashboardPreview";
+import { useHitTesting } from "../../hooks/useHitTesting";
+import { useObjectDrag } from "../../hooks/useObjectDrag";
+import { useRotationController } from "../../hooks/useRotationController";
 import { useSessionJobs, type JobErrorContext } from "../../hooks/useSessionJobs";
 import { useSessionSync } from "../../hooks/useSessionSync";
 import type { VerifyMode } from "../../types/api";
@@ -26,17 +25,12 @@ import {
   type ClickPosition,
   type CutoutObject,
 } from "../../types/session";
-import { composeSessionPreview } from "../../utils/preview";
 import {
   ALPHA_HIT_THRESHOLD,
   buildHitTestOrder,
-  clampCutoutOffset,
-  compositePreviewOntoCanvas,
   getBoundsStageRect,
   getContainedImageRect,
-  getObjectPlacementCenter,
   inflateAroundCenter,
-  inflateBounds,
   mapPointThroughInverseScale,
   toNaturalPoint,
   type Rect,
@@ -44,41 +38,12 @@ import {
 } from "../../utils/stageGeometry";
 import { ConfirmDialog } from "../widgets/ConfirmDialog";
 import { MaskPickerModal } from "../widgets/MaskPickerModal";
-import {
-  MODEL_3D_FRAME_PADDING,
-  Model3DFrame,
-  type Model3DFrameHandle,
-} from "../widgets/Model3DFrame";
+import { MODEL_3D_FRAME_PADDING, Model3DFrame } from "../widgets/Model3DFrame";
 import { ObjectRail } from "../workspace/ObjectRail";
 import { Toolbar } from "../workspace/Toolbar";
 
-interface DragState {
-  objectId: number;
-  pointerId: number;
-  startClientX: number;
-  startClientY: number;
-  startOffsetX: number;
-  startOffsetY: number;
-}
-
-interface HitCanvasEntry {
-  canvas: HTMLCanvasElement;
-  width: number;
-  height: number;
-  // The src this canvas was built from. Rotation swaps an object's effective
-  // src in place without changing its objectId, so the cache must invalidate
-  // on src change, not just track which ids exist.
-  src: string;
-  displayScale: number;
-}
-
 const errorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback;
-
-// How long to wait after the last edit before storing a fresh dashboard
-// thumbnail — several mutations often land together (an inpaint plus its sync
-// reconcile), and only the settled result is worth compositing.
-const PREVIEW_DEBOUNCE_MS = 500;
 
 export interface WorkspaceScreenProps {
   /** Session to edit. The workspace never picks one itself. */
@@ -90,14 +55,18 @@ export interface WorkspaceScreenProps {
  * The editor: a photo at full size with a permanent toolbar above it and the
  * object rail parked in the right edge. Session-level concerns (choosing,
  * creating, deleting) belong to the dashboard, so none of them appear here.
+ *
+ * Several stage-interaction concerns live in dedicated hooks (hooks/) rather
+ * than inline: alpha-precise hit testing (useHitTesting), drag-to-reposition
+ * (useObjectDrag), the drag-a-box batch select (useAreaSelect), the 3D
+ * angle-picker lifecycle (useRotationController), and the debounced dashboard
+ * thumbnail capture (useDashboardPreview). This screen wires them together
+ * and owns everything else: tool arming, selection, pointer-down dispatch,
+ * and the stage/toolbar/rail render.
  */
 export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit }) => {
   const stageRef = useRef<HTMLDivElement>(null);
-  const dragStateRef = useRef<DragState | null>(null);
-  const naturalSizeRef = useRef<Size | null>(null);
   const renderedRectRef = useRef<Rect | null>(null);
-  const hitCanvasesRef = useRef<Map<number, HitCanvasEntry>>(new Map());
-  const model3DFrameRef = useRef<Model3DFrameHandle>(null);
 
   // The session is fixed for this screen's lifetime (App remounts on change),
   // so imageId is simply the prop — no picking, no null state.
@@ -123,17 +92,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const [pickPoint, setPickPoint] = useState<ClickPosition | null>(null);
   const [verifyMode, setVerifyMode] = useState<VerifyMode>("manual");
 
-  // rotateMode: the 3D angle picker replaces the selected object's cutout.
-  // isPreparing3D: blocking wait while its GLB is fetched or generated.
-  const [rotateMode, setRotateMode] = useState(false);
-  const [isPreparing3D, setIsPreparing3D] = useState(false);
   // Per-object: show the pristine cutout instead of the rotated result.
   const [showOriginalIds, setShowOriginalIds] = useState<ReadonlySet<number>>(new Set());
 
   const [smartPaste, setSmartPaste] = useState(false);
-  const smartPasteRef = useRef(false);
-  const [isSmartPasting, setIsSmartPasting] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Object id awaiting delete confirmation. Deletion is permanent (the
   // background keeps its inpainted hole), so the trash button arms this
@@ -209,12 +171,22 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   }, [sync.recordLocalMutation]);
 
   const selectedObject = jobs.objects.find((o) => o.objectId === jobs.selectedObjectId) ?? null;
-  const glbData = selectedObject?.glbData ?? null;
 
   const isShowingOriginal = useCallback(
     (obj: { objectId: number }) => showOriginalIds.has(obj.objectId),
     [showOriginalIds],
   );
+
+  const clearShowOriginal = useCallback((objectId: number) => {
+    setShowOriginalIds((prev) => {
+      if (!prev.has(objectId)) {
+        return prev;
+      }
+      const next = new Set(prev);
+      next.delete(objectId);
+      return next;
+    });
+  }, []);
 
   // --- session map warm ----------------------------------------------------
 
@@ -287,79 +259,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, startMapsWarm]);
 
-  // --- dashboard thumbnail -------------------------------------------------
-  // dashboard preview. Detached and failure-swallowing: a missing thumbnail is
-  // never worth interrupting an edit for. No-ops until the preview endpoints
-  // exist (see PREVIEW_API_READY in api/images.ts).
-  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const previewInputsRef = useRef({
-    backgroundSrc: null as string | null,
-    objects: [] as CutoutObject[],
-    naturalSize: null as Size | null,
-    showOriginalIds: new Set<number>() as ReadonlySet<number>,
-  });
-
-  useEffect(() => {
-    previewInputsRef.current = {
-      // Falls back to the original photo so a session never inpainted yet
-      // still gets a thumbnail rather than composing nothing.
-      backgroundSrc: jobs.backgroundSrc ?? originalSrc,
-      objects: jobs.objects,
-      naturalSize,
-      showOriginalIds,
-    };
-  }, [jobs.backgroundSrc, originalSrc, jobs.objects, naturalSize, showOriginalIds]);
-
-  useEffect(() => {
-    smartPasteRef.current = smartPaste;
-  }, [smartPaste]);
-
-  useEffect(() => {
-    capturePreviewRef.current = () => {
-      if (!PREVIEW_API_READY) {
-        return;
-      }
-
-      if (previewTimerRef.current) {
-        clearTimeout(previewTimerRef.current);
-      }
-
-      previewTimerRef.current = setTimeout(async () => {
-        const { backgroundSrc, objects, naturalSize: size, showOriginalIds: shown } =
-          previewInputsRef.current;
-        if (!backgroundSrc || !size) {
-          return;
-        }
-
-        const layers = objects
-          .filter((obj) => !obj.hidden)
-          .map((obj) => ({
-            src: effectiveCutoutSrc(obj, shown.has(obj.objectId)),
-            offset: obj.offset,
-            displayScale: obj.displayScale,
-            bounds: effectiveCutoutBounds(obj, shown.has(obj.objectId)),
-          }));
-
-        const composed = await composeSessionPreview(backgroundSrc, layers, size);
-        if (composed) {
-          await saveSessionPreview(uid, composed).catch((err: unknown) => {
-            // Best-effort: the card just keeps its previous thumbnail. Still
-            // logged so a broken preview pipeline doesn't fail silently.
-            console.warn("saveSessionPreview failed; dashboard thumbnail not updated.", err);
-          });
-        }
-      }, PREVIEW_DEBOUNCE_MS);
-    };
-  }, [uid]);
-
-  useEffect(() => {
-    return () => {
-      if (previewTimerRef.current) {
-        clearTimeout(previewTimerRef.current);
-      }
-    };
-  }, []);
-
   // --- stage geometry -----------------------------------------------------
 
   const measureStage = useCallback(() => {
@@ -405,72 +304,68 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   );
 
   useEffect(() => {
-    naturalSizeRef.current = naturalSize;
-  }, [naturalSize]);
-
-  useEffect(() => {
     renderedRectRef.current = renderedRect;
   }, [renderedRect]);
 
-  // --- alpha-precise hit testing -----------------------------------------
+  // --- dashboard thumbnail --------------------------------------------------
 
+  const capturePreview = useDashboardPreview(uid, {
+    // Falls back to the original photo so a session never inpainted yet
+    // still gets a thumbnail rather than composing nothing.
+    backgroundSrc: jobs.backgroundSrc ?? originalSrc,
+    objects: jobs.objects,
+    naturalSize,
+    showOriginalIds,
+  });
   useEffect(() => {
-    const currentIds = new Set(jobs.objects.map((o) => o.objectId));
-    hitCanvasesRef.current.forEach((_entry, id) => {
-      if (!currentIds.has(id)) {
-        hitCanvasesRef.current.delete(id);
-      }
-    });
+    capturePreviewRef.current = capturePreview;
+  }, [capturePreview]);
 
-    jobs.objects.forEach((obj) => {
-      const src = effectiveCutoutSrc(obj, isShowingOriginal(obj));
-      const existing = hitCanvasesRef.current.get(obj.objectId);
-      if (existing && existing.src === src && existing.displayScale === obj.displayScale) {
-        return;
-      }
+  // --- alpha-precise hit testing -------------------------------------------
 
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement("canvas");
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext("2d", { willReadFrequently: true });
-        if (!ctx) {
-          return;
-        }
-        ctx.drawImage(img, 0, 0);
-        hitCanvasesRef.current.set(obj.objectId, {
-          canvas,
-          width: img.naturalWidth,
-          height: img.naturalHeight,
-          src,
-          displayScale: obj.displayScale,
-        });
-      };
-      img.src = src;
-    });
-  }, [jobs.objects, isShowingOriginal]);
+  const { sampleObjectAlpha } = useHitTesting(jobs.objects, isShowingOriginal);
 
-  const sampleObjectAlpha = useCallback((objectId: number, localX: number, localY: number): number => {
-    const entry = hitCanvasesRef.current.get(objectId);
-    if (!entry) {
-      // Canvas not built yet (object just created). Treat as opaque so the
-      // object stays clickable immediately; the bounds check above already
-      // filtered out obviously-empty space.
-      return 255;
-    }
+  // --- 3D angle picker ------------------------------------------------------
 
-    if (localX < 0 || localY < 0 || localX >= entry.width || localY >= entry.height) {
-      return 0;
-    }
+  const rotation = useRotationController({
+    imageId,
+    selectedObjectId: jobs.selectedObjectId,
+    selectedObject,
+    naturalSize,
+    jobsList: jobs.jobs,
+    commitRotation: jobs.commitRotation,
+    setObjects: jobs.setObjects,
+    setSelectedObjectId: jobs.setSelectedObjectId,
+    clearShowOriginal,
+    disarmOtherTools: () => setCutMode(false),
+    onError: (err) => setError(errorMessage(err, "Unexpected 3D generation error.")),
+  });
 
-    const ctx = entry.canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) {
-      return 255;
-    }
+  // --- drag-to-reposition ----------------------------------------------------
 
-    return ctx.getImageData(Math.floor(localX), Math.floor(localY), 1, 1).data[3];
-  }, []);
+  const objectDrag = useObjectDrag({
+    objects: jobs.objects,
+    naturalSize,
+    renderedRect,
+    showOriginalIds,
+    smartPasteEnabled: smartPaste,
+    updateOffset: jobs.updateOffset,
+    runSmartPasteAfterDrag: jobs.runSmartPasteAfterDrag,
+    onSettled: capturePreview,
+  });
+
+  // --- drag-a-box batch select -----------------------------------------------
+
+  useAreaSelect({
+    areaDraft,
+    setAreaDraft,
+    setAreaMode,
+    naturalSize,
+    renderedRect,
+    stageRef,
+    isBatching: jobs.isBatching,
+    runBatch: jobs.runBatch,
+  });
 
   // --- selection & tools --------------------------------------------------
 
@@ -479,11 +374,11 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       jobs.setSelectedObjectId(objectId);
       // Rotation is scoped to whichever object is selected — switching away
       // closes the angle picker.
-      setRotateMode(false);
+      rotation.setRotateMode(false);
       setCutMode(false);
       setPickPoint(null);
     },
-    [jobs.setSelectedObjectId],
+    [jobs.setSelectedObjectId, rotation.setRotateMode],
   );
 
   const handleToggleHidden = useCallback(
@@ -491,10 +386,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       const wasSelected = jobs.selectedObjectId === objectId;
       jobs.toggleHidden(objectId);
       if (wasSelected) {
-        setRotateMode(false);
+        rotation.setRotateMode(false);
       }
     },
-    [jobs.selectedObjectId, jobs.toggleHidden],
+    [jobs.selectedObjectId, jobs.toggleHidden, rotation.setRotateMode],
   );
 
   const handleToggleShowOriginal = useCallback((objectId: number) => {
@@ -508,18 +403,18 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   }, []);
 
   const handleCut = useCallback(() => {
-    setRotateMode(false);
+    rotation.setRotateMode(false);
     setAreaMode(false);
     setPickPoint(null);
     setCutMode((armed) => !armed);
-  }, []);
+  }, [rotation.setRotateMode]);
 
   const handleArea = useCallback(() => {
-    setRotateMode(false);
+    rotation.setRotateMode(false);
     setCutMode(false);
     setPickPoint(null);
     setAreaMode((armed) => !armed);
-  }, []);
+  }, [rotation.setRotateMode]);
 
   const handleMaskSelected = useCallback(
     (maskId: string) => {
@@ -535,133 +430,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     jobs.closeMaskPicker();
     setPickPoint(null);
   }, [jobs.closeMaskPicker]);
-
-  // Commits the current orbit as a rotation request: captures the angle delta
-  // plus a snapshot of the viewer, fires the (detached) novel-view job, and
-  // closes the picker. The object shows the snapshot immediately and swaps to
-  // the synthesized result when the response lands.
-  const commitCurrentRotation = useCallback(async () => {
-    if (jobs.selectedObjectId === null) {
-      setRotateMode(false);
-      return;
-    }
-
-    // Capture synchronously (reads the live WebGL canvas) before closing the
-    // picker — everything after this works from the extracted data URL.
-    const capture = model3DFrameRef.current?.capture();
-    const targetObjectId = jobs.selectedObjectId;
-    // The snapshot spans the inflated viewer canvas, not the object's tight
-    // rect, so it must be pasted back over that same inflated region.
-    const bounds = selectedObject?.cutoutAlphaBounds
-      ? inflateBounds(selectedObject.cutoutAlphaBounds, MODEL_3D_FRAME_PADDING)
-      : null;
-    setRotateMode(false);
-    setShowOriginalIds((prev) => {
-      if (!prev.has(targetObjectId)) {
-        return prev;
-      }
-      const next = new Set(prev);
-      next.delete(targetObjectId);
-      return next;
-    });
-
-    if (!capture) {
-      return;
-    }
-
-    const pose = {
-      azimuthDeg: capture.azimuthDeg,
-      relativeElevationDeg: capture.relativeElevationDeg,
-    };
-
-    if (naturalSize) {
-      try {
-        const previewSrc = await compositePreviewOntoCanvas(
-          capture.snapshotDataUrl,
-          bounds,
-          naturalSize,
-        );
-        jobs.commitRotation(targetObjectId, pose, previewSrc);
-        return;
-      } catch {
-        // Compositing failed — fall through to the raw (mis-scaled) snapshot
-        // rather than losing the rotation request entirely.
-      }
-    }
-
-    jobs.commitRotation(targetObjectId, pose, capture.snapshotDataUrl);
-  }, [jobs.selectedObjectId, jobs.commitRotation, selectedObject, naturalSize]);
-
-  // Opens the angle picker for the selected object. Pressing rotate again
-  // while it's open commits instead — this branch only runs the GLB ladder.
-  const handleRotate = useCallback(async () => {
-    if (rotateMode) {
-      void commitCurrentRotation();
-      return;
-    }
-
-    if (!imageId || jobs.selectedObjectId === null) {
-      return;
-    }
-
-    setCutMode(false);
-
-    if (glbData) {
-      setRotateMode(true);
-      return;
-    }
-
-    // Snapshot the target id before any await so the model attaches to the
-    // right object even if selection changes while generation is in flight.
-    const targetObjectId = jobs.selectedObjectId;
-    setIsPreparing3D(true);
-
-    try {
-      const cached = await fetchCached3DModel(imageId, targetObjectId);
-      let buffer = cached;
-      if (!buffer) {
-        // Queued now instead of one blocking request: submit, wait for the
-        // dispatcher to finish it, then read the GLB it wrote to disk. If a
-        // generate_3d job for this object is already queued/running (the
-        // user exited mid-generation and clicked Rotate again on return),
-        // attach to that job instead of submitting a duplicate.
-        const jobId =
-          jobs.jobs.find(
-            (job) =>
-              job.kind === "generate_3d" &&
-              job.object_id === targetObjectId &&
-              (job.status === "queued" || job.status === "running"),
-          )?.job_id ?? (await submitGenerate3D(imageId, targetObjectId));
-        await waitForJobDone(jobId);
-        buffer = await fetchCached3DModel(imageId, targetObjectId);
-        if (!buffer) {
-          throw new Error("3D generation finished but no model was found.");
-        }
-      }
-      jobs.setObjects((prev) =>
-        prev.map((o) => (o.objectId === targetObjectId ? { ...o, glbData: buffer } : o)),
-      );
-      // Only surface the picker if the user hasn't switched selection away.
-      jobs.setSelectedObjectId((current) => {
-        if (current === targetObjectId) setRotateMode(true);
-        return current;
-      });
-    } catch (genError) {
-      setError(errorMessage(genError, "Unexpected 3D generation error."));
-      setRotateMode(false);
-    } finally {
-      setIsPreparing3D(false);
-    }
-  }, [
-    rotateMode,
-    commitCurrentRotation,
-    imageId,
-    jobs.selectedObjectId,
-    jobs.setObjects,
-    jobs.setSelectedObjectId,
-    jobs.jobs,
-    glbData,
-  ]);
 
   const handleCopy = useCallback(() => {
     if (jobs.selectedObjectId === null) {
@@ -688,9 +456,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       setError("This object is from an older session and can't be deleted.");
       return;
     }
-    setRotateMode(false);
+    rotation.setRotateMode(false);
     setPendingDeleteObjectId(jobs.selectedObjectId);
-  }, [jobs.selectedObjectId, selectedObject]);
+  }, [jobs.selectedObjectId, selectedObject, rotation.setRotateMode]);
 
   const pendingDeleteObject =
     jobs.objects.find((o) => o.objectId === pendingDeleteObjectId) ?? null;
@@ -737,7 +505,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // Enter commits the rotation (same as pressing rotate again); Escape backs
   // out of whichever mode is armed. Both bail while a text field owns focus.
   useEffect(() => {
-    if (!rotateMode && !cutMode && !areaMode) {
+    if (!rotation.rotateMode && !cutMode && !areaMode) {
       return;
     }
 
@@ -749,20 +517,20 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
       if (event.key === "Escape") {
         event.preventDefault();
-        setRotateMode(false);
+        rotation.setRotateMode(false);
         setCutMode(false);
         setAreaMode(false);
         setAreaDraft(null);
         setPickPoint(null);
-      } else if (event.key === "Enter" && rotateMode) {
+      } else if (event.key === "Enter" && rotation.rotateMode) {
         event.preventDefault();
-        void commitCurrentRotation();
+        void rotation.commitCurrentRotation();
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [rotateMode, cutMode, areaMode, commitCurrentRotation]);
+  }, [rotation.rotateMode, cutMode, areaMode, rotation.commitCurrentRotation, rotation.setRotateMode]);
 
   // --- pointer interaction on the photo -----------------------------------
 
@@ -803,7 +571,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       // While the selected object's 3D model is shown, its 2D cutout is hidden
       // and that region belongs to the (higher z-index) 3D frame instead.
       const hitOrder = buildHitTestOrder(jobs.objects, jobs.selectedObjectId).filter(
-        (obj) => !(rotateMode && obj.objectId === jobs.selectedObjectId),
+        (obj) => !(rotation.rotateMode && obj.objectId === jobs.selectedObjectId),
       );
 
       for (const obj of hitOrder) {
@@ -839,16 +607,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         }
 
         event.preventDefault();
-        document.body.classList.add("is-dragging-object");
-        dragStateRef.current = {
-          objectId: obj.objectId,
-          pointerId: event.pointerId,
-          startClientX: event.clientX,
-          startClientY: event.clientY,
-          startOffsetX: obj.offset.x,
-          startOffsetY: obj.offset.y,
-        };
-        setIsDragging(true);
+        objectDrag.beginDrag(obj.objectId, event.pointerId, event.clientX, event.clientY, obj.offset);
         selectObject(obj.objectId);
         return;
       }
@@ -863,164 +622,13 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       jobs.runSegment,
       jobs.objects,
       jobs.selectedObjectId,
-      rotateMode,
+      rotation.rotateMode,
       isShowingOriginal,
       sampleObjectAlpha,
+      objectDrag,
       selectObject,
     ],
   );
-
-  useEffect(() => {
-    if (!areaDraft || !naturalSize || !renderedRect) {
-      return;
-    }
-    const handleMove = (event: PointerEvent) => {
-      const stage = stageRef.current;
-      if (!stage) {
-        return;
-      }
-      const stageRect = stage.getBoundingClientRect();
-      const natural = toNaturalPoint(
-        event.clientX - stageRect.left,
-        event.clientY - stageRect.top,
-        renderedRect,
-        naturalSize,
-      );
-      if (!natural) {
-        return;
-      }
-      setAreaDraft((prev) => (prev ? { ...prev, current: natural } : prev));
-    };
-    const handleUp = () => {
-      setAreaDraft((prev) => {
-        if (!prev) {
-          return null;
-        }
-        const x0 = Math.round(Math.min(prev.start.x, prev.current.x));
-        const y0 = Math.round(Math.min(prev.start.y, prev.current.y));
-        const x1 = Math.round(Math.max(prev.start.x, prev.current.x));
-        const y1 = Math.round(Math.max(prev.start.y, prev.current.y));
-        if (x1 - x0 >= 8 && y1 - y0 >= 8 && !jobs.isBatching) {
-          void jobs.runBatch({ kind: "box", x0, y0, x1, y1 });
-        }
-        return null;
-      });
-      setAreaMode(false);
-    };
-    window.addEventListener("pointermove", handleMove);
-    window.addEventListener("pointerup", handleUp);
-    return () => {
-      window.removeEventListener("pointermove", handleMove);
-      window.removeEventListener("pointerup", handleUp);
-    };
-  }, [areaDraft, naturalSize, renderedRect, jobs]);
-
-  useEffect(() => {
-    if (!isDragging) {
-      return;
-    }
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const dragState = dragStateRef.current;
-      const size = naturalSizeRef.current;
-      const rect = renderedRectRef.current;
-      if (!dragState || !size || !rect || dragState.pointerId !== event.pointerId) {
-        return;
-      }
-
-      const scaleX = rect.width / size.width;
-      const scaleY = rect.height / size.height;
-      if (scaleX <= 0 || scaleY <= 0) {
-        return;
-      }
-
-      const target = jobs.objects.find((o) => o.objectId === dragState.objectId);
-      const bounds = target
-        ? effectiveDisplayBounds(target, showOriginalIds.has(target.objectId))
-        : null;
-
-      // Mouse delta arrives in screen pixels; convert back to natural-image
-      // pixels so drag behavior stays stable under responsive resize.
-      const nextOffset = clampCutoutOffset(
-        {
-          x: dragState.startOffsetX + (event.clientX - dragState.startClientX) / scaleX,
-          y: dragState.startOffsetY + (event.clientY - dragState.startClientY) / scaleY,
-        },
-        bounds,
-        size,
-      );
-
-      jobs.updateOffset(dragState.objectId, nextOffset);
-    };
-
-    const finishDrag = (pointerId: number) => {
-      if (dragStateRef.current?.pointerId !== pointerId) {
-        return;
-      }
-      const draggedObjectId = dragStateRef.current.objectId;
-      dragStateRef.current = null;
-      setIsDragging(false);
-      document.body.classList.remove("is-dragging-object");
-      // A drag reposition never goes through useSessionJobs, so it's the one
-      // mutation onMutated doesn't cover — capture the dashboard thumbnail
-      // directly once the object settles.
-      capturePreviewRef.current();
-
-      // Persist the final position so it survives a session close/reopen.
-      // previewInputsRef, not this effect's stale jobs.objects closure
-      // (it only re-subscribes on isDragging, not on every object update),
-      // always reflects the latest render's object state.
-      const dragged = previewInputsRef.current.objects.find(
-        (o) => o.objectId === draggedObjectId,
-      );
-      if (dragged?.uuid) {
-        void setObjectOffset(dragged.uuid, dragged.offset.x, dragged.offset.y).catch(
-          (err: unknown) => {
-            console.warn("setObjectOffset failed; position won't survive reload.", err);
-          },
-        );
-
-        if (smartPasteRef.current) {
-          const size = previewInputsRef.current.naturalSize;
-          if (size) {
-            const bounds = effectiveDisplayBounds(
-              dragged,
-              previewInputsRef.current.showOriginalIds.has(dragged.objectId),
-            );
-            const placement = getObjectPlacementCenter(bounds, dragged.offset, size);
-            setIsSmartPasting(true);
-            void jobs
-              .runSmartPasteAfterDrag(draggedObjectId, placement.x, placement.y)
-              .then((applied) => {
-                if (applied) {
-                  capturePreviewRef.current();
-                }
-              })
-              .finally(() => {
-                setIsSmartPasting(false);
-              });
-          }
-        }
-      }
-    };
-
-    const handlePointerUp = (event: PointerEvent) => finishDrag(event.pointerId);
-
-    window.addEventListener("pointermove", handlePointerMove);
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("pointercancel", handlePointerUp);
-
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("pointercancel", handlePointerUp);
-      document.body.classList.remove("is-dragging-object");
-    };
-    // jobs.objects is intentionally omitted: handlePointerMove reads the target
-    // object fresh on every move, but re-subscribing on every offset update
-    // would tear the listeners down mid-drag. jobs.updateOffset is stable.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isDragging]);
 
   // --- derived render values ---------------------------------------------
 
@@ -1028,7 +636,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // While the selected object's 3D model is shown, its 2D cutout is skipped so
   // the 3D frame replaces it rather than stacking on top of it.
   const stageObjects = visibleObjects.filter(
-    (obj) => !(rotateMode && obj.objectId === jobs.selectedObjectId),
+    (obj) => !(rotation.rotateMode && obj.objectId === jobs.selectedObjectId),
   );
 
   const cutoutStyle = (
@@ -1098,18 +706,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const activeJobs = jobs.jobs.filter((job) => job.status === "queued" || job.status === "running");
   const segmentingCount = activeJobs.filter((job) => job.kind === "segment").length;
   const removingCount = activeJobs.filter((job) => job.kind === "inpaint").length;
-  // Rotate's spinner has to survive exit/return: unlike segment/inpaint,
-  // generate_3d isn't watched through pendingJobs-style local state at all —
-  // handleRotate awaits it directly (see there) — so without this, exiting
-  // mid-generation and coming back shows the button idle even though a
-  // generate_3d job is still queued/running server-side for this object.
-  const activeGenerate3DJobId = activeJobs.find(
-    (job) => job.kind === "generate_3d" && job.object_id === jobs.selectedObjectId,
-  )?.job_id;
 
   const status = jobs.isBatching
     ? "batch cutting"
-    : isSmartPasting
+    : objectDrag.isSmartPasting
       ? "smart pasting"
       : segmentingCount > 0
         ? `finding masks${segmentingCount > 1 ? ` (${segmentingCount})` : ""}`
@@ -1147,9 +747,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         batchBusy={jobs.isBatching}
         verifyMode={verifyMode}
         onVerifyModeChange={setVerifyMode}
-        rotateMode={rotateMode}
-        isPreparing3D={isPreparing3D || Boolean(activeGenerate3DJobId)}
-        onRotate={handleRotate}
+        rotateMode={rotation.rotateMode}
+        isPreparing3D={rotation.isPreparing3D || Boolean(rotation.activeGenerate3DJobId)}
+        onRotate={rotation.handleRotate}
         isDuplicating={jobs.isDuplicating}
         onCopy={handleCopy}
         smartPaste={smartPaste}
@@ -1161,7 +761,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
       <main
         ref={stageRef}
-        className={`stage${cutMode || areaMode ? " is-picking" : ""}${isDragging ? " is-dragging" : ""}`}
+        className={`stage${cutMode || areaMode ? " is-picking" : ""}${objectDrag.isDragging ? " is-dragging" : ""}`}
       >
         {photoSrc ? (
           <>
@@ -1223,8 +823,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
               />
             ) : null}
 
-            {rotateMode && glbData ? (
-              <Model3DFrame ref={model3DFrameRef} glbData={glbData} style={model3DFrameStyle} />
+            {rotation.rotateMode && rotation.glbData ? (
+              <Model3DFrame ref={rotation.model3DFrameRef} glbData={rotation.glbData} style={model3DFrameStyle} />
             ) : null}
 
             {selectedRect ? (
@@ -1255,7 +855,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           </div>
         ) : null}
 
-        {rotateMode ? (
+        {rotation.rotateMode ? (
           <p className="stage-hint">Drag to orbit · Enter applies · Esc cancels</p>
         ) : areaMode ? (
           <p className="stage-hint">Drag a box around the furniture · Esc cancels</p>
@@ -1287,7 +887,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             jobs={jobs.jobs}
             selectedObjectId={jobs.selectedObjectId}
             showOriginalIds={showOriginalIds}
-            disabled={isPreparing3D}
+            disabled={rotation.isPreparing3D}
             onSelectObject={selectObject}
             onToggleBatchUuid={(uuid, on) => {
               setBatchUuids((prev) => {

@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from ....utils.torch_device import auto_device
 from ...inpainting_verification.crop import crop_with_window, mask_crop_window
 from ..image_inpainting_strategy import ImageInpaintingStrategy
 
@@ -131,21 +132,12 @@ class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
         negative_prompt: str | None = None,
     ) -> None:
         self._model_id = model_id
-        self._device = device or self._auto_device()
+        self._device = device or auto_device()
         self._prompt = prompt or self.DEFAULT_PROMPT
         self._negative_prompt = negative_prompt or self.DEFAULT_NEGATIVE_PROMPT
         logger.info(
             f"StableDiffusionInpaintingStrategy created (model={model_id}, device={self._device})"
         )
-
-    @staticmethod
-    def _auto_device() -> str:
-        try:
-            import torch
-
-            return "cuda" if torch.cuda.is_available() else "cpu"
-        except ModuleNotFoundError:
-            return "cpu"
 
     def inpaint(
         self,

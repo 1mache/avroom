@@ -11,6 +11,7 @@ import numpy as np
 
 from ....utils.debug_image_saver import DebugImageSaver
 from ....utils.mask_refiner import MaskRefiner
+from ....utils.torch_device import auto_device
 from ..image_segmentation_strategy import ImageSegmentationStrategy
 
 logger = logging.getLogger(__name__)
@@ -132,20 +133,11 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         resolved_path = Path(checkpoint_path) if checkpoint_path else _resolve_checkpoint_path()
         self._checkpoint_path: str = str(resolved_path)
         self._model_type = model_type
-        self._device = device or self._auto_device()
+        self._device = device or auto_device()
         self._mask_refiner: MaskRefiner = mask_refiner or MaskRefiner()
         logger.info(
             f"SamSegmentationStrategy created (model={model_type}, device={self._device})"
         )
-
-    @staticmethod
-    def _auto_device() -> str:
-        try:
-            import torch
-
-            return "cuda" if torch.cuda.is_available() else "cpu"
-        except ModuleNotFoundError:
-            return "cpu"
 
     @property
     def _predictor(self) -> Any:

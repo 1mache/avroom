@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 
-import cv2
 import numpy as np
 
 from ..ai_engines.depth.depth_mapping_facade import DepthMappingFacade
@@ -15,7 +14,9 @@ from ..routing.strategies.boundary_variance_routing_strategy import (
 )
 from ..utils.bgra_cutout_composer import BgraCutoutComposer
 from ..utils.debug_image_saver import DebugImageSaver
+from ..utils.mask_bool import mask_to_bool
 from ..utils.mask_refiner import MaskRefiner
+from ._image_io import compute_depth, load_image
 from ._mask_utils import ensure_mask_hw as _ensure_mask_hw
 
 logger = logging.getLogger(__name__)
@@ -96,24 +97,9 @@ class ObjectRemover:
         """Run the full pipeline and return ``(background_bgr, cutout_bgra)``."""
         logger.info(f"Starting object removal - Image: {image_path}, Point: ({x}, {y})")
 
-        if image_bytes is not None:
-            nparr = np.frombuffer(image_bytes, np.uint8)
-            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if image is None:
-                logger.error("Could not decode image bytes for inpaint pipeline")
-                raise ValueError("Could not decode image bytes into an image array")
-        else:
-            image = cv2.imread(image_path)
-            if image is None:
-                logger.error(f"Could not load image: {image_path}")
-                raise FileNotFoundError(f"Could not load image: {image_path}")
+        image = load_image(image_path, image_bytes, log_context="inpaint pipeline")
 
-        if depth_map is not None:
-            logger.info("Step 1: Using precomputed depth map...")
-            optimized_depth = depth_map
-        else:
-            logger.info("Step 1: Computing optimized depth map...")
-            optimized_depth = self.depth.map_depth(image)
+        optimized_depth = compute_depth(image, depth_map, self.depth)
         self.image_saver.save("optimized_depth", optimized_depth)
 
         logger.info("Step 2: Adapting data...")
@@ -150,7 +136,7 @@ class ObjectRemover:
 
         logger.info("Generating debug tight mask overlay (Whitened Image, pre-refinement)...")
         tight_overlay = image.copy()
-        tight_bool_mask = tight_mask > 0 if tight_mask.dtype != bool else tight_mask
+        tight_bool_mask = mask_to_bool(tight_mask)
         tight_overlay[tight_bool_mask] = [255, 255, 255]
         self.image_saver.save("debug_tight_mask_overlay", tight_overlay)
 
@@ -164,7 +150,7 @@ class ObjectRemover:
 
         logger.info("Generating debug mask overlay (Whitened Image)...")
         mask_overlay = image.copy()
-        bool_mask = mask > 0 if mask.dtype != bool else mask
+        bool_mask = mask_to_bool(mask)
         mask_overlay[bool_mask] = [255, 255, 255]
         self.image_saver.save("debug_mask_overlay", mask_overlay)
 

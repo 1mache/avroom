@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from ...utils.mask_bool import mask_to_bool as _mask_bool
+
 # Pad the mask bounding box by this fraction of its width/height on each side.
 INPAINT_VERIFY_CROP_PAD_RATIO: float = 0.25
 GEMINI_CROP_PAD_RATIO: float = 0.35
@@ -127,14 +129,6 @@ def build_verify_crops(
     candidate_crop = crop_with_window(candidate, window)
     outlined = draw_mask_outline(candidate_crop, mask, window)
     return original_crop, outlined, window
-
-
-def _mask_bool(mask: np.ndarray) -> np.ndarray:
-    if mask.ndim == 3:
-        mask = mask[:, :, 0]
-    if mask.dtype == np.uint8 or (mask.size and float(mask.max()) > 1.0):
-        return mask > 127
-    return mask > 0.5
 
 
 def _mask_bbox(mask_bool: np.ndarray, h: int, w: int) -> tuple[int, int, int, int]:

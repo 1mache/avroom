@@ -146,8 +146,8 @@ class Hunyuan3D2ReconstructionStrategy(Reconstruction3DStrategy):
     :meth:`generate` so that importing the module is free.
 
     Args:
-        space_id: Hugging Face Space identifier. Defaults to
-            ``"tencent/Hunyuan3D-2.1"``.
+        space_id: Hugging Face Space identifier. When *None*, reads
+            ``HUNYUAN3D_SPACE_ID`` then falls back to :attr:`DEFAULT_SPACE_ID`.
         token: Optional HF access token. When *None* the strategy reads the
             ``HF_TOKEN`` or ``HUGGINGFACE_HUB_TOKEN`` environment variables.
     """
@@ -159,11 +159,15 @@ class Hunyuan3D2ReconstructionStrategy(Reconstruction3DStrategy):
 
     def __init__(
         self,
-        space_id: str = DEFAULT_SPACE_ID,
+        space_id: str | None = None,
         *,
         token: str | None = None,
     ) -> None:
-        self._space_id = space_id
+        self._space_id = (
+            (space_id or "").strip()
+            or os.environ.get("HUNYUAN3D_SPACE_ID", "").strip()
+            or self.DEFAULT_SPACE_ID
+        )
         self._token = token or os.environ.get("HF_TOKEN") or os.environ.get(
             "HUGGINGFACE_HUB_TOKEN"
         )

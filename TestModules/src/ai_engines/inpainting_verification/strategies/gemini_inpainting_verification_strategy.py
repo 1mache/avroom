@@ -195,7 +195,22 @@ class GeminiInpaintingVerificationStrategy(InpaintingVerificationStrategy):
         *,
         reason: str,
     ) -> InpaintingVerificationResult:
-        result = self._clip.verify(image, mask, params)
+        try:
+            result = self._clip.verify(image, mask, params)
+        except Exception as exc:
+            # Network / HF hub blips must not discard an already-finished inpaint.
+            logger.warning(
+                "Gemini verify CLIP fallback also failed (%s); "
+                "accepting candidate without verify. gemini_reason=%s",
+                exc,
+                reason,
+            )
+            return InpaintingVerificationResult(
+                ok=True,
+                param_fixes_json=params.to_json(),
+                scores={},
+                winner_label="verify_unavailable",
+            )
         top_label = result.winner_label
         top_score = result.scores.get(top_label, 0.0) if result.scores else 0.0
         logger.warning(

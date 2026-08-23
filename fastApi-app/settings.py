@@ -385,3 +385,15 @@ def get_notify_ses_region() -> str:
     default resolution — env/credentials file/instance profile — if empty)."""
     return os.environ.get("NOTIFY_SES_REGION", "").strip()
 
+
+def get_hunyuan3d_space_id() -> str:
+    """Return the Hunyuan3D-2.1 Hugging Face Space id (``HUNYUAN3D_SPACE_ID``)."""
+    raw = os.environ.get("HUNYUAN3D_SPACE_ID", "es3d-fi/hunyuan3d-2-1").strip()
+    return raw or "es3d-fi/hunyuan3d-2-1"
+
+
+def get_trellis_space_id() -> str:
+    """Return the Trellis 2 Hugging Face Space id (``TRELLIS_SPACE_ID``)."""
+    raw = os.environ.get("TRELLIS_SPACE_ID", "microsoft/TRELLIS.2").strip()
+    return raw or "microsoft/TRELLIS.2"
+

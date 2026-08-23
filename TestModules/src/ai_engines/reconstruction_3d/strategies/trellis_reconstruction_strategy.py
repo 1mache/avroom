@@ -24,8 +24,9 @@ class Trellis3DGenerationError(RuntimeError):
 class TrellisReconstructionStrategy(Reconstruction3DStrategy):
     """Image-to-GLB strategy backed by Microsoft's Trellis 2 Hugging Face Space.
 
-    The strategy calls the public Space ``microsoft/TRELLIS.2`` using
-    ``gradio_client``. The Space runs on Zero GPU and is rate-limited /
+    The strategy calls a Hugging Face Space (default ``microsoft/TRELLIS.2``,
+    overridable via ``TRELLIS_SPACE_ID`` or the ``space_id`` constructor arg)
+    using ``gradio_client``. The Space runs on Zero GPU and is rate-limited /
     queued; it is fine for MVP single-user testing but unsuitable for
     high-concurrency production.
 
@@ -66,14 +67,18 @@ class TrellisReconstructionStrategy(Reconstruction3DStrategy):
 
     def __init__(
         self,
-        space_id: str = DEFAULT_SPACE_ID,
+        space_id: str | None = None,
         *,
         token: str | None = None,
     ) -> None:
         # Fall back to HF_TOKEN / HUGGINGFACE_HUB_TOKEN env vars when no
         # explicit token is provided. Authenticated calls get a much larger
         # Zero GPU quota; anonymous calls share a small pool that drains fast.
-        self._space_id = space_id
+        self._space_id = (
+            (space_id or "").strip()
+            or os.environ.get("TRELLIS_SPACE_ID", "").strip()
+            or self.DEFAULT_SPACE_ID
+        )
         self._token = token or os.environ.get("HF_TOKEN") or os.environ.get(
             "HUGGINGFACE_HUB_TOKEN"
         )

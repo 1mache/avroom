@@ -19,7 +19,7 @@ recon_trellis = Reconstruction3DFacade(TrellisReconstructionStrategy())
 
 ## Hunyuan3D-2.1 backend
 
-- **Space id:** `Hunyuan3D2ReconstructionStrategy.DEFAULT_SPACE_ID` = `"es3d-fi/hunyuan3d-2-1"` (a public mirror of `tencent/Hunyuan3D-2.1`).
+- **Space id:** env `HUNYUAN3D_SPACE_ID` (default `es3d-fi/hunyuan3d-2-1`, a public mirror of `tencent/Hunyuan3D-2.1`; code fallback `Hunyuan3D2ReconstructionStrategy.DEFAULT_SPACE_ID`).
 - **Client:** `gradio_client.Client`, created lazily on first `generate()` call and cached on the strategy instance (`self.__client`) for the strategy's lifetime — not process-wide like the `functools.lru_cache` factories used elsewhere in the pipeline.
 - **Auth:** optional `token` constructor arg, else read from `HF_TOKEN` or `HUGGINGFACE_HUB_TOKEN` env vars.
 - **Endpoints:** tries `/generation_all` (textured GLB) first; on failure or an empty result, falls back to `/shape_generation` (untextured GLB). Both endpoints are called with the same `steps`/`octree_resolution`/`guidance_scale`/`seed`/`num_chunks` kwargs.
@@ -65,7 +65,7 @@ No weights are written into tracked project paths (no files under `TestModules/`
 
 ## Trellis backend (optional, not used by default or as fallback)
 
-- **Space id:** `TrellisReconstructionStrategy.DEFAULT_SPACE_ID` = `"microsoft/TRELLIS.2"`.
+- **Space id:** env `TRELLIS_SPACE_ID` (default `microsoft/TRELLIS.2`; code fallback `TrellisReconstructionStrategy.DEFAULT_SPACE_ID`).
 - **Quality mapping:** uses the full shared `GenerationParams`/`PRESETS` table (resolution, sampling steps, decimation target, texture size).
 - **Errors:** raises `Trellis3DGenerationError` on Space failures.
 - Only reachable by injecting `TrellisReconstructionStrategy()` explicitly — the facade never constructs it.

@@ -322,6 +322,30 @@ def test_gemini_placeholder_key_uses_clip_fallback() -> None:
     assert result.param_fixes_json == params.to_json()
 
 
+def test_gemini_clip_fallback_load_failure_accepts_candidate() -> None:
+    """HF/network failure on CLIP must not fail an already-finished inpaint."""
+
+    class _BoomClip:
+        def verify(
+            self,
+            _image: np.ndarray,
+            _mask: np.ndarray,
+            _params: InpaintSdParams,
+        ) -> InpaintingVerificationResult:
+            raise OSError("Can't load processor for 'openai/clip-vit-base-patch32'")
+
+    strategy = GeminiInpaintingVerificationStrategy(
+        api_key="placeholder",
+        clip_fallback=_BoomClip(),  # type: ignore[arg-type]
+    )
+    image, mask = _scene()
+    params = _params()
+    result = strategy.verify(image, mask, params)
+    assert result.ok is True
+    assert result.winner_label == "verify_unavailable"
+    assert result.param_fixes_json == params.to_json()
+
+
 def test_gemini_bad_json_falls_back_to_clip() -> None:
     def complete_fn(
         _original: np.ndarray,

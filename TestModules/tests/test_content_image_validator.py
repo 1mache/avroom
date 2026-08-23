@@ -14,7 +14,6 @@ sys.modules.setdefault("transformers", MagicMock())
 
 from avroom_object_removal import (
     ClipZeroShotContentValidationStrategy,
-    CompositeContentValidationStrategy,
     ContentImageValidator,
     ContentValidationFacade,
     ContentValidationResult,
@@ -71,35 +70,6 @@ def test_content_image_validator_raises_on_invalid_bytes() -> None:
 
     with pytest.raises(ValueError, match="not a valid image"):
         validator.validate_upload(image_path="memory://abc", image_bytes=b"not-an-image")
-
-
-def test_composite_merges_checks_and_fails_when_any_child_fails() -> None:
-    """Composite should union checks and fail if any child fails."""
-    pass_strategy = _StubValidationStrategy(
-        ContentValidationResult(
-            is_valid=True,
-            checks={"check_a": True},
-            scores={"score_a": 0.9},
-            messages=(),
-        )
-    )
-    fail_strategy = _StubValidationStrategy(
-        ContentValidationResult(
-            is_valid=False,
-            checks={"check_b": False},
-            scores={"score_b": 0.1},
-            messages=("child failed",),
-        )
-    )
-    composite = CompositeContentValidationStrategy((pass_strategy, fail_strategy))
-    image = np.zeros((4, 4, 3), dtype=np.uint8)
-
-    result = composite.validate(image)
-
-    assert result.is_valid is False
-    assert result.checks == {"check_a": True, "check_b": False}
-    assert result.scores == {"score_a": 0.9, "score_b": 0.1}
-    assert result.messages == ("child failed",)
 
 
 _SCENE_LABEL = "a photo of an indoor room or outdoor space"

@@ -13,7 +13,6 @@ sys.modules.setdefault("transformers", MagicMock())
 
 from avroom_object_removal import (  # noqa: E402
     ClipZeroShotContentValidationStrategy,
-    AbsoluteClipGateStrategy,
     RelativeClipRankingStrategy,
     select_best_cutout,
 )
@@ -121,21 +120,6 @@ def test_picks_highest_clip_average() -> None:
     assert result.tiebreak_method == "none"
 
 
-def test_clip_gate_rejects_failing_check() -> None:
-    viable = (20, 20, 50, 50)
-    cutouts = [_bgra(alpha_rect=viable), _bgra(alpha_rect=viable)]
-    failing = _uniform_checks(0.60)
-    failing["complete"] = 0.40
-    result = select_best_cutout(
-        cutouts,
-        click_xy=(30, 30),
-        scorer=_scorer({0: failing, 1: _uniform_checks(0.70)}),
-        selection_strategy=AbsoluteClipGateStrategy(),
-    )
-    assert result.winner_index == 1
-    assert result.reasons[0] == "clip_fail:complete"
-
-
 def test_clear_winner_skips_tiebreaker() -> None:
     viable = (20, 20, 50, 50)
     cutouts = [_bgra(alpha_rect=viable), _bgra(alpha_rect=viable)]
@@ -200,12 +184,12 @@ def test_tiebreaker_failure_falls_back_to_clip() -> None:
     assert result.tiebreak_method == "clip_fallback"
 
 
-def test_relative_picks_highest_when_all_fail_absolute_gate() -> None:
+def test_relative_picks_highest_with_low_uniform_scores() -> None:
     viable = (20, 20, 50, 50)
     cutouts = [_bgra(alpha_rect=viable), _bgra(alpha_rect=viable)]
 
-    # Make `complete`, `single`, and `not_fragment` fail the absolute gate, but
-    # keep `not_scene` as the only differentiator so relative ranking can win.
+    # Keep `not_scene` as the only differentiator so relative ranking can win
+    # even when every other check score is low.
     cand0 = _uniform_checks(0.02)
     cand0["not_scene"] = 0.95
 
@@ -222,21 +206,6 @@ def test_relative_picks_highest_when_all_fail_absolute_gate() -> None:
     assert result.tiebreak_method == "none"
     assert result.reasons[0] == "winner"
     assert result.reasons[1] == "ranked"
-
-
-def test_all_candidates_fail_clip_checks_absolute_gate_returns_none() -> None:
-    viable = (20, 20, 50, 50)
-    cutouts = [_bgra(alpha_rect=viable), _bgra(alpha_rect=viable)]
-
-    low = _uniform_checks(0.02)
-    result = select_best_cutout(
-        cutouts,
-        click_xy=(30, 30),
-        scorer=_scorer({0: low, 1: low}),
-        selection_strategy=AbsoluteClipGateStrategy(),
-    )
-    assert result.winner_index is None
-    assert all(reason.startswith("clip_fail:") for reason in result.reasons)
 
 
 def test_debug_dump_writes_selection_json_and_winner() -> None:

@@ -307,7 +307,7 @@ class RescaleByDepthResponse(BaseModel):
     ]
     display_scale: Annotated[
         float,
-        Field(description="Cumulative UI display scale after this rescale."),
+        Field(description="UI display scale vs original cutout size after this rescale."),
     ]
     cutout_bounds: Annotated[
         CutoutBounds | None,
@@ -348,7 +348,7 @@ class SmartPasteResponse(BaseModel):
     ]
     display_scale: Annotated[
         float,
-        Field(description="Cumulative UI display scale after this smart paste."),
+        Field(description="UI display scale vs original cutout size after this smart paste."),
     ]
     cutout_bounds: Annotated[
         CutoutBounds | None,
@@ -400,7 +400,7 @@ class ObjectMetadataResponse(BaseModel):
         Field(
             default=1.0,
             gt=0.0,
-            description="Cumulative UI display scale; cutout PNG stays at original resolution.",
+            description="UI display scale vs original cutout size; cutout PNG stays at original resolution.",
         ),
     ]
 
@@ -457,7 +457,7 @@ class ObjectInfo(BaseModel):
         Field(
             default=1.0,
             gt=0.0,
-            description="Cumulative UI display scale; cutout PNG stays at original resolution.",
+            description="UI display scale vs original cutout size; cutout PNG stays at original resolution.",
         ),
     ]
 

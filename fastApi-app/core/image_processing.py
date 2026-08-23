@@ -585,14 +585,9 @@ def _compute_session_depth_map(base_dir: Path, session_id: str) -> np.ndarray:
 def _persist_rescale_metadata(
     object_uuid: str,
     *,
-    target_depth: float,
     display_scale: float,
 ) -> None:
-    set_object_rescale_state(
-        object_uuid,
-        average_depth=target_depth,
-        display_scale=display_scale,
-    )
+    set_object_rescale_state(object_uuid, display_scale=display_scale)
 
 
 def rescale_cutout_by_depth(
@@ -603,9 +598,10 @@ def rescale_cutout_by_depth(
 ) -> RescaleByDepthResult:
     """Compute depth-proportional UI scale at ``(x, y)`` and persist metadata only.
 
-    Samples depth from the session's current canvas, compares it to the object's
-    stored ``average_depth``, updates cumulative ``display_scale``, and advances
-    ``average_depth`` so later rescales do not compound. The cutout PNG is never
+    Samples depth from the session's current canvas and compares it to the
+    object's creation ``average_depth`` (never rewritten by rescale). Sets
+    ``display_scale`` absolutely from that pair so size is always relative to
+    the original cutout, not the previous placement. The cutout PNG is never
     modified.
     """
     logger.info(
@@ -624,7 +620,7 @@ def rescale_cutout_by_depth(
         x=x,
         y=y,
     )
-    display_scale = metadata.display_scale * scale_factor
+    display_scale = scale_factor
     logger.info(
         "Depth scale computed: object_uuid=%s source_depth=%.2f target_depth=%.2f "
         "scale=%.4f display_scale=%.4f",
@@ -635,11 +631,7 @@ def rescale_cutout_by_depth(
         display_scale,
     )
 
-    _persist_rescale_metadata(
-        object_uuid,
-        target_depth=target_depth,
-        display_scale=display_scale,
-    )
+    _persist_rescale_metadata(object_uuid, display_scale=display_scale)
 
     logger.info(
         "Rescale by depth complete: object_uuid=%s session_id=%s object_id=%d display_scale=%.4f",
@@ -686,7 +678,7 @@ def run_smart_paste(
             y=y,
         )
 
-    display_scale = metadata.display_scale * paste_result.scale_factor
+    display_scale = paste_result.scale_factor
     logger.info(
         "Smart paste scale computed: object_uuid=%s source_depth=%.2f target_depth=%.2f "
         "scale=%.4f display_scale=%.4f",
@@ -697,12 +689,7 @@ def run_smart_paste(
         display_scale,
     )
 
-    _persist_rescale_metadata(
-        base_dir,
-        object_uuid,
-        target_depth=paste_result.target_depth,
-        display_scale=display_scale,
-    )
+    _persist_rescale_metadata(object_uuid, display_scale=display_scale)
 
     logger.info(
         "Smart paste complete: object_uuid=%s session_id=%s object_id=%d display_scale=%.4f",

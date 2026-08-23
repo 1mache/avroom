@@ -9,19 +9,48 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# ponytail: raw target/source can halve/double on one drop; strength+clamp until a
-# better depth→size model exists. Tune here only — all rescale paths call this.
-_RESCALE_STRENGTH = 0.35
-_RESCALE_MIN_FACTOR = 0.88
-_RESCALE_MAX_FACTOR = 1.12
+# Fraction of the raw depth ratio applied. 1.0 = full target/source; lower = milder.
+_RESCALE_STRENGTH = 0.75
 
 
-def compute_depth_scale_factor(source_depth: float, target_depth: float) -> float:
-    """Return dampened scale for depth-based UI resizing.
+def depth_map_extrema(depth_map: np.ndarray) -> tuple[float, float]:
+    """Return ``(deepest, closest)`` positive depths from a map.
 
-    Starts from ``target / source`` (higher uint8 depth = closer to camera), then
-    applies only a fraction of the delta from 1.0 and clamps per placement so one
-    smart-paste cannot swing size too wildly.
+    Production convention: higher uint8 = closer to the camera, so deepest is
+    the minimum positive value and closest is the maximum.
+    """
+    plane = depth_map[:, :, 0] if depth_map.ndim == 3 else depth_map
+    positive = plane[plane > 0]
+    if positive.size == 0:
+        raise ValueError("Depth map has no positive depth samples.")
+    deepest = float(np.min(positive))
+    closest = float(np.max(positive))
+    if deepest > closest:
+        deepest, closest = closest, deepest
+    return deepest, closest
+
+
+def _dampen_scale(raw: float) -> float:
+    """Pull a raw size ratio toward 1.0 by ``_RESCALE_STRENGTH``."""
+    return 1.0 + _RESCALE_STRENGTH * (raw - 1.0)
+
+
+def compute_depth_scale_factor(
+    source_depth: float,
+    target_depth: float,
+    *,
+    deepest: float | None = None,
+    closest: float | None = None,
+) -> float:
+    """Return POV scale from creation depth to placement depth.
+
+    Convention: higher uint8 = closer to camera.
+    - Deeper than start (lower target) → factor < 1 → smaller.
+    - Closer to POV than start (higher target) → factor > 1 → larger.
+
+    Raw scale is ``target / source``, then softened by ``_RESCALE_STRENGTH``.
+    When ``deepest`` / ``closest`` are provided, the factor is clipped to the
+    same softened scene range — no fixed global min/max.
     """
     if not math.isfinite(source_depth) or not math.isfinite(target_depth):
         raise ValueError("Depth values must be finite.")
@@ -29,9 +58,21 @@ def compute_depth_scale_factor(source_depth: float, target_depth: float) -> floa
         raise ValueError(
             f"Depth values must be positive (source={source_depth}, target={target_depth})."
         )
-    raw = target_depth / source_depth
-    damped = 1.0 + _RESCALE_STRENGTH * (raw - 1.0)
-    return max(_RESCALE_MIN_FACTOR, min(_RESCALE_MAX_FACTOR, damped))
+    dampened = _dampen_scale(target_depth / source_depth)
+    if deepest is None or closest is None:
+        return dampened
+    if not math.isfinite(deepest) or not math.isfinite(closest):
+        raise ValueError("Scene depth extrema must be finite.")
+    if deepest <= 0 or closest <= 0:
+        raise ValueError(
+            f"Scene depth extrema must be positive (deepest={deepest}, closest={closest})."
+        )
+    # Softened sizes at the image's own back wall / nearest surface vs original.
+    lo = _dampen_scale(deepest / source_depth)
+    hi = _dampen_scale(closest / source_depth)
+    if lo > hi:
+        lo, hi = hi, lo
+    return max(lo, min(hi, dampened))
 
 
 def sample_depth_at_point(depth_map: np.ndarray, x: int, y: int) -> float:
@@ -120,9 +161,19 @@ def compute_depth_rescale(
     x: int,
     y: int,
 ) -> DepthRescaleResult:
-    """Compute proportional scale from depth at ``(x, y)`` without touching pixels."""
+    """Compute proportional scale from depth at ``(x, y)`` without touching pixels.
+
+    Range is scene-relative: deepest / original → smallest, closest / original →
+    largest; placement uses ``target / original`` within that span.
+    """
     target_depth = sample_depth_at_point(depth_map, x, y)
-    scale_factor = compute_depth_scale_factor(source_average_depth, target_depth)
+    deepest, closest = depth_map_extrema(depth_map)
+    scale_factor = compute_depth_scale_factor(
+        source_average_depth,
+        target_depth,
+        deepest=deepest,
+        closest=closest,
+    )
     return DepthRescaleResult(
         source_average_depth=source_average_depth,
         target_depth=target_depth,

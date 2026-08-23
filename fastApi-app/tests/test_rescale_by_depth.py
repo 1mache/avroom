@@ -5,18 +5,18 @@ from __future__ import annotations
 Picks a saved session and one of its object cutouts from the configured image
 storage directory, copies that session's artifacts into a throwaway sandbox,
 and drives ``POST /images/objects/{uuid}/rescale-by-depth`` through the real
-router -> ``rescale_cutout_by_depth`` -> filesystem path.  Metadata mutations
-(``display_scale``, ``average_depth``) land in the sandbox; the cutout PNG is
-never modified, so the developer's real sessions are never modified.
+router -> ``rescale_cutout_by_depth`` -> filesystem path.  Only ``display_scale``
+is rewritten in the sandbox (``average_depth`` stays at creation); the cutout
+PNG is never modified, so the developer's real sessions are never modified.
 
 Checks performed after the call:
 
-* scale factor equals ``target_depth / source_average_depth``
+* scale factor equals dampened ``target_depth / source_average_depth``
 * cutout PNG bytes on disk are unchanged
-* ``display_scale`` in metadata equals prior scale times the reported factor
+* ``display_scale`` equals the reported scale factor (absolute vs original size)
 * response ``cutout_bounds`` reflect the scaled logical bbox
-* metadata ``average_depth`` advanced to ``target_depth``
-* a second call at the same point is a no-op (scaling must not compound)
+* metadata ``average_depth`` stays at the creation value
+* a second call at the same point keeps the same absolute scale (no compounding)
 
 Before/after cutouts and composites over the session background are written to
 ``fastApi-app/tmp/test_outputs/rescale_by_depth/`` for visual inspection.
@@ -372,12 +372,12 @@ def verify_response(
     checks.record(
         "scale factor equals dampened target/source",
         abs(scale - compute_depth_scale_factor(source, target)) < 1e-6,
-        f"scale={scale:.4f} dampened={compute_depth_scale_factor(source, target):.4f} "
+        f"scale={scale:.4f} expected={compute_depth_scale_factor(source, target):.4f} "
         f"raw={target / source:.4f}",
     )
-    expected_display = chosen.metadata.display_scale * scale
+    expected_display = scale
     checks.record(
-        "display_scale is cumulative",
+        "display_scale is absolute vs original",
         abs(float(payload["display_scale"]) - expected_display) < 1e-6,
         f"reported={payload['display_scale']:.4f} expected={expected_display:.4f}",
     )
@@ -465,10 +465,10 @@ def verify_persistence(
 
     target = float(payload["target_depth"])
     checks.record(
-        "metadata average_depth advanced to target",
-        abs(reloaded.average_depth - target) < 1e-6,
-        f"stored={reloaded.average_depth:.4f} target={target:.4f} "
-        f"(was {chosen.metadata.average_depth:.4f})",
+        "metadata average_depth unchanged (creation depth)",
+        abs(reloaded.average_depth - chosen.metadata.average_depth) < 1e-6,
+        f"stored={reloaded.average_depth:.4f} creation={chosen.metadata.average_depth:.4f} "
+        f"(placement target={target:.4f})",
     )
     checks.record(
         "metadata display_scale matches response",
@@ -485,22 +485,17 @@ def verify_no_compounding(
     y: int,
     first_display_scale: float,
 ) -> None:
-    """Re-run at the same point and assert the second call is a no-op.
+    """Re-run at the same point and assert absolute scale is stable.
 
-    The first call rewrites ``average_depth`` to the placement depth precisely
-    so repeated placements at the same spot do not shrink the object again.
+    Source depth stays at creation, so the same placement yields the same
+    scale factor and the same ``display_scale`` — no stacking.
     """
     payload = call_rescale(client, chosen.metadata.uuid, x, y)
-    scale = float(payload["scale_factor"])
     checks.record(
-        "second call at same point does not compound",
-        abs(scale - 1.0) < 1e-6,
-        f"scale_factor={scale:.6f}",
-    )
-    checks.record(
-        "display_scale stable across repeat call",
+        "second call at same point keeps absolute scale",
         abs(float(payload["display_scale"]) - first_display_scale) < 1e-6,
-        f"first={first_display_scale:.6f} second={payload['display_scale']:.6f}",
+        f"first={first_display_scale:.6f} second={payload['display_scale']:.6f} "
+        f"scale_factor={float(payload['scale_factor']):.6f}",
     )
 
 

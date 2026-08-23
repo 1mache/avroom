@@ -192,7 +192,7 @@ Depth maps for the current session canvas are cached on disk keyed by SHA-256 of
 | `load_depth_map` / `save_depth_map` | Read/write `{session_id}_depth_{content_hash}.npy` |
 | `compute_average_depth_over_mask` | Mean uint8 depth inside a mask (inpaint metadata) |
 | `sample_depth_at_point` | Single-pixel depth at `(x, y)`, clamped to bounds |
-| `compute_depth_scale_factor` | Dampened `target/source` (35% strength, clamped 0.88–1.12 per placement) |
+| `compute_depth_scale_factor` | Softened `target/source` (75% of delta from 1.0), clipped to the same softened scene range `[deepest/source, closest/source]` |
 | `delete_session_depth_maps` | Remove all `{session_id}_depth_*.npy` on session delete |
 
 Higher uint8 depth values mean closer to the camera (same convention as the AI pipeline).

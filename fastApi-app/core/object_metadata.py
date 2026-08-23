@@ -106,7 +106,7 @@ class ObjectMetadata(BaseModel):
         Field(
             default=1.0,
             gt=0.0,
-            description="Cumulative UI display scale; cutout PNG stays at original resolution.",
+            description="UI display scale vs original cutout size; cutout PNG stays at original resolution.",
         ),
     ]
 
@@ -264,18 +264,17 @@ def set_object_average_depth(object_uuid: str, average_depth: float) -> ObjectMe
 def set_object_rescale_state(
     object_uuid: str,
     *,
-    average_depth: float,
     display_scale: float,
 ) -> ObjectMetadata:
-    """Persist depth and cumulative UI scale after a smart-paste / rescale call."""
-    updated = _update_object_fields(
-        object_uuid,
-        {"average_depth": average_depth, "display_scale": display_scale},
-    )
+    """Persist UI display scale after a smart-paste / rescale call.
+
+    ``average_depth`` stays at the creation value so every rescale is relative
+    to the original object size, not the previous placement.
+    """
+    updated = _update_object_fields(object_uuid, {"display_scale": display_scale})
     logger.info(
-        "Updated object rescale state: uuid=%s average_depth=%.2f display_scale=%.4f",
+        "Updated object display_scale: uuid=%s display_scale=%.4f",
         object_uuid,
-        average_depth,
         display_scale,
     )
     return updated

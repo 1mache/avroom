@@ -25,6 +25,8 @@ export interface JobInfo {
   created_at: string;
   /** Target object id, present only for generate_3d jobs. */
   object_id?: number | null;
+  /** Verify mode the job was submitted with, present only for segment jobs. */
+  verify?: VerifyMode | null;
 }
 
 export interface SegmentMaskResult {

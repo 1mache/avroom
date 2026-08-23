@@ -266,6 +266,40 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [onError, onMutated],
   );
 
+  const closeMaskPicker = useCallback(() => {
+    setSegmentState((prev) => {
+      if (prev.status === "choosing") {
+        dismissedSegmentJobIdsRef.current.add(prev.jobId);
+      }
+      return { status: "idle" };
+    });
+  }, []);
+
+  // Consumes the segment job (from_job_id) atomically with the inpaint
+  // submission and closes the picker. The created object isn't built here —
+  // it arrives through the normal sync/reconcile path once the dispatcher
+  // finishes the removal, exactly like a job that was still queued when the
+  // user navigated away and back.
+  const selectMask = useCallback(
+    (jobId: string, maskId: string) => {
+      const currentImageId = imageIdRef.current;
+      dismissedSegmentJobIdsRef.current.add(jobId);
+      setSegmentState({ status: "idle" });
+      if (!currentImageId) {
+        return;
+      }
+
+      inpaintMask({ image_id: currentImageId, mask_id: maskId, from_job_id: jobId })
+        .then(() => onMutated?.())
+        .catch((err) => {
+          if (imageIdRef.current === currentImageId) {
+            onError(err, "inpaint");
+          }
+        });
+    },
+    [onError, onMutated],
+  );
+
   // Picker-chain: whenever the picker is idle, look for the oldest not-yet-
   // dismissed done segment job in this session and open it. Firing again
   // whenever `jobs` changes or the picker returns to idle is what makes
@@ -308,12 +342,20 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           setSegmentState({ status: "idle" });
           return;
         }
+        // Auto mode already had the backend narrow candidates down to its
+        // one CLIP-picked winner (run_segment_job / verify=auto) -- the user
+        // never chose to review candidates, so never show the picker for it.
+        // Submit the winner straight through, same as a manual pick.
+        if (detail.verify === "auto") {
+          selectMask(detail.job_id, detail.masks[0].mask_id);
+          return;
+        }
         setSegmentState({ status: "choosing", jobId: head.job_id, maskOptions: detail.masks });
       })
       .catch(() => {
         inflatingJobIdRef.current = null;
       });
-  }, [jobs, segmentState.status]);
+  }, [jobs, segmentState.status, selectMask]);
 
   // A queued segment/inpaint job that resolved to "conflict" (its mask/click
   // overlapped an in-flight removal) surfaces once via onConflict — the same
@@ -331,41 +373,6 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       });
     }
   }, [jobs, onConflict]);
-
-
-  const closeMaskPicker = useCallback(() => {
-    setSegmentState((prev) => {
-      if (prev.status === "choosing") {
-        dismissedSegmentJobIdsRef.current.add(prev.jobId);
-      }
-      return { status: "idle" };
-    });
-  }, []);
-
-  // Consumes the segment job (from_job_id) atomically with the inpaint
-  // submission and closes the picker. The created object isn't built here —
-  // it arrives through the normal sync/reconcile path once the dispatcher
-  // finishes the removal, exactly like a job that was still queued when the
-  // user navigated away and back.
-  const selectMask = useCallback(
-    (jobId: string, maskId: string) => {
-      const currentImageId = imageIdRef.current;
-      dismissedSegmentJobIdsRef.current.add(jobId);
-      setSegmentState({ status: "idle" });
-      if (!currentImageId) {
-        return;
-      }
-
-      inpaintMask({ image_id: currentImageId, mask_id: maskId, from_job_id: jobId })
-        .then(() => onMutated?.())
-        .catch((err) => {
-          if (imageIdRef.current === currentImageId) {
-            onError(err, "inpaint");
-          }
-        });
-    },
-    [onError, onMutated],
-  );
 
   const toggleHidden = useCallback(
     (objectId: number) => {

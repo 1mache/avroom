@@ -26,6 +26,8 @@ def _to_job_info(record: JobRecord) -> JobInfo:
         created_at=record.created_at.isoformat(),
         # Only generate_3d payloads carry "object_id" (mirrors job_repo._row_to_info).
         object_id=record.payload.get("object_id"),
+        # Only segment payloads carry "verify".
+        verify=record.payload.get("verify"),
     )
 
 

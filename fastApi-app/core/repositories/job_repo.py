@@ -74,6 +74,8 @@ def _row_to_info(row: JobRow) -> JobInfo:
         # Only generate_3d payloads carry "object_id"; .get() is a plain None
         # for segment ("x"/"y"/"options") and inpaint ("mask_id") payloads.
         object_id=row.payload.get("object_id"),
+        # Only segment payloads carry "verify".
+        verify=row.payload.get("verify"),
     )
 
 

@@ -12,8 +12,7 @@ Source: [`TestModules/src/ai_engines/novel_view/`](../../../../TestModules/src/a
 
 ## HTTP layer (FastAPI)
 
-- **`POST /images/novel-view`** — [`fastApi-app/api/novel_view.py`](../../../../fastApi-app/api/novel_view.py); resolves pose via `NovelViewRotationAdapter`, ensures GLB (`_ensure_object_glb`), then mesh-renders via the inference pool.
-- Schemas: `NovelViewRequest`, `NovelViewResponse` in [`fastApi-app/schemas/image.py`](../../../../fastApi-app/schemas/image.py)
+- **`POST /images/novel-view`** — [`fastApi-app/api/novel_view.py`](../../../../fastApi-app/api/novel_view.py); resolves pose via `NovelViewRotationAdapter`, ensures the GLB (`core/object_3d.py::ensure_object_glb`), and mesh-renders via the inference pool. No disk cache — every call renders the exact requested pose fresh.
+- Schemas: `NovelViewRequest`, `NovelViewResponse` in [`fastApi-app/schemas/novel_view.py`](../../../../fastApi-app/schemas/novel_view.py)
 - Cutout resolution: `resolve_object_cutout_path` in [`fastApi-app/core/object_storage.py`](../../../../fastApi-app/core/object_storage.py)
 - GLB resolution: `resolve_object_glb_path` / `object_glb_path`; generate via `run_generate_3d` on miss
-- Disk cache: `{uid}_{object_id}_novel_az{azimuth}_el{rel_el}.png` via `object_novel_view_path`

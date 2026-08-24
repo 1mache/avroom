@@ -18,7 +18,6 @@ from .mask_selection_tiebreak_strategy import (
 )
 from .strategies.gemini_cutout_tiebreak_strategy import GeminiCutoutTiebreakStrategy
 from .strategies import (
-    AbsoluteClipGateStrategy,
     GeminiCutoutAllCandidatesTiebreakStrategy,
     RelativeClipRankingStrategy,
     SceneConsensusMaskSelectionStrategy,
@@ -40,7 +39,6 @@ __all__ = [
     "first_failing_check",
     "passes_all_checks",
     "score_cutout_checks",
-    "AbsoluteClipGateStrategy",
     "RelativeClipRankingStrategy",
     "SceneConsensusMaskSelectionStrategy",
 ]

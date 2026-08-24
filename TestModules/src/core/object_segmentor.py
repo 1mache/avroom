@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 
-import cv2
 import numpy as np
 
 from ..ai_engines.depth.depth_mapping_facade import DepthMappingFacade
@@ -14,7 +13,9 @@ from ..routing.strategies.boundary_variance_routing_strategy import (
 )
 from ..utils.bgra_cutout_composer import BgraCutoutComposer
 from ..utils.debug_image_saver import DebugImageSaver
+from ..utils.mask_bool import mask_to_bool
 from ..utils.mask_refiner import MaskRefiner
+from ._image_io import compute_depth, load_image
 from ._mask_utils import ensure_mask_hw
 
 logger = logging.getLogger(__name__)
@@ -98,26 +99,11 @@ class ObjectSegmentor:
             f"Starting multi-mask segmentation — image: {image_path}, point: ({x}, {y})"
         )
 
-        if image_bytes is not None:
-            nparr = np.frombuffer(image_bytes, np.uint8)
-            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if image is None:
-                logger.error("Could not decode image bytes for segmentation pipeline")
-                raise ValueError("Could not decode image bytes into an image array")
-        else:
-            image = cv2.imread(image_path)
-            if image is None:
-                logger.error(f"Could not load image: {image_path}")
-                raise FileNotFoundError(f"Could not load image: {image_path}")
+        image = load_image(image_path, image_bytes, log_context="segmentation pipeline")
 
-        if depth_map is not None:
-            logger.info("Step 1: Using precomputed depth map...")
-            optimized_depth = depth_map
-        else:
-            logger.info("Step 1: Computing optimized depth map...")
-            optimized_depth = self.depth.map_depth(image)
         # Depth is already persisted by EnhancedEdgeDepthMappingStrategy as
         # outputs/depthMaps/enhanced_edge_04_bilateral.png — no duplicate save here.
+        optimized_depth = compute_depth(image, depth_map, self.depth)
 
         logger.info("Step 2: Adapting depth data for SAM...")
         adapted_for_sam = self.sam_adapter.get_adapted_image(
@@ -224,7 +210,7 @@ class ObjectSegmentor:
             )
             self.image_saver.save(f"{pfx}_sanitized_mask", original_mask)
 
-            expanded_bool = expanded_mask > 0 if expanded_mask.dtype != bool else expanded_mask
+            expanded_bool = mask_to_bool(expanded_mask)
             expanded_overlay = image.copy()
             expanded_overlay[expanded_bool] = [255, 255, 255]
             self.image_saver.save(f"{pfx}_overlay_expanded", expanded_overlay)
@@ -239,7 +225,7 @@ class ObjectSegmentor:
             # refined_mask is a return value — save it explicitly.
             self.image_saver.save(f"{pfx}_refined_mask", refined_mask)
 
-            refined_bool = refined_mask > 0 if refined_mask.dtype != bool else refined_mask
+            refined_bool = mask_to_bool(refined_mask)
             refined_overlay = image.copy()
             refined_overlay[refined_bool] = [255, 255, 255]
             self.image_saver.save(f"{pfx}_overlay_refined", refined_overlay)

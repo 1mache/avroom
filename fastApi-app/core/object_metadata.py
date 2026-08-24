@@ -12,20 +12,31 @@ import logging
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
+from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
+from core.object_storage import resolve_object_cutout_path, resolve_object_glb_path
 from db.models import ObjectRow
 from db.session import session_scope
-from schemas.image import CutoutBounds, DEFAULT_SOURCE_ELEVATION_DEG
+from schemas.common import CutoutBounds, DEFAULT_SOURCE_ELEVATION_DEG
+from schemas.objects import ObjectFields, ObjectMetadataResponse
 
 logger = logging.getLogger(__name__)
 
 
-class ObjectMetadata(BaseModel):
-    """Persistent metadata for one finalized object within a session."""
+class ObjectMetadata(ObjectFields):
+    """Persistent metadata for one finalized object within a session.
+
+    Extends :class:`ObjectFields` (``name``/``offset_x``/``offset_y``/
+    ``display_scale``) with the fields unique to the persisted row: identity,
+    depth/elevation at creation, and clone lineage. ``cutout_bounds`` is not
+    here -- it's derived from the cutout PNG at read time, on
+    :class:`ObjectMetadataResponse` and :class:`ObjectInfo` only.
+    """
 
     uuid: Annotated[
         str,
@@ -38,10 +49,6 @@ class ObjectMetadata(BaseModel):
     object_id: Annotated[
         int,
         Field(ge=0, description="Zero-based integer id within the session."),
-    ]
-    name: Annotated[
-        str | None,
-        Field(default=None, description="Optional human-readable label."),
     ]
     average_depth: Annotated[
         float,
@@ -91,22 +98,6 @@ class ObjectMetadata(BaseModel):
                 "Zero-based clone ordinal under clone_root_uuid. "
                 "0 → '<label>-copy', 1 → '<label>-copy1', etc. None for non-clones."
             ),
-        ),
-    ]
-    offset_x: Annotated[
-        float,
-        Field(default=0.0, description="Persisted drag offset X from center, natural-image pixels."),
-    ]
-    offset_y: Annotated[
-        float,
-        Field(default=0.0, description="Persisted drag offset Y from center, natural-image pixels."),
-    ]
-    display_scale: Annotated[
-        float,
-        Field(
-            default=1.0,
-            gt=0.0,
-            description="UI display scale vs original cutout size; cutout PNG stays at original resolution.",
         ),
     ]
 
@@ -469,4 +460,37 @@ def build_clone_metadata(
         offset_x=offset_x,
         offset_y=offset_y,
         display_scale=source.display_scale,
+    )
+
+
+def to_object_metadata_response(
+    metadata: ObjectMetadata,
+    storage_dir: Path,
+    three_d_dir: Path,
+) -> ObjectMetadataResponse:
+    """Build the API response for one object from stored metadata plus derived artifact flags.
+
+    Shared by every route that returns a full object snapshot (metadata GET,
+    PATCH, and anything else that needs to echo current state back to the
+    client) so the cutout-bounds/has-3d derivation logic lives in one place.
+    """
+    cutout_path = resolve_object_cutout_path(storage_dir, metadata.session_id, metadata.object_id)
+    cutout_bounds = None
+    if cutout_path.exists():
+        cutout_bounds = extract_cutout_bounds_from_png_bytes(cutout_path.read_bytes())
+    has_3d = resolve_object_glb_path(three_d_dir, metadata.session_id, metadata.object_id).exists()
+    return ObjectMetadataResponse(
+        uuid=metadata.uuid,
+        session_id=metadata.session_id,
+        object_id=metadata.object_id,
+        name=metadata.name,
+        average_depth=metadata.average_depth,
+        source_elevation_deg=metadata.source_elevation_deg,
+        content_hash=metadata.content_hash,
+        created_at=metadata.created_at,
+        has_3d=has_3d,
+        cutout_bounds=cutout_bounds,
+        offset_x=metadata.offset_x,
+        offset_y=metadata.offset_y,
+        display_scale=metadata.display_scale,
     )

@@ -58,7 +58,6 @@ def _load_attr(name: str, module: str = "avroom_object_removal"):
                 mask: np.ndarray,
                 compose_mask: np.ndarray | None = None,
                 *,
-                inpaint_out: dict[str, object] | None = None,
                 verify_trace: list[dict[str, object]] | None = None,
             ) -> np.ndarray:
                 if isinstance(trace := verify_trace, list):
@@ -88,9 +87,6 @@ def _load_attr(name: str, module: str = "avroom_object_removal"):
                             "lama_bgr": original_image.copy(),
                         }
                     )
-                if inpaint_out is not None:
-                    inpaint_out["verification_ok"] = True
-                    inpaint_out["compose_dilate_pixels"] = 0
                 return original_image
 
         return _FakeInpainter

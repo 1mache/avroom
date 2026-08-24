@@ -1,6 +1,14 @@
 # Pydantic Schemas
 
-All defined in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.py).
+Split by feature area, mirroring the `api/` router split: session lifecycle in
+[`schemas/sessions.py`](../../fastApi-app/schemas/sessions.py), object CRUD/rescale/smart-paste in
+[`schemas/objects.py`](../../fastApi-app/schemas/objects.py), novel-view in
+[`schemas/novel_view.py`](../../fastApi-app/schemas/novel_view.py), batch in
+[`schemas/batch.py`](../../fastApi-app/schemas/batch.py), the legacy click/segment request pair in
+[`schemas/image.py`](../../fastApi-app/schemas/image.py), and cross-cutting types
+(`CutoutBounds`, `VerifyMode`, `DEFAULT_SOURCE_ELEVATION_DEG`) in
+[`schemas/common.py`](../../fastApi-app/schemas/common.py). The section headers below match those
+module boundaries.
 
 ## Sessions
 

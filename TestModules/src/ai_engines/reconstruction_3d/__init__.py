@@ -6,31 +6,19 @@ from .reconstruction_quality import GenerationParams, PRESETS, ReconstructionQua
 from .strategies import (
     Hunyuan3D2GenerationError,
     Hunyuan3D2ReconstructionStrategy,
-    OpenLrmReconstructionError,
-    OpenLrmReconstructionStrategy,
-    Trellis3DGenerationError,
-    TrellisReconstructionStrategy,
     Triposr3DGenerationError,
     TriposrReconstructionStrategy,
-    Vfusion3dReconstructionError,
-    Vfusion3dReconstructionStrategy,
 )
 
 __all__ = [
     "GenerationParams",
     "Hunyuan3D2GenerationError",
     "Hunyuan3D2ReconstructionStrategy",
-    "OpenLrmReconstructionError",
-    "OpenLrmReconstructionStrategy",
     "OutputMode",
     "PRESETS",
     "Reconstruction3DFacade",
     "Reconstruction3DStrategy",
     "ReconstructionQuality",
-    "Trellis3DGenerationError",
-    "TrellisReconstructionStrategy",
     "Triposr3DGenerationError",
     "TriposrReconstructionStrategy",
-    "Vfusion3dReconstructionError",
-    "Vfusion3dReconstructionStrategy",
 ]

@@ -10,10 +10,8 @@ class GenerationParams:
 
     All other inputs to the Space (`ss_*`, `shape_slat_*`, `tex_slat_*`
     guidance strengths / rescales / rescale_t values) are held at the Space's
-    own published defaults inside
-    :class:`TrellisReconstructionStrategy`, because they affect generation
-    fidelity rather than wall time and have no clear "better for our case"
-    setting.
+    own published defaults, because they affect generation fidelity rather
+    than wall time and have no clear "better for our case" setting.
 
     Only the four fields below differ between presets:
 

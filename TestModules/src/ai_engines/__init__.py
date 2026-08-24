@@ -8,7 +8,6 @@ from .camera_calibration import (
 )
 from .content_validation import (
     ClipZeroShotContentValidationStrategy,
-    CompositeContentValidationStrategy,
     ContentValidationFacade,
     ContentValidationResult,
     ContentValidationStrategy,
@@ -29,6 +28,8 @@ from .inpainting import (
     HybridInpaintingStrategy,
     ImageInpaintingFacade,
     ImageInpaintingStrategy,
+    InpaintParams,
+    InpaintResult,
     LamaInpaintingStrategy,
     StableDiffusionInpaintingStrategy,
 )
@@ -43,7 +44,6 @@ from .inpainting_verification import (
     crop_around_mask,
 )
 from .mask_selection import (
-    AbsoluteClipGateStrategy,
     GeminiCutoutAllCandidatesTiebreakStrategy,
     GeminiCutoutTiebreakStrategy,
     MaskSelectionStrategy,
@@ -64,11 +64,9 @@ from .novel_view import (
 from .reconstruction_3d import (
     Hunyuan3D2GenerationError,
     Hunyuan3D2ReconstructionStrategy,
-    OpenLrmReconstructionStrategy,
     Reconstruction3DFacade,
     Reconstruction3DStrategy,
     ReconstructionQuality,
-    TrellisReconstructionStrategy,
 )
 from .segmentation import (
     ImageSegmentationFacade,
@@ -83,7 +81,6 @@ __all__ = [
     "CameraCalibrationStrategy",
     "GeoCalibCameraCalibrationStrategy",
     "ClipZeroShotContentValidationStrategy",
-    "CompositeContentValidationStrategy",
     "ContentValidationFacade",
     "ContentValidationResult",
     "ContentValidationStrategy",
@@ -107,12 +104,13 @@ __all__ = [
     "HybridInpaintingStrategy",
     "ImageInpaintingFacade",
     "ImageInpaintingStrategy",
+    "InpaintParams",
+    "InpaintResult",
     "ImageSegmentationFacade",
     "ImageSegmentationStrategy",
     "LamaInpaintingStrategy",
     "MaskSelectionTiebreakStrategy",
     "MaskSelectionStrategy",
-    "AbsoluteClipGateStrategy",
     "RelativeClipRankingStrategy",
     "NearFarBlendedDepthMappingStrategy",
     "Metric3DNormalMappingStrategy",
@@ -124,12 +122,10 @@ __all__ = [
     "StableZero123NovelViewStrategy",
     "Hunyuan3D2GenerationError",
     "Hunyuan3D2ReconstructionStrategy",
-    "OpenLrmReconstructionStrategy",
     "Reconstruction3DFacade",
     "Reconstruction3DStrategy",
     "ReconstructionQuality",
     "SamImageAdapter",
     "SamSegmentationStrategy",
     "StableDiffusionInpaintingStrategy",
-    "TrellisReconstructionStrategy",
 ]

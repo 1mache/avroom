@@ -9,6 +9,8 @@ import numpy as np
 from PIL import Image
 
 from ..image_inpainting_strategy import ImageInpaintingStrategy
+from ..inpaint_params import InpaintParams
+from ..inpaint_result import InpaintResult
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,16 @@ class LamaInpaintingStrategy(ImageInpaintingStrategy):
     finish is desired.
     """
 
-    def inpaint(self, image: np.ndarray, mask: np.ndarray, **kwargs: Any) -> np.ndarray:
+    def inpaint(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray,
+        params: InpaintParams | None = None,
+        *,
+        verify_trace: list[dict[str, Any]] | None = None,
+    ) -> InpaintResult:
+        # LaMa reads no knobs -- params/verify_trace exist only to satisfy
+        # the shared interface.
         logger.info("Starting LaMa inpainting process...")
 
         if mask.ndim == 3:
@@ -89,4 +100,4 @@ class LamaInpaintingStrategy(ImageInpaintingStrategy):
             result_np = cv2.cvtColor(result_rgb, cv2.COLOR_RGB2BGR)
         else:
             result_np = result_rgb
-        return result_np
+        return InpaintResult(image=result_np)

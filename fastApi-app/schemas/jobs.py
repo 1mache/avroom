@@ -29,6 +29,13 @@ class JobInfo(BaseModel):
             description="Target object id, present only for generate_3d jobs (from payload.object_id).",
         ),
     ]
+    verify: Annotated[
+        Literal["manual", "auto"] | None,
+        Field(
+            default=None,
+            description="Verify mode the job was submitted with, present only for segment jobs.",
+        ),
+    ]
 
 
 class JobSubmitResponse(BaseModel):

@@ -136,8 +136,6 @@ fastApi-app/tmp/
 │   ├── {image_id}_background.png         - cumulative inpainted canvas (overwrites each inpaint)
 │   ├── {image_id}_{object_id}_cutout.png - per-object cutout (written at inpaint; never rewritten by rescale)
 │   ├── {image_id}_{object_id}_meta.json   - object metadata (uuid, average_depth, clone lineage, …)
-│   ├── {image_id}_{object_id}_novel_az{az}_el{el}.png - cached novel-view result (copied on duplicate)
-│   ├── {image_id}_{object_id}_novel_az{az}_el{el}.preview.png - client novel-view preview placeholder
 │   ├── {image_id}_depth_{hash}.npy         - cached depth map for session + canvas hash
 │   ├── {image_id}_cutout.png             - legacy flat cutout (sessions before per-object numbering)
 │   ├── {image_id}_mask_{n}_refined.npy   - candidate refined mask (segmentation, temporary)

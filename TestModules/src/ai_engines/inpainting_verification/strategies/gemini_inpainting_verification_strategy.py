@@ -7,6 +7,7 @@ from typing import Any, Callable
 
 import numpy as np
 
+from ....utils.mask_bool import mask_pixel_count
 from ...gemini.gemini_client import (
     DEFAULT_MODEL_ID,
     PLACEHOLDER_API_KEY,
@@ -165,7 +166,7 @@ class GeminiInpaintingVerificationStrategy(InpaintingVerificationStrategy):
         mask_px = (
             mask_pixels_in_window(mask, window)
             if window is not None
-            else int(np.count_nonzero(_mask_bool_slice(mask)))
+            else mask_pixel_count(mask)
         )
         _log_gemini_verify(
             ok=ok,
@@ -355,11 +356,3 @@ def _log_gemini_verify(
         fixed.compose_dilate_pixels,
         prompt_snip,
     )
-
-
-def _mask_bool_slice(mask: np.ndarray) -> np.ndarray:
-    if mask.ndim == 3:
-        mask = mask[:, :, 0]
-    if mask.dtype == np.uint8 or (mask.size and float(mask.max()) > 1.0):
-        return mask > 127
-    return mask > 0.5

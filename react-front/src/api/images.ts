@@ -5,7 +5,6 @@ import type {
   JobDetailResponse,
   JobInfo,
   JobSubmitResponse,
-  NovelViewPreviewCacheRequest,
   NovelViewRequest,
   NovelViewResponse,
   ObjectListResponse,
@@ -129,8 +128,7 @@ export function sessionPreviewUrl(uid: string, lastChanged: string | null): stri
 
 /**
  * Stores the composed canvas as the session's dashboard thumbnail. Best-effort
- * and detached, like cacheNovelViewPreview — a failure here must never affect
- * the edit that triggered it.
+ * and detached — a failure here must never affect the edit that triggered it.
  */
 export async function saveSessionPreview(uid: string, imageB64: string): Promise<void> {
   if (!PREVIEW_API_READY) {
@@ -407,22 +405,5 @@ export async function synthesizeNovelView(payload: NovelViewRequest): Promise<No
   });
 
   return handleJsonResponse<NovelViewResponse>(response);
-}
-
-// Best-effort: persists the client-rendered rotation preview so it survives
-// on disk as a fallback if the real synthesis request never completes. Fired
-// detached alongside synthesizeNovelView; callers should swallow failures.
-export async function cacheNovelViewPreview(payload: NovelViewPreviewCacheRequest): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/images/novel-view/preview-cache`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-  });
-
-  if (!response.ok) {
-    return throwApiError(response);
-  }
 }
 

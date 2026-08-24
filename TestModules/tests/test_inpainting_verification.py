@@ -16,6 +16,8 @@ from avroom_object_removal import (  # noqa: E402
     GeminiInpaintingVerificationStrategy,
     HybridInpaintingStrategy,
     ImageInpaintingStrategy,
+    InpaintParams,
+    InpaintResult,
     InpaintSdParams,
     InpaintingVerificationFacade,
     InpaintingVerificationResult,
@@ -36,24 +38,38 @@ from avroom_object_removal.ai_engines.inpainting_verification.strategies.clip_la
 
 
 class _SolidColorInpaintStrategy(ImageInpaintingStrategy):
-    def __init__(self, color: tuple[int, int, int], calls: list[dict[str, Any]] | None = None) -> None:
+    def __init__(self, color: tuple[int, int, int], calls: list[InpaintParams | None] | None = None) -> None:
         self._color = np.array(color, dtype=np.uint8)
         self.calls = calls if calls is not None else []
 
-    def inpaint(self, image: np.ndarray, mask: np.ndarray, **kwargs: Any) -> np.ndarray:
-        self.calls.append(dict(kwargs))
-        return np.full_like(image, self._color)
+    def inpaint(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray,
+        params: InpaintParams | None = None,
+        *,
+        verify_trace: list[dict[str, Any]] | None = None,
+    ) -> InpaintResult:
+        self.calls.append(params)
+        return InpaintResult(image=np.full_like(image, self._color))
 
 
 class _SequenceInpaintStrategy(ImageInpaintingStrategy):
     def __init__(self, colors: list[tuple[int, int, int]]) -> None:
         self._colors = [np.array(c, dtype=np.uint8) for c in colors]
-        self.calls: list[dict[str, Any]] = []
+        self.calls: list[InpaintParams | None] = []
 
-    def inpaint(self, image: np.ndarray, mask: np.ndarray, **kwargs: Any) -> np.ndarray:
-        self.calls.append(dict(kwargs))
+    def inpaint(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray,
+        params: InpaintParams | None = None,
+        *,
+        verify_trace: list[dict[str, Any]] | None = None,
+    ) -> InpaintResult:
+        self.calls.append(params)
         color = self._colors[min(len(self.calls) - 1, len(self._colors) - 1)]
-        return np.full_like(image, color)
+        return InpaintResult(image=np.full_like(image, color))
 
 
 class _ScriptedVerifier(InpaintingVerificationStrategy):
@@ -93,9 +109,16 @@ class _CountingPrimary(ImageInpaintingStrategy):
         self._color = np.array(color, dtype=np.uint8)
         self.calls = 0
 
-    def inpaint(self, image: np.ndarray, mask: np.ndarray, **kwargs: Any) -> np.ndarray:
+    def inpaint(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray,
+        params: InpaintParams | None = None,
+        *,
+        verify_trace: list[dict[str, Any]] | None = None,
+    ) -> InpaintResult:
         self.calls += 1
-        return np.full_like(image, self._color)
+        return InpaintResult(image=np.full_like(image, self._color))
 
 
 def _params() -> InpaintSdParams:
@@ -218,16 +241,15 @@ def test_hybrid_fail_with_mask_dilate_reruns_lama() -> None:
     image, mask = _scene()
     mask_before = int(np.count_nonzero(mask > 127))
     trace: list[dict[str, Any]] = []
-    inpaint_out: dict[str, Any] = {}
-    hybrid.inpaint(image, mask, strength=0.35, verify_trace=trace, inpaint_out=inpaint_out)
+    result = hybrid.inpaint(image, mask, InpaintParams(strength=0.35), verify_trace=trace)
     assert primary.calls == 2
     assert len(sd.calls) == 2
     assert trace[0]["mask_dilate_pixels"] == 4
     assert trace[0]["compose_dilate_pixels"] == 6
     assert trace[0]["mask_pixel_count"] == mask_before
     assert trace[1]["mask_pixel_count"] > mask_before
-    assert inpaint_out["compose_dilate_pixels"] == 6
-    assert inpaint_out["verification_ok"] is True
+    assert result.compose_dilate_pixels == 6
+    assert result.verification_ok is True
 
 
 def test_hybrid_fail_then_pass_uses_second_sd() -> None:
@@ -240,9 +262,9 @@ def test_hybrid_fail_then_pass_uses_second_sd() -> None:
     hybrid.SHARPEN_AMOUNT = 0.0
     image, mask = _scene()
     trace: list[dict[str, Any]] = []
-    result = hybrid.inpaint(image, mask, strength=0.35, verify_trace=trace)
+    result = hybrid.inpaint(image, mask, InpaintParams(strength=0.35), verify_trace=trace)
     assert len(sd.calls) == 2
-    assert np.all(result == np.array((20, 20, 20), dtype=np.uint8))
+    assert np.all(result.image == np.array((20, 20, 20), dtype=np.uint8))
     assert len(trace) == 2
     assert trace[0]["ok"] is False
     assert trace[1]["ok"] is True
@@ -259,10 +281,10 @@ def test_hybrid_always_fail_keeps_last_after_retries_exhausted() -> None:
     )
     hybrid.SHARPEN_AMOUNT = 0.0
     image, mask = _scene()
-    result = hybrid.inpaint(image, mask, strength=0.35)
+    result = hybrid.inpaint(image, mask, InpaintParams(strength=0.35))
     # attempt 0 + INPAINT_VERIFY_MAX_RETRIES (3) = 4 SD calls
     assert len(sd.calls) == 4
-    assert np.all(result == np.array((44, 0, 0), dtype=np.uint8))
+    assert np.all(result.image == np.array((44, 0, 0), dtype=np.uint8))
 
 
 def test_hybrid_skip_sd_when_verify_passes() -> None:
@@ -274,9 +296,9 @@ def test_hybrid_skip_sd_when_verify_passes() -> None:
     )
     hybrid.SHARPEN_AMOUNT = 0.0
     image, mask = _scene()
-    result = hybrid.inpaint(image, mask, strength=0.1)
+    result = hybrid.inpaint(image, mask, InpaintParams(strength=0.1))
     assert sd.calls == []
-    assert np.all(result == np.array((5, 5, 5), dtype=np.uint8))
+    assert np.all(result.image == np.array((5, 5, 5), dtype=np.uint8))
 
 
 def test_gemini_fail_returns_rewritten_prompt() -> None:
@@ -390,9 +412,9 @@ def test_hybrid_skip_sd_then_verify_fail_starts_sd() -> None:
     )
     hybrid.SHARPEN_AMOUNT = 0.0
     image, mask = _scene()
-    result = hybrid.inpaint(image, mask, strength=0.1)
+    result = hybrid.inpaint(image, mask, InpaintParams(strength=0.1))
     assert len(sd.calls) == 1
-    assert np.all(result == np.array((8, 8, 8), dtype=np.uint8))
+    assert np.all(result.image == np.array((8, 8, 8), dtype=np.uint8))
 
 
 def test_mask_crop_window_enforces_min_size() -> None:
@@ -631,7 +653,7 @@ def test_hybrid_passes_original_image_to_verifier() -> None:
     )
     hybrid.SHARPEN_AMOUNT = 0.0
     image, mask = _scene()
-    hybrid.inpaint(image, mask, strength=0.35)
+    hybrid.inpaint(image, mask, InpaintParams(strength=0.35))
     assert verifier.last_original_image is not None
     assert np.array_equal(verifier.last_original_image, image)
 
@@ -645,7 +667,7 @@ def test_hybrid_verify_trace_includes_original_crop() -> None:
     hybrid.SHARPEN_AMOUNT = 0.0
     image, mask = _scene()
     trace: list[dict[str, Any]] = []
-    hybrid.inpaint(image, mask, strength=0.35, verify_trace=trace)
+    hybrid.inpaint(image, mask, InpaintParams(strength=0.35), verify_trace=trace)
     assert trace[0]["verify_original_crop_bgr"] is not None
     assert trace[0]["clip_crop_bgr"] is not None
     assert trace[0]["verify_original_crop_bgr"].shape == trace[0]["clip_crop_bgr"].shape

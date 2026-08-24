@@ -77,7 +77,7 @@ Things to notice:
 | Core | [`fastApi-app/core/image_processing.py`](../../fastApi-app/core/image_processing.py) | Bridges HTTP requests to `ObjectSegmentor`, `BackgroundInpainter`, and legacy `ObjectRemover`. |
 | Inference pool | [`fastApi-app/core/inference_pool/`](../../fastApi-app/core/inference_pool/) | Optional worker subprocess pool + session runtime (canvas writer, region leases). See [concurrency.md](concurrency.md). |
 | Object storage | [`fastApi-app/core/object_storage.py`](../../fastApi-app/core/object_storage.py) | All `{uid}_{object_id}_…` path helpers (`object_cutout_path`, `list_object_ids`, `next_object_id`, etc.). |
-| Schemas | [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.py) | Pydantic models. |
+| Schemas | [`fastApi-app/schemas/`](../../fastApi-app/schemas/) | Pydantic models, split by feature area. See [schemas.md](schemas.md). |
 
 ## Project metadata — [`fastApi-app/pyproject.toml`](../../fastApi-app/pyproject.toml)
 

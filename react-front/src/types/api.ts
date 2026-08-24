@@ -25,6 +25,8 @@ export interface JobInfo {
   created_at: string;
   /** Target object id, present only for generate_3d jobs. */
   object_id?: number | null;
+  /** Verify mode the job was submitted with, present only for segment jobs. */
+  verify?: VerifyMode | null;
 }
 
 export interface SegmentMaskResult {
@@ -109,6 +111,7 @@ export interface ObjectMetadataResponse {
   cutout_bounds?: CutoutBounds | null;
   offset_x: number;
   offset_y: number;
+  display_scale: number;
 }
 
 // Every field optional: a caller sends only what it's actually changing
@@ -174,7 +177,7 @@ export interface SmartPasteResponse {
 export interface ObjectInfo {
   object_id: number;
   uuid?: string | null;
-  name?: string | null;
+  name: string | null;
   average_depth?: number | null;
   source_elevation_deg?: number | null;
   cutout_b64: string;
@@ -237,14 +240,6 @@ export interface NovelViewRequest {
   elevation_direction?: ElevationDirection | null;
   radius?: number;
   zoom_direction?: ZoomDirection | null;
-}
-
-export interface NovelViewPreviewCacheRequest {
-  uid: string;
-  object_id: number;
-  azimuth_deg: number;
-  relative_elevation_deg?: number;
-  image_b64: string;
 }
 
 export interface NovelViewResponse {

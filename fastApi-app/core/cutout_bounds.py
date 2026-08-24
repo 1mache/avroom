@@ -5,7 +5,7 @@ import logging
 import cv2
 import numpy as np
 
-from schemas.image import CutoutBounds
+from schemas.common import CutoutBounds
 
 logger = logging.getLogger(__name__)
 

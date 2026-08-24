@@ -26,8 +26,6 @@ from core.object_metadata import (  # noqa: E402
 from core.object_storage import (  # noqa: E402
     object_cutout_path,
     object_glb_path,
-    object_novel_view_path,
-    object_novel_view_preview_path,
 )
 
 
@@ -69,19 +67,13 @@ def _seed_object(
     object_id: int = 0,
     name: str | None = "Chair",
     with_glb: bool = True,
-    with_novel: bool = True,
     content_hash: str = "abc123",
 ) -> str:
-    """Create cutout (+ optional GLB/novel views) and metadata; return object uuid."""
+    """Create cutout (+ optional GLB) and metadata; return object uuid."""
 
     cutout_bytes = _write_png(object_cutout_path(images_dir, uid, object_id))
     if with_glb:
         object_glb_path(glb_dir, uid, object_id).write_bytes(b"fake-glb")
-    if with_novel:
-        novel = object_novel_view_path(images_dir, uid, object_id, 40.0, 0.0)
-        novel.write_bytes(b"novel-bytes")
-        preview = object_novel_view_preview_path(images_dir, uid, object_id, 40.0, 0.0)
-        preview.write_bytes(b"preview-bytes")
 
     meta = create_object_metadata(
         session_id=uid,
@@ -120,8 +112,6 @@ def test_delete_removes_all_artifacts_and_index_entry(
     assert response.status_code == 204
     assert not object_cutout_path(storage_sandbox, "sess-1", 0).exists()
     assert not object_glb_path(glb_dir, "sess-1", 0).exists()
-    assert not object_novel_view_path(storage_sandbox, "sess-1", 0, 40.0, 0.0).exists()
-    assert not object_novel_view_preview_path(storage_sandbox, "sess-1", 0, 40.0, 0.0).exists()
     assert get_object_by_uuid(object_uuid) is None
 
     after = session_repo.get_session_last_changed("sess-1")
@@ -130,9 +120,7 @@ def test_delete_removes_all_artifacts_and_index_entry(
 
 
 def test_delete_without_optional_artifacts(storage_sandbox: Path, glb_dir: Path) -> None:
-    object_uuid = _seed_object(
-        storage_sandbox, glb_dir, with_glb=False, with_novel=False
-    )
+    object_uuid = _seed_object(storage_sandbox, glb_dir, with_glb=False)
 
     with _build_client() as client:
         response = client.delete(f"/images/objects/{object_uuid}")

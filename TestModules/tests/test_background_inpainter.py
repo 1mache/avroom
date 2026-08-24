@@ -9,6 +9,8 @@ from avroom_object_removal import (
     BackgroundInpainter,
     ImageInpaintingFacade,
     ImageInpaintingStrategy,
+    InpaintParams,
+    InpaintResult,
 )
 
 
@@ -18,22 +20,36 @@ class _SolidColorInpaintStrategy(ImageInpaintingStrategy):
     def __init__(self, color: tuple[int, int, int]) -> None:
         self._color = np.array(color, dtype=np.uint8)
 
-    def inpaint(self, image: np.ndarray, mask: np.ndarray, **kwargs: Any) -> np.ndarray:
-        return np.full_like(image, self._color)
+    def inpaint(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray,
+        params: InpaintParams | None = None,
+        *,
+        verify_trace: list[dict[str, Any]] | None = None,
+    ) -> InpaintResult:
+        return InpaintResult(image=np.full_like(image, self._color))
 
 
-class _InpaintOutStubStrategy(ImageInpaintingStrategy):
-    """Stub that records inpaint_out values for compose tests."""
+class _ComposeDilateStubStrategy(ImageInpaintingStrategy):
+    """Stub that reports verifier-driven compose dilation, like Hybrid does."""
 
     def __init__(self, color: tuple[int, int, int]) -> None:
         self._color = np.array(color, dtype=np.uint8)
 
-    def inpaint(self, image: np.ndarray, mask: np.ndarray, **kwargs: Any) -> np.ndarray:
-        inpaint_out = kwargs.get("inpaint_out")
-        if isinstance(inpaint_out, dict):
-            inpaint_out["compose_dilate_pixels"] = 2
-            inpaint_out["verification_ok"] = True
-        return np.full_like(image, self._color)
+    def inpaint(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray,
+        params: InpaintParams | None = None,
+        *,
+        verify_trace: list[dict[str, Any]] | None = None,
+    ) -> InpaintResult:
+        return InpaintResult(
+            image=np.full_like(image, self._color),
+            compose_dilate_pixels=2,
+            verification_ok=True,
+        )
 
 
 def test_cut_mask_from_image_preserves_pixels_outside_compose_mask() -> None:
@@ -108,7 +124,7 @@ def test_compose_mask_padding_radius_expands_paste_region(monkeypatch: pytest.Mo
     assert np.array_equal(result[0, 0], original[0, 0])
 
 
-def test_inpaint_out_compose_dilate_expands_paste_region() -> None:
+def test_compose_dilate_pixels_expands_paste_region() -> None:
     """Verifier-driven compose dilation should widen the paste region."""
     original = np.zeros((5, 5, 3), dtype=np.uint8)
     original[:, :] = (10, 20, 30)
@@ -118,14 +134,13 @@ def test_inpaint_out_compose_dilate_expands_paste_region() -> None:
     compose_mask[2, 2] = 255
 
     model_color = (200, 100, 50)
-    stub_facade = ImageInpaintingFacade(strategy=_InpaintOutStubStrategy(model_color))
+    stub_facade = ImageInpaintingFacade(strategy=_ComposeDilateStubStrategy(model_color))
     inpainter = BackgroundInpainter(inpainting_facade=stub_facade)
 
     result = inpainter.cut_mask_from_image(
         original_image=original,
         mask=inpaint_mask,
         compose_mask=compose_mask,
-        inpaint_out={},
     )
 
     center_neighbors = [(1, 2), (2, 1), (2, 3), (3, 2)]

@@ -2,17 +2,10 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..utils.mask_bool import mask_to_bool as mask_bool
+
 # Overlaps smaller than this are treated as independent (not a peel stack).
 MIN_OVERLAP_PIXELS: int = 200
-
-
-def mask_bool(mask: np.ndarray) -> np.ndarray:
-    """Return a 2-D boolean mask from 0/1 or 0/255 input."""
-    if mask.ndim == 3:
-        mask = mask[:, :, 0]
-    if mask.dtype == np.uint8 or (mask.size and float(mask.max()) > 1.0):
-        return mask > 127
-    return mask > 0.5
 
 
 def overlap_pixel_count(a: np.ndarray, b: np.ndarray) -> int:

@@ -45,44 +45,6 @@ def object_cutout_path(base_dir: Path, uid: str, object_id: int) -> Path:
     return base_dir / f"{uid}_{object_id}_cutout.png"
 
 
-def _novel_view_stem(uid: str, object_id: int, azimuth_deg: float, relative_elevation_deg: float) -> str:
-    """Return the shared filename stem identifying one object at one snapped pose."""
-
-    az_key = int(round(azimuth_deg))
-    el_key = int(round(relative_elevation_deg))
-    return f"{uid}_{object_id}_novel_az{az_key}_el{el_key}"
-
-
-def object_novel_view_path(
-    base_dir: Path,
-    uid: str,
-    object_id: int,
-    azimuth_deg: float,
-    relative_elevation_deg: float,
-) -> Path:
-    """Return the canonical path for a cached novel-view PNG artifact."""
-
-    return base_dir / f"{_novel_view_stem(uid, object_id, azimuth_deg, relative_elevation_deg)}.png"
-
-
-def object_novel_view_preview_path(
-    base_dir: Path,
-    uid: str,
-    object_id: int,
-    azimuth_deg: float,
-    relative_elevation_deg: float,
-) -> Path:
-    """Return the path for a client-rendered novel-view preview placeholder.
-
-    Distinct suffix from :func:`object_novel_view_path` so this best-effort
-    stand-in can never be mistaken for a genuine cached synthesis result by
-    the read-side cache check in ``POST /images/novel-view``.
-    """
-
-    stem = _novel_view_stem(uid, object_id, azimuth_deg, relative_elevation_deg)
-    return base_dir / f"{stem}.preview.png"
-
-
 def legacy_object_cutout_path(base_dir: Path, uid: str) -> Path:
     """Return the pre-numbering cutout path ``{uid}_cutout.png``.
 
@@ -206,37 +168,6 @@ def session_preview_path(base_dir: Path, uid: str) -> Path:
     return base_dir / f"{uid}_preview.jpg"
 
 
-def list_object_novel_view_paths(base_dir: Path, uid: str, object_id: int) -> list[Path]:
-    """Return novel-view and preview PNG paths belonging to one object.
-
-    Matches both genuine cached results (``…_novel_azX_elY.png``) and client
-    preview placeholders (``…_novel_azX_elY.preview.png``).
-    """
-
-    if not base_dir.is_dir():
-        return []
-
-    prefix = f"{uid}_{object_id}_novel_az"
-    paths: list[Path] = []
-    for entry in base_dir.iterdir():
-        if not entry.is_file():
-            continue
-        name = entry.name
-        if name.startswith(prefix) and name.endswith(".png"):
-            paths.append(entry)
-    return sorted(paths)
-
-
-def _rewrite_novel_view_filename(name: str, uid: str, source_id: int, dest_id: int) -> str:
-    """Rewrite a novel-view filename from *source_id* to *dest_id* for the same uid."""
-
-    source_prefix = f"{uid}_{source_id}_"
-    dest_prefix = f"{uid}_{dest_id}_"
-    if not name.startswith(source_prefix):
-        raise ValueError(f"Unexpected novel-view filename for rewrite: {name!r}")
-    return dest_prefix + name[len(source_prefix) :]
-
-
 def copy_file_preserving_mtime(source: Path, destination: Path) -> Path:
     """Copy *source* to *destination*, preserving timestamps via ``copy2``."""
 
@@ -255,9 +186,8 @@ def copy_object_artifacts(
 ) -> list[Path]:
     """Copy per-object disk artifacts from *source_object_id* to *dest_object_id*.
 
-    Copies the cutout (required), optional GLB, and any novel-view / preview
-    caches. Session-level files (background, depth, original, camera calib)
-    are never touched.
+    Copies the cutout (required) and optional GLB. Session-level files
+    (background, depth, original, camera calib) are never touched.
 
     Returns:
         Paths written for the destination object (for rollback on failure).
@@ -298,14 +228,6 @@ def copy_object_artifacts(
                 dest_glb,
             )
 
-        for source_novel in list_object_novel_view_paths(base_dir, uid, source_object_id):
-            dest_name = _rewrite_novel_view_filename(
-                source_novel.name, uid, source_object_id, dest_object_id
-            )
-            dest_novel = base_dir / dest_name
-            copy_file_preserving_mtime(source_novel, dest_novel)
-            written.append(dest_novel)
-
         logger.info(
             "Copied object artifacts: uid=%s source_id=%d dest_id=%d files=%d",
             uid,
@@ -337,10 +259,6 @@ def delete_object_artifact_files(
 
     removed = remove_file(object_cutout_path(base_dir, uid, object_id))
     removed += remove_file(object_glb_path(glb_dir, uid, object_id))
-
-    for novel_path in list_object_novel_view_paths(base_dir, uid, object_id):
-        novel_path.unlink(missing_ok=True)
-        removed += 1
 
     logger.debug(
         "Deleted object artifact files: uid=%s object_id=%d removed=%d",

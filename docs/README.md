@@ -2,9 +2,13 @@
 
 Welcome to the Avroom architecture documentation. These docs describe the **current state** of the project as found in the code (not aspirational design).
 
-> Last refresh: 2026-08-22
+> Last refresh: 2026-08-24
 
 What changed in this refresh:
+
+- Removed novel-view's HTTP-layer pose snapping (10° grid, azimuth wrap) and its per-`(uid, object_id, azimuth, elevation)` disk cache (`{uid}_{id}_novel_az{az}_el{el}.png` + `.preview.png`, and the now-deleted `core/novel_view_cache.py` module and `POST /images/novel-view/preview-cache` endpoint). `MeshRenderNovelViewStrategy` renders cheaply enough that every request now renders the exact requested pose fresh — see [backend/api-endpoints.md](backend/api-endpoints.md#post-imagesnovel-view), [ai-pipeline/ai-engines/novel-view/](ai-pipeline/ai-engines/novel-view/).
+
+Previous refresh (2026-08-22):
 
 - Depth rescale / smart-paste are UI-only: server persists `display_scale` + `average_depth`; cutout PNG stays pristine.
 - Updated rescale/smart-paste API responses (no `cutout_b64`; added `display_scale`).

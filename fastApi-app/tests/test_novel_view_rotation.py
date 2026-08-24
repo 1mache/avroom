@@ -1,11 +1,9 @@
-"""Tests for the /images/novel-view endpoint's HTTP-layer pose snapping and cache."""
+"""Tests for the /images/novel-view endpoint."""
 
 from __future__ import annotations
 
-import base64
 import sys
 import tempfile
-import time
 from pathlib import Path
 from typing import Any
 
@@ -18,29 +16,6 @@ if str(_APP_ROOT) not in sys.path:
     sys.path.insert(0, str(_APP_ROOT))
 
 import settings  # noqa: E402
-from api.novel_view import _normalize_azimuth_deg, _snap_to_step  # noqa: E402
-
-
-class TestSnapHelpers:
-    def test_snaps_to_nearest_10(self) -> None:
-        assert _snap_to_step(37.0, 10.0) == 40.0
-        assert _snap_to_step(33.0, 10.0) == 30.0
-        assert _snap_to_step(-7.0, 10.0) == -10.0
-
-    def test_snap_returns_positive_zero(self) -> None:
-        result = _snap_to_step(-2.0, 10.0)
-        assert result == 0.0
-        assert str(result) == "0.0"
-
-    def test_normalize_wraps_into_range(self) -> None:
-        assert _normalize_azimuth_deg(355.0) == -5.0
-        assert _normalize_azimuth_deg(-355.0) == 5.0
-        assert _normalize_azimuth_deg(180.0) == 180.0
-        assert _normalize_azimuth_deg(-180.0) == 180.0
-
-    def test_normalize_passthrough_within_range(self) -> None:
-        assert _normalize_azimuth_deg(40.0) == 40.0
-        assert _normalize_azimuth_deg(-170.0) == -170.0
 
 
 class _FakeInferenceClient:
@@ -118,6 +93,9 @@ def glb_dir(storage_sandbox: Path) -> Path:
 @pytest.fixture
 def fake_client(monkeypatch: pytest.MonkeyPatch) -> _FakeInferenceClient:
     client = _FakeInferenceClient()
+    # run_novel_view on every call goes through api/novel_view.py's own
+    # get_inference_client reference -- there is no cache module anymore, the
+    # route calls the inference client directly.
     monkeypatch.setattr("api.novel_view.get_inference_client", lambda: client)
     # run_generate_3d on a cache miss goes through core/object_3d.py's own
     # get_inference_client reference (shared with core/jobs/handlers.py's
@@ -148,7 +126,7 @@ def _post_novel_view(client: Any, **overrides: Any) -> Any:
     return client.post("/images/novel-view", json=payload)
 
 
-def test_response_echoes_snapped_azimuth(
+def test_response_echoes_exact_azimuth(
     storage_sandbox: Path, fake_client: _FakeInferenceClient, glb_dir: Path
 ) -> None:
     with _build_client() as client:
@@ -156,10 +134,25 @@ def test_response_echoes_snapped_azimuth(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["azimuth_deg"] == 40.0
-    assert fake_client.calls[0]["azimuth_deg"] == 40.0
+    assert body["azimuth_deg"] == 37.0
+    assert fake_client.calls[0]["azimuth_deg"] == 37.0
     assert fake_client.calls[0]["mesh_path"] == glb_dir / "sess-1_0.glb"
     assert not fake_client.generate_3d_calls
+    # No per-angle PNG is ever written to disk anymore -- every call renders
+    # fresh from the GLB.
+    assert not list(storage_sandbox.glob("*_novel_az*"))
+
+
+def test_repeat_request_calls_model_again(
+    storage_sandbox: Path, fake_client: _FakeInferenceClient
+) -> None:
+    with _build_client() as client:
+        first = _post_novel_view(client, azimuth_deg=40.0)
+        second = _post_novel_view(client, azimuth_deg=40.0)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert len(fake_client.calls) == 2, "there is no cache -- every request renders fresh"
 
 
 def test_glb_cache_miss_generates_and_writes(
@@ -184,40 +177,6 @@ def test_glb_cache_miss_generates_and_writes(
     assert fake_client.calls[0]["azimuth_deg"] == 20.0
 
 
-def test_near_identical_poses_share_one_cache_entry(
-    storage_sandbox: Path, fake_client: _FakeInferenceClient
-) -> None:
-    with _build_client() as client:
-        first = _post_novel_view(client, azimuth_deg=36.0)
-        second = _post_novel_view(client, azimuth_deg=44.0)
-
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert first.json()["azimuth_deg"] == second.json()["azimuth_deg"] == 40.0
-    assert len(fake_client.calls) == 1, "second request should have been served from cache"
-
-    cache_path = storage_sandbox / "sess-1_0_novel_az40_el0.png"
-    assert cache_path.exists()
-
-
-def test_stale_cache_after_cutout_rewrite_resynthesizes(
-    storage_sandbox: Path, fake_client: _FakeInferenceClient
-) -> None:
-    with _build_client() as client:
-        _post_novel_view(client, azimuth_deg=40.0)
-        assert len(fake_client.calls) == 1
-
-        # Simulate a cutout rewrite in place, strictly after the cached rotation
-        # was written (e.g. a future pipeline that mutates the PNG).
-        time.sleep(0.05)
-        cutout_path = storage_sandbox / "sess-1_0_cutout.png"
-        cutout_path.write_bytes(cutout_path.read_bytes())
-
-        _post_novel_view(client, azimuth_deg=40.0)
-
-    assert len(fake_client.calls) == 2, "stale cache entry must not be served"
-
-
 def test_invalid_pose_returns_422(storage_sandbox: Path, fake_client: _FakeInferenceClient) -> None:
     with _build_client() as client:
         response = _post_novel_view(
@@ -236,79 +195,3 @@ def test_missing_cutout_returns_404(
 
     assert response.status_code == 404
     assert not fake_client.calls
-
-
-def _post_preview_cache(client: Any, **overrides: Any) -> Any:
-    payload = {
-        "uid": "sess-1",
-        "object_id": 0,
-        "azimuth_deg": 0.0,
-        "image_b64": base64.b64encode(b"fake-preview-bytes").decode("ascii"),
-    }
-    payload.update(overrides)
-    return client.post("/images/novel-view/preview-cache", json=payload)
-
-
-class TestPreviewCache:
-    def test_writes_preview_file_at_snapped_pose(self, storage_sandbox: Path) -> None:
-        with _build_client() as client:
-            response = _post_preview_cache(client, azimuth_deg=37.0)
-
-        assert response.status_code == 204
-        preview_path = storage_sandbox / "sess-1_0_novel_az40_el0.preview.png"
-        assert preview_path.exists()
-        assert preview_path.read_bytes() == b"fake-preview-bytes"
-
-    def test_invalid_base64_returns_422(self, storage_sandbox: Path) -> None:
-        with _build_client() as client:
-            response = _post_preview_cache(client, image_b64="not-valid-base64!!!")
-
-        assert response.status_code == 422
-
-    def test_real_result_deletes_matching_preview(
-        self, storage_sandbox: Path, fake_client: _FakeInferenceClient
-    ) -> None:
-        with _build_client() as client:
-            cache_response = _post_preview_cache(client, azimuth_deg=37.0)
-            assert cache_response.status_code == 204
-            preview_path = storage_sandbox / "sess-1_0_novel_az40_el0.preview.png"
-            assert preview_path.exists()
-
-            real_response = _post_novel_view(client, azimuth_deg=37.0)
-
-        assert real_response.status_code == 200
-        assert not preview_path.exists()
-
-    def test_cache_hit_also_deletes_matching_preview(
-        self, storage_sandbox: Path, fake_client: _FakeInferenceClient
-    ) -> None:
-        with _build_client() as client:
-            _post_novel_view(client, azimuth_deg=40.0)
-            assert len(fake_client.calls) == 1
-
-            preview_path = storage_sandbox / "sess-1_0_novel_az40_el0.preview.png"
-            preview_path.write_bytes(b"leftover-preview")
-
-            second = _post_novel_view(client, azimuth_deg=40.0)
-
-        assert second.status_code == 200
-        assert len(fake_client.calls) == 1, "second request should still be a cache hit"
-        assert not preview_path.exists()
-
-    def test_preview_untouched_when_synthesis_fails(
-        self, storage_sandbox: Path, fake_client: _FakeInferenceClient
-    ) -> None:
-        def _boom(**_kwargs: Any) -> np.ndarray:
-            raise RuntimeError("model exploded")
-
-        fake_client.run_novel_view = _boom  # type: ignore[method-assign]
-
-        with _build_client() as client:
-            _post_preview_cache(client, azimuth_deg=37.0)
-            preview_path = storage_sandbox / "sess-1_0_novel_az40_el0.preview.png"
-            assert preview_path.exists()
-
-            response = _post_novel_view(client, azimuth_deg=37.0)
-
-        assert response.status_code == 500
-        assert preview_path.exists(), "preview must survive a failed synthesis"

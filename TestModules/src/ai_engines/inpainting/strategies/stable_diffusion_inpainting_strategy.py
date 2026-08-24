@@ -8,8 +8,11 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from ....utils.torch_device import auto_device
 from ...inpainting_verification.crop import crop_with_window, mask_crop_window
 from ..image_inpainting_strategy import ImageInpaintingStrategy
+from ..inpaint_params import InpaintParams
+from ..inpaint_result import InpaintResult
 
 logger = logging.getLogger(__name__)
 
@@ -131,30 +134,21 @@ class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
         negative_prompt: str | None = None,
     ) -> None:
         self._model_id = model_id
-        self._device = device or self._auto_device()
+        self._device = device or auto_device()
         self._prompt = prompt or self.DEFAULT_PROMPT
         self._negative_prompt = negative_prompt or self.DEFAULT_NEGATIVE_PROMPT
         logger.info(
             f"StableDiffusionInpaintingStrategy created (model={model_id}, device={self._device})"
         )
 
-    @staticmethod
-    def _auto_device() -> str:
-        try:
-            import torch
-
-            return "cuda" if torch.cuda.is_available() else "cpu"
-        except ModuleNotFoundError:
-            return "cpu"
-
     def inpaint(
         self,
         image: np.ndarray,
         mask: np.ndarray,
-        prompt: str | None = None,
-        strength: float = 0.40,
-        **kwargs: Any,
-    ) -> np.ndarray:
+        params: InpaintParams | None = None,
+        *,
+        verify_trace: list[dict[str, Any]] | None = None,
+    ) -> InpaintResult:
         """Inpaint the masked region and return a full-frame BGR array.
 
         SD runs on a native-resolution crop around the mask rather than the
@@ -164,6 +158,9 @@ class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
         an uncorrupted reference on both sides of the outline.
         """
         logger.info("Starting Stable Diffusion inpainting process...")
+        # verify_trace exists only to satisfy the shared interface -- SD
+        # never verifies its own output.
+        resolved = params or InpaintParams()
 
         # Hard-binarize before computing the crop window.
         mask_uint8 = (mask * 255).astype(np.uint8) if mask.max() <= 1 else mask.astype(np.uint8)
@@ -189,11 +186,13 @@ class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
             (gen_w, gen_h), Image.NEAREST
         )
 
-        if prompt is None:
-            prompt = self._prompt
-        negative_prompt = str(kwargs.get("negative_prompt", self._negative_prompt))
-        num_inference_steps = int(kwargs.get("num_inference_steps", 42))
-        guidance_scale = float(kwargs.get("guidance_scale", 10.0))
+        prompt = resolved.prompt if resolved.prompt is not None else self._prompt
+        negative_prompt = (
+            resolved.negative_prompt if resolved.negative_prompt is not None else self._negative_prompt
+        )
+        strength = resolved.strength
+        num_inference_steps = resolved.num_inference_steps
+        guidance_scale = resolved.guidance_scale
 
         logger.info(
             "SD inference: strength=%s steps=%s guidance=%s gen_size=%dx%d "
@@ -236,7 +235,7 @@ class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
                 "SD inpaint crop is near-black (likely NSFW filter); "
                 "keeping pre-SD pixels for this window."
             )
-            return image
+            return InpaintResult(image=image)
 
         result_crop_bgr = cv2.cvtColor(result_crop_rgb, cv2.COLOR_RGB2BGR)
 
@@ -247,4 +246,4 @@ class StableDiffusionInpaintingStrategy(ImageInpaintingStrategy):
         out_crop[crop_mask_bool] = result_crop_bgr[crop_mask_bool]
 
         logger.info("Stable Diffusion inpainting completed.")
-        return out
+        return InpaintResult(image=out)

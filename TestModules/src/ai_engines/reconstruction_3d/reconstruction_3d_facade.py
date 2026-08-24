@@ -9,9 +9,6 @@ from PIL import Image
 
 from .reconstruction_3d_strategy import OutputMode, Reconstruction3DStrategy
 from .reconstruction_quality import ReconstructionQuality
-from .strategies.openlrm_reconstruction_strategy import OpenLrmReconstructionStrategy
-from .strategies.trellis_reconstruction_strategy import TrellisReconstructionStrategy
-from .strategies.vfusion3d_reconstruction_strategy import Vfusion3dReconstructionStrategy
 from .strategies.triposr_reconstruction_strategy import TriposrReconstructionStrategy
 from .strategies.hunyuan3d2_reconstruction_strategy import Hunyuan3D2ReconstructionStrategy
 
@@ -21,10 +18,9 @@ logger = logging.getLogger(__name__)
 class Reconstruction3DFacade:
     """Public entry point for image-to-3D reconstruction.
 
-    Holds exactly one :class:`Reconstruction3DStrategy`. The default backend is
-    OpenLRM v1.0 (``zxhezexin/openlrm-small-obj-1.0``, local PyTorch). Pass
-    :class:`TrellisReconstructionStrategy` (or any other concrete strategy) at
-    construction to swap backends.
+    Holds exactly one :class:`Reconstruction3DStrategy`. The default backend
+    is :class:`Hunyuan3D2ReconstructionStrategy`, with automatic fallback to
+    :class:`TriposrReconstructionStrategy` on failure.
     """
 
     def __init__(self, strategy: Reconstruction3DStrategy | None = None) -> None:

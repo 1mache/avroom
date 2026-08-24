@@ -84,6 +84,21 @@ def test_generate_3d_job_reports_its_target_object_id() -> None:
     assert claimed is not None and claimed.id == job.id
 
 
+def test_segment_job_reports_its_verify_mode() -> None:
+    """The picker-chain effect (useSessionJobs.ts) must never open the mask
+    picker for an auto-verify segment job -- it needs JobInfo.verify to tell
+    an auto job (backend already narrowed candidates to its one CLIP-picked
+    winner) apart from a manual one (the user actually wants to choose)."""
+    user_id = _make_user_and_session()
+    job = create_job(user_id, "sess-1", "segment", {"x": 1, "y": 2, "verify": "auto"})
+
+    listed = list_session_jobs(user_id, "sess-1")
+    assert listed[0].verify == "auto"
+
+    active = list_active_jobs(user_id)
+    assert active[0].verify == "auto"
+
+
 def test_claim_next_job_skip_locked_gives_job_to_exactly_one_thread() -> None:
     user_id = _make_user_and_session()
     job = create_job(user_id, "sess-1", "segment", {"x": 0, "y": 0})

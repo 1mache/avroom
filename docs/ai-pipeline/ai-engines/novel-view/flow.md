@@ -6,36 +6,26 @@ Invoked via `NovelViewFacade.synthesize(...)` or `POST /images/novel-view`.
 
 1. Resolve cutout path on disk (`{uid}_{object_id}_cutout.png`).
 2. Normalize optional pose directions through `NovelViewRotationAdapter.resolve_pose(...)`.
-3. Snap resolved azimuth/relative-elevation to the nearest 10° and wrap azimuth into `(-180, 180]`.
-4. Check the disk PNG cache for this snapped pose. If fresh vs cutout mtime, return it — skip below.
-5. **Ensure GLB:** `resolve_object_glb_path`; on miss run `run_generate_3d` and write `{uid}_{object_id}.glb`.
-6. Inference pool: `NovelViewFacade(MeshRenderNovelViewStrategy()).synthesize(cutout, mesh=glb, pose)`.
-7. Strategy loads/normalizes GLB (recenter + scale), places OrbitControls-compatible camera, pyrender offscreen RGBA, composites onto cutout canvas → BGRA.
-8. Encode PNG → base64; persist disk cache; bump session `last_changed`.
+3. **Ensure GLB:** `resolve_object_glb_path`; on miss run `run_generate_3d` and write `{uid}_{object_id}.glb`.
+4. Inference pool: `NovelViewFacade(MeshRenderNovelViewStrategy()).synthesize(cutout, mesh=glb, pose)`.
+5. Strategy loads/normalizes GLB (recenter + scale), places OrbitControls-compatible camera, pyrender offscreen RGBA, composites onto cutout canvas → BGRA.
+6. Encode PNG → base64. No disk cache — nothing is persisted per pose, and no `last_changed` bump.
 
 ```mermaid
 sequenceDiagram
   participant API
   participant Adapter as NovelViewRotationAdapter
-  participant Cache as Disk_PNG_cache
   participant Glb as GLB_storage
   participant Pool as inference_pool
   participant Strat as MeshRenderNovelViewStrategy
 
   API->>Adapter: resolve_pose(request)
   Adapter-->>API: signed azimuth elevation radius
-  API->>API: snap azimuth/elevation to 10 deg grid
-  API->>Cache: check novel PNG
-  alt cache hit
-    Cache-->>API: cached PNG bytes
-  else cache miss
-    API->>Glb: resolve or generate GLB
-    API->>Pool: run_novel_view(cutout, mesh_path, pose)
-    Pool->>Strat: synthesize(..., mesh=glb)
-    Strat-->>Pool: BGRA ndarray
-    Pool-->>API: novel_view_bgra
-    API->>Cache: write PNG
-  end
+  API->>Glb: resolve or generate GLB
+  API->>Pool: run_novel_view(cutout, mesh_path, pose)
+  Pool->>Strat: synthesize(..., mesh=glb)
+  Strat-->>Pool: BGRA ndarray
+  Pool-->>API: novel_view_bgra
 ```
 
 ## Stable Zero123 (facade default / direct Python)

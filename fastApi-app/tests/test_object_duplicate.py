@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sys
 import tempfile
-import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -27,11 +26,8 @@ from core.object_metadata import (  # noqa: E402
     save_object_metadata,
 )
 from core.object_storage import (  # noqa: E402
-    list_object_novel_view_paths,
     object_cutout_path,
     object_glb_path,
-    object_novel_view_path,
-    object_novel_view_preview_path,
 )
 
 
@@ -73,19 +69,13 @@ def _seed_object(
     object_id: int = 0,
     name: str | None = "Chair",
     with_glb: bool = True,
-    with_novel: bool = True,
     content_hash: str = "abc123",
 ) -> str:
-    """Create cutout (+ optional GLB/novel views) and metadata; return object uuid."""
+    """Create cutout (+ optional GLB) and metadata; return object uuid."""
 
     cutout_bytes = _write_png(object_cutout_path(images_dir, uid, object_id))
     if with_glb:
         object_glb_path(glb_dir, uid, object_id).write_bytes(b"fake-glb")
-    if with_novel:
-        novel = object_novel_view_path(images_dir, uid, object_id, 40.0, 0.0)
-        novel.write_bytes(b"novel-bytes")
-        preview = object_novel_view_preview_path(images_dir, uid, object_id, 40.0, 0.0)
-        preview.write_bytes(b"preview-bytes")
 
     meta = create_object_metadata(
         session_id=uid,
@@ -148,14 +138,6 @@ def test_duplicate_copies_all_artifacts_and_returns_new_uuid(
     assert clone_cutout == source_cutout
 
     assert object_glb_path(glb_dir, "sess-1", 1).read_bytes() == b"fake-glb"
-    assert (
-        object_novel_view_path(storage_sandbox, "sess-1", 1, 40.0, 0.0).read_bytes()
-        == b"novel-bytes"
-    )
-    assert (
-        object_novel_view_preview_path(storage_sandbox, "sess-1", 1, 40.0, 0.0).read_bytes()
-        == b"preview-bytes"
-    )
 
     after = session_repo.get_session_last_changed("sess-1")
     assert after is not None
@@ -163,9 +145,7 @@ def test_duplicate_copies_all_artifacts_and_returns_new_uuid(
 
 
 def test_duplicate_without_optional_artifacts(storage_sandbox: Path, glb_dir: Path) -> None:
-    source_uuid = _seed_object(
-        storage_sandbox, glb_dir, with_glb=False, with_novel=False
-    )
+    source_uuid = _seed_object(storage_sandbox, glb_dir, with_glb=False)
 
     with _build_client() as client:
         response = client.post(f"/images/objects/{source_uuid}/duplicate")
@@ -176,7 +156,6 @@ def test_duplicate_without_optional_artifacts(storage_sandbox: Path, glb_dir: Pa
     assert clone is not None
     assert object_cutout_path(storage_sandbox, "sess-1", 1).exists()
     assert not object_glb_path(glb_dir, "sess-1", 1).exists()
-    assert list_object_novel_view_paths(storage_sandbox, "sess-1", 1) == []
 
 
 def test_copy_naming_sequence_and_unnamed_fallback(
@@ -189,7 +168,6 @@ def test_copy_naming_sequence_and_unnamed_fallback(
         object_id=1,
         name=None,
         with_glb=False,
-        with_novel=False,
         content_hash="hash-unnamed",
     )
 
@@ -250,9 +228,7 @@ def test_missing_source_returns_404(storage_sandbox: Path) -> None:
 
 
 def test_missing_cutout_returns_404(storage_sandbox: Path, glb_dir: Path) -> None:
-    source_uuid = _seed_object(
-        storage_sandbox, glb_dir, with_glb=False, with_novel=False
-    )
+    source_uuid = _seed_object(storage_sandbox, glb_dir, with_glb=False)
     object_cutout_path(storage_sandbox, "sess-1", 0).unlink()
 
     with _build_client() as client:
@@ -304,24 +280,6 @@ def test_shared_depth_cache_not_duplicated(storage_sandbox: Path, glb_dir: Path)
     clone = get_object_by_uuid(response.json()["object_uuid"])
     assert clone is not None
     assert clone.content_hash == "depth-hash"
-
-
-def test_novel_view_mtime_preserved(storage_sandbox: Path, glb_dir: Path) -> None:
-    source_uuid = _seed_object(storage_sandbox, glb_dir)
-    source_novel = object_novel_view_path(storage_sandbox, "sess-1", 0, 40.0, 0.0)
-    past = time.time() - 3600
-    # Windows may round timestamps; sleep briefly after seeding then set explicit mtime.
-    os_utime = getattr(__import__("os"), "utime")
-    os_utime(source_novel, (past, past))
-    source_mtime = source_novel.stat().st_mtime
-
-    with _build_client() as client:
-        response = client.post(f"/images/objects/{source_uuid}/duplicate")
-
-    assert response.status_code == 200
-    dest_novel = object_novel_view_path(storage_sandbox, "sess-1", 1, 40.0, 0.0)
-    assert dest_novel.exists()
-    assert dest_novel.stat().st_mtime == source_mtime
 
 
 def test_background_untouched(storage_sandbox: Path, glb_dir: Path) -> None:

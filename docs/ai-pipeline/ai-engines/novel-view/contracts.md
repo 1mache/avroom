@@ -57,16 +57,16 @@ Python named magnitudes (optional, for readability):
 | `image_b64` | base64 PNG |
 | `format` | `"png"` |
 | `cutout_bounds` | `CutoutBounds \| null` |
-| `elevation_deg` | echoed (source view; no direction adapter, no snapping) |
-| `azimuth_deg`, `relative_elevation_deg` | resolved signed values, **snapped** to the nearest 10° (see below) |
-| `radius` | resolved signed value (never snapped) |
+| `elevation_deg` | echoed (source view; no direction adapter) |
+| `azimuth_deg`, `relative_elevation_deg` | resolved signed values, exact (no quantization) |
+| `radius` | resolved signed value |
 | `azimuth_direction`, `elevation_direction`, `zoom_direction` | echoed when supplied |
 
 **Status codes:** `200` success, `404` missing cutout, `422` validation, `500` inference failure.
 
-### HTTP-layer pose snapping and cache
+### No pose snapping, no disk cache
 
-After the direction adapter resolves signed values, `POST /images/novel-view` additionally snaps `azimuth_deg` and `relative_elevation_deg` onto a 10° grid (`ROTATION_STEP_DEG`) and wraps azimuth into `(-180, 180]`, **before** consulting the disk cache described in [operations.md](operations.md#disk-cache) or invoking the model. This is deliberately an HTTP-only step — it lives in `fastApi-app/api/novel_view.py`, not in `NovelViewRotationAdapter` — so a UI that lets the pose vary continuously (e.g. free camera orbit) still collapses onto a small set of cache keys instead of triggering fresh inference on every near-identical request. `radius` is never snapped. The response's `azimuth_deg`/`relative_elevation_deg` are the snapped values actually sent to the model, not the raw request.
+`POST /images/novel-view` passes the direction adapter's resolved signed values straight to the mesh renderer — see [operations.md](operations.md#no-disk-cache). There is no angular quantization and no per-pose disk cache: `MeshRenderNovelViewStrategy` renders cheaply enough from the object's GLB that every call just renders the exact requested pose. The response's `azimuth_deg`/`relative_elevation_deg` are exactly what was sent to the model.
 
 ## Anti-patterns
 

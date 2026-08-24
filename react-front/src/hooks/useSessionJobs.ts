@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  cacheNovelViewPreview,
   deleteJob,
   deleteObject as deleteObjectRequest,
   duplicateObject as duplicateObjectRequest,
@@ -419,22 +418,6 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
             : o,
         ),
       );
-
-      // Best-effort persistence of the preview so something survives on disk
-      // if the real synthesis below never completes. Detached and swallowed
-      // -- a failure here must never affect the rotation itself.
-      const previewBase64 = previewSrc.split(",")[1] ?? "";
-      if (previewBase64) {
-        cacheNovelViewPreview({
-          uid: currentImageId,
-          object_id: objectId,
-          azimuth_deg: pose.azimuthDeg,
-          relative_elevation_deg: pose.relativeElevationDeg,
-          image_b64: previewBase64,
-        }).catch(() => {
-          // Non-fatal -- the preview simply won't have a server-side fallback.
-        });
-      }
 
       synthesizeNovelView({
         uid: currentImageId,

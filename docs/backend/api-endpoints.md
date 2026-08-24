@@ -205,12 +205,9 @@ Synthesizes a 2D novel view of an existing object cutout at a requested camera p
 Behavior:
 
 1. Resolve signed pose via `NovelViewRotationAdapter.resolve_pose(...)` (direction-enum handling; **422** on an invalid pose).
-2. **Snap** the resolved azimuth and relative elevation to the nearest 10° (`ROTATION_STEP_DEG` in `novel_view.py`) and wrap azimuth into `(-180, 180]`. This is an HTTP-only concern — the adapter and direct Python API are untouched and keep accepting exact angles. Radius is never snapped (it's a distance, not an angle).
-3. **404** if the object's cutout (`{uid}_{object_id}_cutout.png`) doesn't exist yet.
-4. Check the disk cache at `object_novel_view_path(uid, object_id, snapped_azimuth, snapped_elevation)` via `core/novel_view_cache.py::ensure_novel_view_png`. A cache hit requires the cached file to be non-empty and its mtime `>=` the cutout's mtime. No current code path rewrites a finalized cutout PNG in place (`rescale-by-depth` only updates `display_scale`/bounds metadata in Postgres, never the pixels) — the mtime check is a guard against a future producer doing so, not a defense against an existing one.
-5. On a cache hit: read cached PNG bytes, skip inference, **skip `touch_session`** (nothing changed).
-6. On a cache miss: run inference (`JobKind.NOVEL_VIEW`, seed fixed at 0 — deterministic given the same cutout + pose), write the PNG to the cache path, and `touch_session(uid)`.
-7. Return `NovelViewResponse` with the **snapped** azimuth/elevation echoed back (not the raw request values), so the client learns the pose that was actually rendered.
+2. **404** if the object's cutout (`{uid}_{object_id}_cutout.png`) doesn't exist yet.
+3. Get-or-generate the object's GLB (`core/object_3d.py::ensure_object_glb`) and run inference (`JobKind.NOVEL_VIEW`) against `MeshRenderNovelViewStrategy` at the exact resolved pose — a direct mesh render, cheap enough that there is no per-angle disk cache; every call renders fresh.
+4. Return `NovelViewResponse` with the exact resolved azimuth/elevation echoed back.
 
 Does **not** take a canvas-writer lock or region lease, and never mutates the cutout PNG or session objects — a rotation request can run concurrently with anything else and always starts from the same pristine cutout, which is what makes "rotate again" restart cleanly from the default pose.
 

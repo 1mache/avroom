@@ -45,6 +45,12 @@ import { Toolbar } from "../workspace/Toolbar";
 const errorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback;
 
+// Module-scope, not component state: WorkspaceScreen fully unmounts on every
+// dashboard round-trip (key={uid}), so a ref/state here would reset each time
+// and re-fire the warm-maps request + its full-screen spinner on every
+// reentry even though the backend already cached the maps last visit.
+const warmedSessionIds = new Set<string>();
+
 export interface WorkspaceScreenProps {
   /** Session to edit. The workspace never picks one itself. */
   uid: string;
@@ -128,9 +134,13 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // further down, but onMutated has to be passed into useSessionJobs up here.
   const capturePreviewRef = useRef<() => void>(() => {});
   const handleMutated = useCallback(() => {
+    // A mutation (inpaint, most commonly) can change the canvas the depth/
+    // normal maps were warmed for — forget the "already warm" mark so the
+    // next reentry re-warms instead of skipping a now-stale cache.
+    warmedSessionIds.delete(uid);
     recordLocalMutationRef.current();
     capturePreviewRef.current();
-  }, []);
+  }, [uid]);
 
   // A queued segment/inpaint job resolving to "conflict" (its mask/click
   // overlapped an in-flight removal) reuses the same inline notice a
@@ -191,9 +201,16 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // --- session map warm ----------------------------------------------------
 
   const startMapsWarm = useCallback(() => {
+    if (warmedSessionIds.has(uid)) {
+      setMapsWarming(false);
+      return;
+    }
     const generation = ++mapsWarmGenerationRef.current;
     setMapsWarming(true);
     void warmSessionMaps(uid)
+      .then(() => {
+        warmedSessionIds.add(uid);
+      })
       .catch((err: unknown) => {
         console.warn("Session map warm failed (non-fatal); first cut may be slower.", err);
       })

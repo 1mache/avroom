@@ -27,18 +27,15 @@ from core.depth_cache import delete_session_depth_maps
 from core.normal_cache import delete_session_normal_maps
 from core.camera_calib_cache import delete_session_camera_calib
 from core.object_metadata import list_object_ids
-from schemas.image import (
-    BatchRequest,
-    BatchResponse,
-    ClickRequest,
-    ClickResultResponse,
-    SegmentRequest,
+from schemas.batch import BatchRequest, BatchResponse
+from schemas.image import ClickRequest, ClickResultResponse, SegmentRequest
+from schemas.jobs import JobSubmitResponse, SubmitInpaintRequest
+from schemas.sessions import (
     SessionInfo,
     SessionSyncCheckRequest,
     SessionSyncCheckResponse,
     SetNameRequest,
 )
-from schemas.jobs import JobSubmitResponse, SubmitInpaintRequest
 from core.object_storage import (
     current_background_path,
     legacy_object_cutout_path,

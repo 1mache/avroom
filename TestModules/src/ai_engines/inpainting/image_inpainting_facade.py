@@ -6,6 +6,8 @@ from typing import Any
 import numpy as np
 
 from .image_inpainting_strategy import ImageInpaintingStrategy
+from .inpaint_params import InpaintParams
+from .inpaint_result import InpaintResult
 from .strategies.hybrid_inpainting_strategy import HybridInpaintingStrategy
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,13 @@ class ImageInpaintingFacade:
     def strategy(self) -> ImageInpaintingStrategy:
         return self._strategy
 
-    def inpaint(self, image: np.ndarray, mask: np.ndarray, **kwargs: Any) -> np.ndarray:
+    def inpaint(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray,
+        params: InpaintParams | None = None,
+        *,
+        verify_trace: list[dict[str, Any]] | None = None,
+    ) -> InpaintResult:
         """Inpaint ``image`` over ``mask`` using the active strategy."""
-        return self._strategy.inpaint(image, mask, **kwargs)
+        return self._strategy.inpaint(image, mask, params, verify_trace=verify_trace)

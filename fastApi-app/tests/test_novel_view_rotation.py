@@ -118,7 +118,11 @@ def glb_dir(storage_sandbox: Path) -> Path:
 @pytest.fixture
 def fake_client(monkeypatch: pytest.MonkeyPatch) -> _FakeInferenceClient:
     client = _FakeInferenceClient()
-    monkeypatch.setattr("api.novel_view.get_inference_client", lambda: client)
+    # run_novel_view on a cache miss goes through core/novel_view_cache.py's
+    # own get_inference_client reference (imported by name at module import
+    # time, same as api.novel_view used to hold it before that call moved
+    # into the shared cache-or-synthesize helper) -- patch that one.
+    monkeypatch.setattr("core.novel_view_cache.get_inference_client", lambda: client)
     # run_generate_3d on a cache miss goes through core/object_3d.py's own
     # get_inference_client reference (shared with core/jobs/handlers.py's
     # generate_3d job), not api.novel_view's -- patch that one too.

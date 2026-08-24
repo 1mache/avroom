@@ -63,7 +63,7 @@ HTTP endpoints (MVP):
 | `POST /3d/test-3d` | `{"uid": "...", "object_id": 0}` | raw GLB bytes (`model/gltf-binary`) |
 | `GET /3d/{uid}/{object_id}` | path params | cached GLB file |
 
-Schemas in [`fastApi-app/schemas/image.py`](../fastApi-app/schemas/image.py); frontend mirrors them in [`react-front/src/types/api.ts`](../react-front/src/types/api.ts).
+Schemas in [`fastApi-app/schemas/`](../fastApi-app/schemas/) (split by feature area — see [docs/backend/schemas.md](backend/schemas.md)); frontend mirrors them in [`react-front/src/types/api.ts`](../react-front/src/types/api.ts).
 
 The backend ↔ pipeline contract is now split:
 

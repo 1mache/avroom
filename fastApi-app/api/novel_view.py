@@ -3,25 +3,21 @@ from __future__ import annotations
 import base64
 import binascii
 import logging
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Response
 
 from avroom_object_removal.ai_engines.novel_view import NovelViewRotationAdapter
 
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
-from core.image_codec import encode_png, to_base64_ascii
-from core.inference_pool.client import get_inference_client
-from core.object_3d import ensure_object_glb
+from core.image_codec import to_base64_ascii
+from core.novel_view_cache import ensure_novel_view_png
 from core.object_storage import (
-    object_novel_view_path,
     object_novel_view_preview_path,
     resolve_object_cutout_path,
 )
 from core.object_metadata import load_object_metadata
-from core.repositories.session_repo import touch_session
-from schemas.image import (
-    DEFAULT_SOURCE_ELEVATION_DEG,
+from schemas.common import DEFAULT_SOURCE_ELEVATION_DEG
+from schemas.novel_view import (
     NovelViewPreviewCacheRequest,
     NovelViewRequest,
     NovelViewResponse,
@@ -67,6 +63,19 @@ def _normalize_azimuth_deg(azimuth_deg: float) -> float:
     if wrapped == -180.0:
         wrapped = 180.0
     return _without_negative_zero(wrapped)
+
+
+def _snap_pose(azimuth_deg: float, relative_elevation_deg: float) -> tuple[float, float]:
+    """Quantize a pose onto the disk-cache grid.
+
+    Both routes cache on this snapped pose, so repeat/near-repeat requests
+    share one entry instead of each user-dragged angle minting a fresh
+    (expensive) synthesis.
+    """
+
+    snapped_azimuth_deg = _normalize_azimuth_deg(_snap_to_step(azimuth_deg, ROTATION_STEP_DEG))
+    snapped_relative_elevation_deg = _snap_to_step(relative_elevation_deg, ROTATION_STEP_DEG)
+    return snapped_azimuth_deg, snapped_relative_elevation_deg
 
 
 @router.post("/novel-view")
@@ -117,13 +126,9 @@ def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
         logger.error("Invalid novel-view pose: %s", exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    # Quantize onto a coarse grid so repeat/near-repeat poses share one cache
-    # entry. Radius is a distance, not an angle, and is left unsnapped.
-    snapped_azimuth_deg = _normalize_azimuth_deg(
-        _snap_to_step(resolved_pose.azimuth_deg, ROTATION_STEP_DEG)
-    )
-    snapped_relative_elevation_deg = _snap_to_step(
-        resolved_pose.relative_elevation_deg, ROTATION_STEP_DEG
+    # Radius is a distance, not an angle, and is left unsnapped.
+    snapped_azimuth_deg, snapped_relative_elevation_deg = _snap_pose(
+        resolved_pose.azimuth_deg, resolved_pose.relative_elevation_deg
     )
 
     logger.info(
@@ -153,65 +158,24 @@ def synthesize_novel_view(request: NovelViewRequest) -> NovelViewResponse:
             ),
         )
 
-    cache_path = object_novel_view_path(
-        storage_dir,
-        request.uid,
-        request.object_id,
-        snapped_azimuth_deg,
-        snapped_relative_elevation_deg,
-    )
-
-    # A cache hit must be newer than the source cutout: rescale-by-depth
-    # rewrites the cutout PNG in place, and a rotation cached against the
-    # pre-rescale cutout is stale even though the filename still matches.
-    cache_is_fresh = (
-        cache_path.exists() and cache_path.stat().st_mtime >= cutout_path.stat().st_mtime
-    )
-
-    if cache_is_fresh:
-        logger.info(
-            "novel-view cache hit: uid=%s object_id=%d path=%s",
-            request.uid,
-            request.object_id,
-            cache_path,
+    try:
+        png_bytes = ensure_novel_view_png(
+            uid=request.uid,
+            object_id=request.object_id,
+            cutout_path=cutout_path,
+            azimuth_deg=snapped_azimuth_deg,
+            relative_elevation_deg=snapped_relative_elevation_deg,
+            elevation_deg=source_elevation_deg,
+            radius=resolved_pose.radius,
         )
-        png_bytes = cache_path.read_bytes()
-    else:
-        try:
-            glb_path = ensure_object_glb(
-                uid=request.uid,
-                object_id=request.object_id,
-                cutout_path=cutout_path,
-            )
-            result_bgra = get_inference_client().run_novel_view(
-                cutout_path=cutout_path,
-                elevation_deg=source_elevation_deg,
-                azimuth_deg=snapped_azimuth_deg,
-                relative_elevation_deg=snapped_relative_elevation_deg,
-                radius=resolved_pose.radius,
-                mesh_path=glb_path,
-            )
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("Novel view synthesis failed")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Novel view synthesis failed: {exc}",
-            ) from exc
-
-        png_bytes = encode_png(result_bgra, "novel-view")
-        cache_path.write_bytes(png_bytes)
-        touch_session(request.uid)
-
-        logger.info(
-            "novel-view complete: uid=%s object_id=%d png_bytes=%d shape=%s saved=%s",
-            request.uid,
-            request.object_id,
-            len(png_bytes),
-            result_bgra.shape,
-            cache_path,
-        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Novel view synthesis failed")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Novel view synthesis failed: {exc}",
+        ) from exc
 
     # A confirmed real result (cached or freshly synthesized) for this exact
     # snapped pose makes any client-side preview placeholder obsolete.
@@ -259,11 +223,8 @@ def cache_novel_view_preview(request: NovelViewPreviewCacheRequest) -> Response:
     synthesis never completes (error, dropped request), the preview file is
     simply left in place as a fallback artifact.
     """
-    snapped_azimuth_deg = _normalize_azimuth_deg(
-        _snap_to_step(request.azimuth_deg, ROTATION_STEP_DEG)
-    )
-    snapped_relative_elevation_deg = _snap_to_step(
-        request.relative_elevation_deg, ROTATION_STEP_DEG
+    snapped_azimuth_deg, snapped_relative_elevation_deg = _snap_pose(
+        request.azimuth_deg, request.relative_elevation_deg
     )
 
     try:

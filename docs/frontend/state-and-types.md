@@ -117,7 +117,7 @@ export interface CutoutObject {
 
 [`react-front/src/types/api.ts`](../../react-front/src/types/api.ts)
 
-Mirrors the backend's Pydantic models in [`fastApi-app/schemas/image.py`](../../fastApi-app/schemas/image.py) field-for-field — see [backend/schemas.md](../backend/schemas.md) for the authoritative field tables (`ObjectInfo`, `ObjectMetadataResponse`, `UpdateObjectRequest`, `DuplicateObjectResponse`, `NovelViewRequest`/`Response`, `SessionSyncCheckResponse`, `SessionInfo`, etc.). No codegen exists — a backend schema change requires a manual edit here. `VerifyMode` is `"manual" | "auto"`. `SegmentRequest` extends `ClickRequest` with optional `verify`; `InpaintMaskRequest` also has optional `verify`. `InpaintMaskResponse` and `ObjectMetadataResponse`/`ObjectInfo` extend the shared `cutout_bounds`/offset fields documented in `backend/schemas.md`.
+Mirrors the backend's Pydantic models in [`fastApi-app/schemas/`](../../fastApi-app/schemas/) (split by feature area — see [backend/schemas.md](../backend/schemas.md)) field-for-field — see [backend/schemas.md](../backend/schemas.md) for the authoritative field tables (`ObjectInfo`, `ObjectMetadataResponse`, `UpdateObjectRequest`, `DuplicateObjectResponse`, `NovelViewRequest`/`Response`, `SessionSyncCheckResponse`, `SessionInfo`, etc.). No codegen exists — a backend schema change requires a manual edit here. `VerifyMode` is `"manual" | "auto"`. `SegmentRequest` extends `ClickRequest` with optional `verify`; `InpaintMaskRequest` also has optional `verify`. `InpaintMaskResponse` and `ObjectMetadataResponse`/`ObjectInfo` extend the shared `cutout_bounds`/offset fields documented in `backend/schemas.md`.
 
 ## `types/debug.ts`
 

@@ -24,13 +24,13 @@ from fastapi.responses import FileResponse
 from core.image_codec import to_base64_ascii
 from core.image_processing import get_image_path
 from core.object_metadata import get_object_by_uuid, list_object_ids, load_object_metadata, to_object_metadata_response
-from schemas.image import (
+from schemas.objects import (
     ObjectInfo,
     ObjectListResponse,
     ObjectMetadataResponse,
-    SessionPreviewRequest,
     UidCacheStatusResponse,
 )
+from schemas.sessions import SessionPreviewRequest
 from core.object_storage import (
     current_background_path,
     resolve_object_cutout_path,

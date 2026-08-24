@@ -28,6 +28,8 @@ from .inpainting import (
     HybridInpaintingStrategy,
     ImageInpaintingFacade,
     ImageInpaintingStrategy,
+    InpaintParams,
+    InpaintResult,
     LamaInpaintingStrategy,
     StableDiffusionInpaintingStrategy,
 )
@@ -102,6 +104,8 @@ __all__ = [
     "HybridInpaintingStrategy",
     "ImageInpaintingFacade",
     "ImageInpaintingStrategy",
+    "InpaintParams",
+    "InpaintResult",
     "ImageSegmentationFacade",
     "ImageSegmentationStrategy",
     "LamaInpaintingStrategy",

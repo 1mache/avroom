@@ -22,13 +22,21 @@ from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.object_storage import resolve_object_cutout_path, resolve_object_glb_path
 from db.models import ObjectRow
 from db.session import session_scope
-from schemas.image import CutoutBounds, DEFAULT_SOURCE_ELEVATION_DEG, ObjectMetadataResponse
+from schemas.common import CutoutBounds, DEFAULT_SOURCE_ELEVATION_DEG
+from schemas.objects import ObjectFields, ObjectMetadataResponse
 
 logger = logging.getLogger(__name__)
 
 
-class ObjectMetadata(BaseModel):
-    """Persistent metadata for one finalized object within a session."""
+class ObjectMetadata(ObjectFields):
+    """Persistent metadata for one finalized object within a session.
+
+    Extends :class:`ObjectFields` (``name``/``offset_x``/``offset_y``/
+    ``display_scale``) with the fields unique to the persisted row: identity,
+    depth/elevation at creation, and clone lineage. ``cutout_bounds`` is not
+    here -- it's derived from the cutout PNG at read time, on
+    :class:`ObjectMetadataResponse` and :class:`ObjectInfo` only.
+    """
 
     uuid: Annotated[
         str,
@@ -41,10 +49,6 @@ class ObjectMetadata(BaseModel):
     object_id: Annotated[
         int,
         Field(ge=0, description="Zero-based integer id within the session."),
-    ]
-    name: Annotated[
-        str | None,
-        Field(default=None, description="Optional human-readable label."),
     ]
     average_depth: Annotated[
         float,
@@ -94,22 +98,6 @@ class ObjectMetadata(BaseModel):
                 "Zero-based clone ordinal under clone_root_uuid. "
                 "0 → '<label>-copy', 1 → '<label>-copy1', etc. None for non-clones."
             ),
-        ),
-    ]
-    offset_x: Annotated[
-        float,
-        Field(default=0.0, description="Persisted drag offset X from center, natural-image pixels."),
-    ]
-    offset_y: Annotated[
-        float,
-        Field(default=0.0, description="Persisted drag offset Y from center, natural-image pixels."),
-    ]
-    display_scale: Annotated[
-        float,
-        Field(
-            default=1.0,
-            gt=0.0,
-            description="UI display scale vs original cutout size; cutout PNG stays at original resolution.",
         ),
     ]
 

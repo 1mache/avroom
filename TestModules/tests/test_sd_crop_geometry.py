@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pytest
 
+from avroom_object_removal.ai_engines.inpainting.inpaint_params import InpaintParams
 from avroom_object_removal.ai_engines.inpainting.strategies.stable_diffusion_inpainting_strategy import (
     SD_MAX_GEN_SIDE,
     StableDiffusionInpaintingStrategy,
@@ -106,7 +107,7 @@ def test_output_shape_matches_input(monkeypatch: Any) -> None:
         lambda *_: _make_fake_pipe(),
     )
 
-    out = strategy.inpaint(image, mask, strength=0.35)
+    out = strategy.inpaint(image, mask, InpaintParams(strength=0.35)).image
     assert out.shape == image.shape
 
 
@@ -126,7 +127,7 @@ def test_pixels_outside_mask_unchanged(monkeypatch: Any) -> None:
         lambda *_: _make_fake_pipe(fill_color=(100, 200, 50)),
     )
 
-    out = strategy.inpaint(image, mask, strength=0.35)
+    out = strategy.inpaint(image, mask, InpaintParams(strength=0.35)).image
     mask_bool = mask > 127
     # Background region must be unchanged.
     np.testing.assert_array_equal(out[~mask_bool], image[~mask_bool])
@@ -149,7 +150,7 @@ def test_mask_region_receives_pipe_output(monkeypatch: Any) -> None:
         lambda *_: _make_fake_pipe(fill_color=fill),
     )
 
-    out = strategy.inpaint(image, mask, strength=0.35)
+    out = strategy.inpaint(image, mask, InpaintParams(strength=0.35)).image
     mask_bool = mask > 127
     # Every masked pixel must NOT equal the original background.
     original_inside = image[mask_bool]

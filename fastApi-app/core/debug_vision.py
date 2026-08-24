@@ -436,14 +436,12 @@ def run_inpaint_verify(
         compose_mask = refined_mask
 
     verify_trace: list[dict[str, Any]] = []
-    inpaint_out: dict[str, Any] = {}
     BackgroundInpainter = load_avroom_attr("BackgroundInpainter")
     inpainter = BackgroundInpainter()
     final_bgr = inpainter.cut_mask_from_image(
         bgr,
         refined_mask,
         compose_mask=compose_mask,
-        inpaint_out=inpaint_out,
         verify_trace=verify_trace,
     )
 

@@ -20,7 +20,7 @@ flowchart LR
     routes["api/routes.py<br/>/images router"]
     model3d["api/model_3d.py<br/>/3d router"]
     core["core/image_processing.py<br/>bridge to AI pipeline"]
-    schemas["schemas/image.py<br/>Pydantic models"]
+    schemas["schemas/<br/>Pydantic models"]
     settings["settings.py<br/>image dir"]
     pipeline["avroom_object_removal<br/>(TestModules)"]
     disk[("fastApi-app/tmp/images/")]

@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 
 from ..ai_engines.inpainting.image_inpainting_facade import ImageInpaintingFacade
+from ..ai_engines.inpainting.inpaint_result import InpaintResult
 from ..utils.debug_image_saver import DebugImageSaver
 from ..utils.mask_refiner import MaskRefiner
 
@@ -47,7 +48,7 @@ class BackgroundInpainter:
         self,
         inpaint_mask: np.ndarray,
         compose_mask: np.ndarray | None,
-        inpaint_out: dict[str, Any] | None = None,
+        result: InpaintResult,
     ) -> np.ndarray:
         """Return the mask used to paste inpainted pixels back onto the original."""
 
@@ -57,10 +58,11 @@ class BackgroundInpainter:
                 paste_mask,
                 pixels=self.COMPOSE_MASK_PADDING_RADIUS,
             )
-        dilate = int((inpaint_out or {}).get("compose_dilate_pixels", 0))
-        if dilate > 0:
-            paste_mask = self.mask_refiner.dilate_mask(paste_mask, pixels=dilate)
-        final_mask = (inpaint_out or {}).get("final_inpaint_mask")
+        if result.compose_dilate_pixels > 0:
+            paste_mask = self.mask_refiner.dilate_mask(
+                paste_mask, pixels=result.compose_dilate_pixels
+            )
+        final_mask = result.final_inpaint_mask
         if final_mask is not None:
             if final_mask.ndim == 3:
                 final_mask = final_mask[:, :, 0]
@@ -79,7 +81,6 @@ class BackgroundInpainter:
         mask: np.ndarray,
         compose_mask: np.ndarray | None = None,
         *,
-        inpaint_out: dict[str, Any] | None = None,
         verify_trace: list[dict[str, Any]] | None = None,
     ) -> np.ndarray:
         """Inpaint the masked region and return the reconstructed background.
@@ -88,8 +89,8 @@ class BackgroundInpainter:
         inpainting hole, typically ~3 px refined), then composes the model
         output onto ``original_image`` using ``compose_mask`` when provided.
         The compose mask is typically the cutout alpha (raw SAM mask), which
-        is tighter than ``mask``. Verifier-driven compose dilation arrives via
-        ``inpaint_out``.
+        is tighter than ``mask``. Verifier-driven compose dilation arrives on
+        the returned :class:`InpaintResult`.
 
         Args:
             original_image: BGR ``np.ndarray`` of the full scene. Must match
@@ -100,7 +101,6 @@ class BackgroundInpainter:
                 :meth:`ObjectSegmentor.get_mask_for_object_at_position`.
             compose_mask: Optional tighter binary mask for paste-back. When
                 omitted, ``mask`` is used for composition as well.
-            inpaint_out: Optional dict Hybrid fills with verification metadata.
             verify_trace: Optional list Hybrid appends per verify attempt to.
 
         Returns:
@@ -109,16 +109,11 @@ class BackgroundInpainter:
             output; all other pixels are preserved from ``original_image``.
         """
         logger.info("Step 4: Inpainting masked region...")
-        inpaint_kwargs: dict[str, Any] = {}
-        if inpaint_out is not None:
-            inpaint_kwargs["inpaint_out"] = inpaint_out
-        if verify_trace is not None:
-            inpaint_kwargs["verify_trace"] = verify_trace
-        result_image = self.inpainting.inpaint(original_image, mask, **inpaint_kwargs)
-        paste_mask = self._build_compose_mask(mask, compose_mask, inpaint_out)
+        result = self.inpainting.inpaint(original_image, mask, verify_trace=verify_trace)
+        paste_mask = self._build_compose_mask(mask, compose_mask, result)
         paste_bool = paste_mask > 127
         composed = original_image.copy()
-        composed[paste_bool] = result_image[paste_bool]
+        composed[paste_bool] = result.image[paste_bool]
         self.image_saver.save("final_removed_object", composed)
         logger.info("Inpainting completed successfully")
         return composed

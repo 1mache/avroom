@@ -6,6 +6,7 @@ import numpy as np
 
 from ..ai_engines.depth.depth_mapping_facade import DepthMappingFacade
 from ..ai_engines.inpainting.image_inpainting_facade import ImageInpaintingFacade
+from ..ai_engines.inpainting.inpaint_params import InpaintParams
 from ..ai_engines.segmentation.image_segmentation_facade import ImageSegmentationFacade
 from ..ai_engines.segmentation.sam_image_adapter import SamImageAdapter
 from ..routing.segmentation_routing_strategy import SegmentationRoutingStrategy
@@ -155,11 +156,12 @@ class ObjectRemover:
         self.image_saver.save("debug_mask_overlay", mask_overlay)
 
         logger.info("Step 4: Inpainting image using isolated pipeline...")
-        result_image = self.inpainting.inpaint(
+        result = self.inpainting.inpaint(
             image,
             mask,
-            strength=run_context["sd_strength"],
+            InpaintParams(strength=run_context["sd_strength"]),
         )
+        result_image = result.image
         self.image_saver.save("final_removed_object", result_image)
         logger.info("Object removal completed successfully")
 

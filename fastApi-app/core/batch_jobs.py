@@ -28,7 +28,7 @@ from core.mask_cache import delete_candidate, load_refined_mask, save_candidate
 from core.object_metadata import get_object_by_uuid, next_object_id, save_object_metadata
 from core.object_storage import current_background_path, object_cutout_path, object_glb_path
 from core.repositories.session_repo import get_session_last_changed, touch_session
-from schemas.image import (
+from schemas.batch import (
     BatchBoxSource,
     BatchClicksSource,
     BatchGlbResult,

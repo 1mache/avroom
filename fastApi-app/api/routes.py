@@ -43,17 +43,14 @@ from core.object_metadata import (
     set_object_offset,
     to_object_metadata_response,
 )
-from schemas.image import (
+from schemas.objects import (
     DuplicateObjectResponse,
-    ImageUploadResponse,
     ObjectMetadataResponse,
-    RescaleByDepthRequest,
-    RescaleByDepthResponse,
-    SmartPasteRequest,
-    SmartPasteResponse,
+    PlacementRequest,
+    PlacementResponse,
     UpdateObjectRequest,
-    WarmSessionMapsResponse,
 )
+from schemas.sessions import ImageUploadResponse, WarmSessionMapsResponse
 from core.object_storage import (
     copy_object_artifacts,
     delete_legacy_object_artifacts,
@@ -452,11 +449,11 @@ def delete_object(object_uuid: str) -> Response:
     return Response(status_code=204)
 
 
-@router.post("/objects/{object_uuid}/rescale-by-depth", response_model=RescaleByDepthResponse)
+@router.post("/objects/{object_uuid}/rescale-by-depth", response_model=PlacementResponse)
 def rescale_object_by_depth(
     object_uuid: str,
-    request: RescaleByDepthRequest,
-) -> RescaleByDepthResponse:
+    request: PlacementRequest,
+) -> PlacementResponse:
     """Rescale a cutout proportionally based on depth at the given placement point."""
     logger.info(
         "Rescale by depth requested: uuid=%s placement=(%d,%d)",
@@ -492,7 +489,7 @@ def rescale_object_by_depth(
         result.display_scale,
         result.target_depth,
     )
-    return RescaleByDepthResponse(
+    return PlacementResponse(
         object_uuid=result.object_uuid,
         session_id=result.session_id,
         object_id=result.object_id,
@@ -504,11 +501,11 @@ def rescale_object_by_depth(
     )
 
 
-@router.post("/objects/{object_uuid}/smart-paste", response_model=SmartPasteResponse)
+@router.post("/objects/{object_uuid}/smart-paste", response_model=PlacementResponse)
 def smart_paste_object(
     object_uuid: str,
-    request: SmartPasteRequest,
-) -> SmartPasteResponse:
+    request: PlacementRequest,
+) -> PlacementResponse:
     """Run smart paste (depth rescale today) at the given placement point."""
     logger.info(
         "Smart paste requested: uuid=%s placement=(%d,%d)",
@@ -544,7 +541,7 @@ def smart_paste_object(
         result.display_scale,
         result.target_depth,
     )
-    return SmartPasteResponse(
+    return PlacementResponse(
         object_uuid=result.object_uuid,
         session_id=result.session_id,
         object_id=result.object_id,

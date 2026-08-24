@@ -203,9 +203,9 @@ def choose_object(
 def build_sandbox(storage_dir: Path, session_id: str) -> tuple[Path, Path]:
     """Copy one session's blob files into a temp workspace and return its paths.
 
-    The rescale endpoint overwrites the cutout PNG in place, so the harness
-    redirects file storage at a copy — the cutout, GLB, and novel-view
-    caches are never touched on the real disk. Metadata (`average_depth`,
+    The rescale endpoint never modifies the cutout PNG (only `display_scale`
+    and derived bounds change), but the harness still redirects file storage
+    at a copy so nothing on the real disk is touched regardless. Metadata (`average_depth`,
     etc.) now lives in Postgres, not on disk, so it is *not* sandboxed: the
     rescale call updates the real local `objects` row for this object, same
     as it would from the live app. That only matters if you rescale the same

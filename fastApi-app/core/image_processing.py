@@ -12,7 +12,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, UnidentifiedImageError
 
-from schemas.image import ImageProcessingOptions, VerifyMode
+from schemas.common import VerifyMode
+from schemas.image import ImageProcessingOptions
 from core.avroom_package import load_avroom_attr
 from core.image_codec import encode_png
 from core.mask_cache import delete_candidates, load_cutout_bytes, load_refined_mask, save_candidate
@@ -442,7 +443,6 @@ def inpaint_selected_mask_on_image(
             original_image=source_bgr,
             mask=refined_mask,
             compose_mask=compose_mask,
-            inpaint_out={},
         )
         logger.info("BackgroundInpainter finished: image_id=%s mask_id=%s bg_shape=%s", image_id, mask_id, background_bgr.shape)
 

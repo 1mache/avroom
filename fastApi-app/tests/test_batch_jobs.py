@@ -13,7 +13,7 @@ _APP_ROOT = Path(__file__).resolve().parents[1]
 if str(_APP_ROOT) not in sys.path:
     sys.path.insert(0, str(_APP_ROOT))
 
-from schemas.image import BatchBoxSource, BatchGlbResult, BatchObjectsSource, BatchRequest  # noqa: E402
+from schemas.batch import BatchBoxSource, BatchGlbResult, BatchObjectsSource, BatchRequest  # noqa: E402
 
 
 def _write_session_png(base_dir: Path, image_id: str, width: int = 40, height: int = 40) -> None:

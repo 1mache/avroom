@@ -111,6 +111,7 @@ export interface ObjectMetadataResponse {
   cutout_bounds?: CutoutBounds | null;
   offset_x: number;
   offset_y: number;
+  display_scale: number;
 }
 
 // Every field optional: a caller sends only what it's actually changing
@@ -176,7 +177,7 @@ export interface SmartPasteResponse {
 export interface ObjectInfo {
   object_id: number;
   uuid?: string | null;
-  name?: string | null;
+  name: string | null;
   average_depth?: number | null;
   source_elevation_deg?: number | null;
   cutout_b64: string;

@@ -61,8 +61,21 @@ def test_floor_to_camera_facing_wall_is_mostly_elevation() -> None:
     pose = orbit_pose_from_normals(floor, wall)
 
     assert pose is not None
-    assert abs(pose.relative_elevation_deg) > 45.0
+    # Positive: novel-view up shrinks polar (look from above) so the seat faces
+    # the camera and the legs go into the wall — not the underside.
+    assert pose.relative_elevation_deg > 45.0
     assert abs(pose.azimuth_deg) < 20.0
+
+
+def test_floor_to_toward_camera_wall_looks_from_above() -> None:
+    """Regression: chair floor→wall was rendered legs-out (negative elevation)."""
+    floor = _unit(0.106, -0.906, -0.420)
+    wall = _unit(-0.467, 0.404, -0.796)
+
+    pose = orbit_pose_from_normals(floor, wall)
+
+    assert pose is not None
+    assert pose.relative_elevation_deg > 45.0
 
 
 def test_small_delta_inside_deadzone_returns_none() -> None:

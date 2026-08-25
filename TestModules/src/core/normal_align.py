@@ -99,9 +99,10 @@ def orbit_pose_from_normals(
     """
     az_src, el_src = _orbit_components_from_normal(source_normal)
     az_dst, el_dst = _orbit_components_from_normal(dest_normal)
-    # atan2 yaw is CCW; novel-view azimuth is clockwise-positive (object appearance).
+    # Both axes are src - dst so they match novel-view: clockwise+ yaw, up+
+    # elevation (polar shrinks → look from above → seat out, legs into the wall).
     delta_az = _wrap_azimuth_delta(az_src - az_dst)
-    delta_el = el_dst - el_src
+    delta_el = el_src - el_dst
 
     if math.hypot(delta_az, delta_el) < _ORBIT_DEADZONE_DEG:
         logger.debug(

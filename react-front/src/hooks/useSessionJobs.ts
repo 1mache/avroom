@@ -4,6 +4,7 @@ import {
   deleteJob,
   deleteObject as deleteObjectRequest,
   duplicateObject as duplicateObjectRequest,
+  fetchCached3DModel,
   getJob,
   getSessionObjects,
   inpaintMask,
@@ -11,7 +12,9 @@ import {
   segmentImage,
   setObjectName,
   smartPasteObject,
+  submitGenerate3D,
   synthesizeNovelView,
+  waitForJobDone,
 } from "../api/images";
 import type {
   BatchRequest,
@@ -117,6 +120,11 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   useEffect(() => {
     objectsRef.current = objects;
   }, [objects]);
+
+  const jobsRef = useRef(jobs);
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
 
   // Only ever moves forward. The canvas writer lock serializes commits
   // server-side so object_id is a valid commit order; this guards purely
@@ -470,6 +478,56 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [onError, onMutated],
   );
 
+  /** Ensure this object's GLB exists, then mesh-render at an inferred pose. */
+  const applyInferredRotation = useCallback(
+    async (objectId: number, pose: RotationPose) => {
+      const currentImageId = imageIdRef.current;
+      if (!currentImageId) {
+        return;
+      }
+
+      const target = objectsRef.current.find((o) => o.objectId === objectId);
+      if (!target) {
+        return;
+      }
+
+      try {
+        let buffer = target.glbData;
+        if (!buffer) {
+          const cached = await fetchCached3DModel(currentImageId, objectId);
+          buffer = cached;
+          if (!buffer) {
+            const existingJob = jobsRef.current.find(
+              (job) =>
+                job.kind === "generate_3d" &&
+                job.object_id === objectId &&
+                (job.status === "queued" || job.status === "running"),
+            );
+            const jobId = existingJob?.job_id ?? (await submitGenerate3D(currentImageId, objectId));
+            await waitForJobDone(jobId);
+            buffer = await fetchCached3DModel(currentImageId, objectId);
+            if (!buffer) {
+              throw new Error("3D generation finished but no model was found.");
+            }
+          }
+          if (imageIdRef.current !== currentImageId) {
+            return;
+          }
+          setObjects((prev) =>
+            prev.map((o) => (o.objectId === objectId ? { ...o, glbData: buffer! } : o)),
+          );
+        }
+
+        commitRotation(objectId, pose, target.cutoutSrc);
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "rotate");
+        }
+      }
+    },
+    [commitRotation, onError, setObjects],
+  );
+
   const renameObject = useCallback(
     async (objectId: number, uuid: string, name: string | null) => {
       try {
@@ -576,11 +634,17 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       }
 
       return smartPasteObject(target.uuid, x, y)
-        .then((result) => {
+        .then(async (result) => {
           if (imageIdRef.current !== currentImageId) {
             return false;
           }
           applySmartPasteResult(objectId, result);
+          if (result.azimuth_deg != null && result.relative_elevation_deg != null) {
+            await applyInferredRotation(objectId, {
+              azimuthDeg: result.azimuth_deg,
+              relativeElevationDeg: result.relative_elevation_deg,
+            });
+          }
           return true;
         })
         .catch((err) => {
@@ -590,7 +654,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           return false;
         });
     },
-    [applySmartPasteResult, onError],
+    [applyInferredRotation, applySmartPasteResult, onError],
   );
 
   return {

@@ -197,6 +197,8 @@ class InferenceClient:
             target_depth=result.target_depth,
             scale_factor=result.scale_factor,
             display_scale=result.display_scale,
+            azimuth_deg=result.azimuth_deg,
+            relative_elevation_deg=result.relative_elevation_deg,
         )
 
     def run_generate_3d(self, *, cutout_path: Path) -> bytes:

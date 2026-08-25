@@ -535,11 +535,14 @@ def smart_paste_object(
         scale_cutout_bounds(base_bounds, result.display_scale) if base_bounds is not None else None
     )
     logger.info(
-        "Smart paste complete: uuid=%s scale_factor=%.4f display_scale=%.4f target_depth=%.2f",
+        "Smart paste complete: uuid=%s scale_factor=%.4f display_scale=%.4f target_depth=%.2f "
+        "azimuth=%s rel_elevation=%s",
         object_uuid,
         result.scale_factor,
         result.display_scale,
         result.target_depth,
+        result.azimuth_deg,
+        result.relative_elevation_deg,
     )
     return PlacementResponse(
         object_uuid=result.object_uuid,
@@ -550,4 +553,6 @@ def smart_paste_object(
         scale_factor=result.scale_factor,
         display_scale=result.display_scale,
         cutout_bounds=cutout_bounds,
+        azimuth_deg=result.azimuth_deg,
+        relative_elevation_deg=result.relative_elevation_deg,
     )

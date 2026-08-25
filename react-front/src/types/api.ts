@@ -172,6 +172,8 @@ export interface SmartPasteResponse {
   scale_factor: number;
   display_scale: number;
   cutout_bounds?: CutoutBounds | null;
+  azimuth_deg?: number | null;
+  relative_elevation_deg?: number | null;
 }
 
 export interface ObjectInfo {

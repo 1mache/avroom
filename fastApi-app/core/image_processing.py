@@ -24,10 +24,13 @@ from core.depth_cache import (
     get_or_compute_depth,
     memory_image_key,
 )
+from core.normal_cache import get_or_compute_normals
+from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.camera_calib_cache import load_camera_calib
 from core.camera_calibration import cache_dict_to_calibration_result
 from core.object_metadata import ObjectMetadata, create_object_metadata, get_object_by_uuid, set_object_rescale_state
 from core.inference_lock import inference_session
+from settings import get_normal_map_enabled
 
 
 logger = logging.getLogger(__name__)
@@ -531,6 +534,17 @@ class SmartPasteBridgeResult:
     target_depth: float
     scale_factor: float
     display_scale: float
+    azimuth_deg: float | None = None
+    relative_elevation_deg: float | None = None
+
+
+_NORMAL_MAPPING_MODULE = "avroom_object_removal.ai_engines.normal_mapping"
+
+
+def _map_normals_bgr(image_bgr: np.ndarray) -> np.ndarray:
+    """Run Metric3D normal mapping on a decoded BGR canvas."""
+    facade = load_avroom_attr("NormalMappingFacade", _NORMAL_MAPPING_MODULE)()
+    return facade.map_normals(image_bgr)
 
 
 def _compute_depth_rescale(
@@ -667,6 +681,33 @@ def run_smart_paste(
     )
 
     metadata = _load_object_metadata_for_rescale(base_dir, object_uuid)
+    cutout_path = resolve_object_cutout_path(base_dir, metadata.session_id, metadata.object_id)
+    base_bounds = extract_cutout_bounds_from_png_bytes(cutout_path.read_bytes())
+
+    normal_map: np.ndarray | None = None
+    source_x: int | None = None
+    source_y: int | None = None
+    if get_normal_map_enabled() and base_bounds is not None:
+        source_x = int(round((base_bounds.left + base_bounds.right) / 2))
+        source_y = int(round((base_bounds.top + base_bounds.bottom) / 2))
+        image_bytes = load_canvas_bytes(image_id=metadata.session_id, base_dir=base_dir)
+        with inference_session():
+            normal_map, _content_hash = get_or_compute_normals(
+                base_dir,
+                metadata.session_id,
+                image_bytes,
+                _map_normals_bgr,
+            )
+        logger.info(
+            "Smart paste normal map ready: object_uuid=%s source=(%d,%d) shape=%s",
+            object_uuid,
+            source_x,
+            source_y,
+            normal_map.shape,
+        )
+    elif not get_normal_map_enabled():
+        logger.info("Smart paste auto-rotate skipped: NORMAL_MAP=false object_uuid=%s", object_uuid)
+
     depth_map = _compute_session_depth_map(base_dir, metadata.session_id)
 
     with inference_session():
@@ -676,17 +717,22 @@ def run_smart_paste(
             depth_map=depth_map,
             x=x,
             y=y,
+            normal_map=normal_map,
+            source_x=source_x,
+            source_y=source_y,
         )
 
     display_scale = paste_result.scale_factor
     logger.info(
         "Smart paste scale computed: object_uuid=%s source_depth=%.2f target_depth=%.2f "
-        "scale=%.4f display_scale=%.4f",
+        "scale=%.4f display_scale=%.4f azimuth=%s rel_elevation=%s",
         object_uuid,
         paste_result.source_average_depth,
         paste_result.target_depth,
         paste_result.scale_factor,
         display_scale,
+        paste_result.azimuth_deg,
+        paste_result.relative_elevation_deg,
     )
 
     _persist_rescale_metadata(object_uuid, display_scale=display_scale)
@@ -707,5 +753,7 @@ def run_smart_paste(
         target_depth=paste_result.target_depth,
         scale_factor=paste_result.scale_factor,
         display_scale=display_scale,
+        azimuth_deg=paste_result.azimuth_deg,
+        relative_elevation_deg=paste_result.relative_elevation_deg,
     )
 

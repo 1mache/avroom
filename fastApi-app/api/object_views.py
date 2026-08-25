@@ -48,14 +48,14 @@ logger = logging.getLogger(__name__)
 @router.get("/objects/{object_uuid}", response_model=ObjectMetadataResponse)
 async def get_object_by_uuid_endpoint(object_uuid: str) -> ObjectMetadataResponse:
     """Return metadata for one object searchable by its UUID."""
-    logger.info("Object metadata requested: uuid=%s", object_uuid)
+    logger.debug("Object metadata requested: uuid=%s", object_uuid)
     storage_dir = get_image_storage_dir()
     metadata = get_object_by_uuid(object_uuid)
     if metadata is None:
         logger.warning("Object metadata not found: uuid=%s", object_uuid)
         raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
     response = to_object_metadata_response(metadata, storage_dir, get_3d_storage_dir())
-    logger.info(
+    logger.debug(
         "Object metadata returned: uuid=%s session_id=%s object_id=%d",
         object_uuid,
         metadata.session_id,
@@ -72,7 +72,7 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
     returns them as base64 thumbnails alongside their tight alpha bounds and
     a flag indicating whether a GLB 3D model has been generated.
     """
-    logger.info("Objects list requested: uid=%s", uid)
+    logger.debug("Objects list requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
     # TODO: validate uid against the sessions table and return 404 for unknown sessions.
     # Currently returns 200 + empty list for unknown UIDs, consistent with /{uid}/cache.
@@ -127,14 +127,14 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
                 exc,
             )
 
-    logger.info("Objects list returned: uid=%s count=%d", uid, len(objects_list))
+    logger.debug("Objects list returned: uid=%s count=%d", uid, len(objects_list))
     return ObjectListResponse(uid=uid, objects=objects_list)
 
 
 @router.get("/{uid}/cache", response_model=UidCacheStatusResponse)
 async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     """Return which processed artifacts are cached on disk for the given UID."""
-    logger.info("Cache status requested: uid=%s", uid)
+    logger.debug("Cache status requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
     obj_ids = list_object_ids(uid)
 
@@ -165,7 +165,7 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
         has_3d=has_3d,
         cutout_bounds=cutout_bounds,
     )
-    logger.info(
+    logger.debug(
         "Cache status: uid=%s background=%s cutout=%s 3d=%s",
         uid,
         status.has_background,
@@ -178,12 +178,12 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
 @router.get("/{uid}/background")
 async def get_background(uid: str) -> FileResponse:
     """Serve the cached background PNG for the given UID."""
-    logger.info("Background requested: uid=%s", uid)
+    logger.debug("Background requested: uid=%s", uid)
     path = current_background_path(get_image_storage_dir(), uid)
     if not path.exists():
         logger.warning("Background not found: uid=%s path=%s", uid, path)
         raise HTTPException(status_code=404, detail="Background not found")
-    logger.info("Background served: uid=%s path=%s", uid, path)
+    logger.debug("Background served: uid=%s path=%s", uid, path)
     return FileResponse(path, media_type="image/png")
 
 
@@ -195,7 +195,7 @@ async def get_cutout(uid: str) -> FileResponse:
     to the legacy ``{uid}_cutout.png`` file for sessions created before the
     numbered-object scheme was introduced.
     """
-    logger.info("Cutout requested: uid=%s", uid)
+    logger.debug("Cutout requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
     obj_ids = list_object_ids(uid)
     if not obj_ids:
@@ -205,14 +205,14 @@ async def get_cutout(uid: str) -> FileResponse:
     if not path.exists():
         logger.warning("Cutout not found: uid=%s path=%s", uid, path)
         raise HTTPException(status_code=404, detail="Cutout not found")
-    logger.info("Cutout served: uid=%s path=%s", uid, path)
+    logger.debug("Cutout served: uid=%s path=%s", uid, path)
     return FileResponse(path, media_type="image/png")
 
 
 @router.get("/{uid}/original")
 async def get_original_image(uid: str) -> FileResponse:
     """Serve the original uploaded image for the given UID."""
-    logger.info("Original image requested: uid=%s", uid)
+    logger.debug("Original image requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
     try:
         path = get_image_path(uid, storage_dir)
@@ -221,7 +221,7 @@ async def get_original_image(uid: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="Original image not found")
     suffix = path.suffix.lower().lstrip(".")
     media_type = "image/jpeg" if suffix in ("jpg", "jpeg") else f"image/{suffix}"
-    logger.info("Original image served: uid=%s path=%s", uid, path)
+    logger.debug("Original image served: uid=%s path=%s", uid, path)
     return FileResponse(path, media_type=media_type)
 
 
@@ -235,12 +235,12 @@ async def get_session_preview(uid: str) -> FileResponse:
     (the dashboard card) fall back to a placeholder rather than treating this
     as an error.
     """
-    logger.info("Session preview requested: uid=%s", uid)
+    logger.debug("Session preview requested: uid=%s", uid)
     path = session_preview_path(get_image_storage_dir(), uid)
     if not path.exists():
         logger.warning("Session preview not found: uid=%s path=%s", uid, path)
         raise HTTPException(status_code=404, detail="Preview not found")
-    logger.info("Session preview served: uid=%s path=%s", uid, path)
+    logger.debug("Session preview served: uid=%s path=%s", uid, path)
     return FileResponse(path, media_type="image/jpeg")
 
 
@@ -256,7 +256,7 @@ async def save_session_preview(uid: str, request: SessionPreviewRequest) -> Resp
     here would spin an extra, pointless sync-check reconcile in the open
     workspace.
     """
-    logger.info("Session preview save requested: uid=%s", uid)
+    logger.debug("Session preview save requested: uid=%s", uid)
     if not is_session_registered(uid):
         logger.warning("Session preview save failed — unknown uid: %s", uid)
         raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'")
@@ -286,5 +286,5 @@ async def save_session_preview(uid: str, request: SessionPreviewRequest) -> Resp
         tmp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail=f"Preview save failed: {exc}") from exc
 
-    logger.info("Session preview saved: uid=%s path=%s size_bytes=%d", uid, path, len(image_bytes))
+    logger.debug("Session preview saved: uid=%s path=%s size_bytes=%d", uid, path, len(image_bytes))
     return Response(status_code=204)

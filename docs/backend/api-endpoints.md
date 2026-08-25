@@ -185,18 +185,19 @@ Not wired in the React frontend today (smart-paste uses the same math via the to
 
 Runs the smart-paste pipeline at a placement point. Body: `SmartPasteRequest` with natural-image `x`/`y` (same coordinate space as rescale-by-depth).
 
-Behavior today (rescale only; auto-rotate reserved for a later release):
+Behavior:
 
 1. Load object metadata by UUID (`average_depth` is the baseline depth; cutout must exist on disk).
 2. Load the session's current canvas and get/compute depth (`get_or_compute_depth`).
-3. Call `SmartPaster.smart_paste(...)` in TestModules — depth-proportional scale math only (no pixel mutation).
-4. Update metadata: `display_scale *= scale_factor`, `average_depth = target_depth`.
-5. Return `SmartPasteResponse` (same shape as `RescaleByDepthResponse`).
-6. Bump the parent session's `last_changed` timestamp.
+3. When `NORMAL_MAP=true` (default), load the cached Metric3D normal map and sample normals at the original cutout alpha center and the drop point.
+4. Call `SmartPaster.smart_paste(...)` — depth-proportional `display_scale` plus optional inferred `azimuth_deg` / `relative_elevation_deg` (null when the delta is below the deadzone or normals are unavailable).
+5. Update metadata: set `display_scale` absolutely from creation depth vs placement depth (cutout PNG unchanged).
+6. Return `SmartPasteResponse` with scale fields and optional pose fields for the frontend to mesh-render this object's GLB via `POST /images/novel-view`.
+7. Bump the parent session's `last_changed` timestamp.
 
 Returns `404` when object or cutout is missing; `400` when depth values are invalid.
 
-Wired in the React workspace: when the toolbar **Smart paste** switch is on, `WorkspaceScreen`'s drag-end handler fires this after persisting the object's offset.
+Wired in the React workspace: when the toolbar **Smart paste** switch is on, drag-end fires this after persisting offset; if a pose is returned, the client ensures the object's GLB and calls `POST /images/novel-view` (same mesh-render path as the Rotate button, no orbit picker).
 
 ## `POST /images/novel-view`
 

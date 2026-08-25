@@ -118,3 +118,26 @@ def test_smart_paster_delegates_to_depth_rescale() -> None:
     )
     assert result.scale_factor == _dampen_scale(2.0)
     assert result.target_depth == 160.0
+    assert result.azimuth_deg is None
+    assert result.relative_elevation_deg is None
+
+
+def test_smart_paster_infers_pose_from_normals() -> None:
+    depth_map = np.full((64, 64), 100, dtype=np.uint8)
+    normal_map = np.zeros((64, 64, 3), dtype=np.float32)
+    normal_map[:, :] = np.array([0.0, -1.0, 0.0], dtype=np.float32)  # floor
+    normal_map[20:40, 20:40] = np.array([1.0, 0.0, 0.0], dtype=np.float32)  # side wall
+
+    result = SmartPaster().smart_paste(
+        source_average_depth=100.0,
+        depth_map=depth_map,
+        x=30,
+        y=30,
+        normal_map=normal_map,
+        source_x=10,
+        source_y=10,
+    )
+
+    assert result.azimuth_deg is not None
+    assert abs(result.azimuth_deg) > 45.0
+    assert result.relative_elevation_deg is not None

@@ -214,3 +214,17 @@ class PlacementResponse(BaseModel):
         CutoutBounds | None,
         Field(default=None, description="Logical display bounds (base alpha bbox scaled by display_scale)."),
     ]
+    azimuth_deg: Annotated[
+        float | None,
+        Field(
+            default=None,
+            description="Inferred mesh-orbit azimuth for smart-paste auto-rotate; null when skipped.",
+        ),
+    ]
+    relative_elevation_deg: Annotated[
+        float | None,
+        Field(
+            default=None,
+            description="Inferred mesh-orbit elevation delta for smart-paste auto-rotate; null when skipped.",
+        ),
+    ]

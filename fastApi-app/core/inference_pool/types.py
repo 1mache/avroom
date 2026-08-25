@@ -69,6 +69,8 @@ class JobResult:
     target_depth: float | None = None
     scale_factor: float | None = None
     display_scale: float | None = None
+    azimuth_deg: float | None = None
+    relative_elevation_deg: float | None = None
     glb_bytes: bytes | None = None
     novel_view_bgra: Any | None = field(default=None, repr=False)
     validation_ok: bool | None = None

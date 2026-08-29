@@ -120,7 +120,16 @@ docker --version    # must print a version
 ```bash
 git clone https://github.com/1mache/avroom.git
 cd avroom
+git checkout aws-integration   # omit once this is merged to main
 ```
+
+The deployment files live on the `aws-integration` branch until it is merged,
+and `git clone` checks out `main` by default — skipping this line gets you a
+tree with no `fastApi-app/Dockerfile`, and a confusing build failure.
+
+Whatever you deploy must be **pushed** first: the box builds from the GitHub
+remote, not from your laptop. Check with `git status -sb` locally — it must not
+say `ahead N`.
 
 `.env` is gitignored, so it is not in the clone — create it by hand:
 

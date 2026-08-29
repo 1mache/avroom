@@ -1,0 +1,54 @@
+# Build context is the repo root (docker-compose.yml's `api` service sets
+# `context: .`), because requirements.txt and TestModules/ both live there.
+# Without this file the context is tens of GB and every build crawls.
+
+# ---- Virtualenvs (multi-GB, host-specific, never valid inside the image) ----
+.venv/
+venv/
+env/
+ENV/
+
+# ---- Node (reinstalled by the frontend build stage via `npm ci`) ----
+**/node_modules/
+react-front/dist/
+
+# ---- AI model weights (~10GB; fetched at runtime into named volumes) ----
+# SAM downloads itself when SAM_AUTO_DOWNLOAD=1; everything else comes from
+# the HuggingFace cache volume. Baking weights into the image would make it
+# enormous and force a rebuild to update them.
+TestModules/checkpoints/
+TestModules/inputs/
+TestModules/outputs/
+TestModules/depthMaps/
+**/*.pth
+**/*.pt
+**/*.ckpt
+**/*.onnx
+**/*.safetensors
+
+# ---- Runtime blob storage (lives in a named volume, not the image) ----
+fastApi-app/tmp/
+fastApi-app/images/
+fastApi-app/logs/
+react-front/tmp/
+
+# ---- Secrets: never bake .env into an image layer ----
+# .env is created on the server by hand (see docs/deployment/aws-runbook.md).
+**/.env
+**/.env.*
+!**/.env.example
+
+# ---- Caches / editor / VCS ----
+.git/
+.github/
+**/__pycache__/
+**/*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+.idea/
+.cursor/
+**/*.log
+poster/
+docs/

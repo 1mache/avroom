@@ -8,6 +8,16 @@
 
 **Automatic fallback:** If the primary strategy raises, `Reconstruction3DFacade` retries with **TripoSR** (`TriposrReconstructionStrategy`, local PyTorch, weights `stabilityai/TripoSR`) using identical arguments. If the fallback also raises, the facade re-raises the primary's original exception.
 
+> **The TripoSR fallback is unavailable in the deployed container.** Its `torchmcubes` dependency compiles against torch's CMake config, which demands a full CUDA *toolkit* (`nvcc`, headers) — the `nvidia-*-cu12` runtime libraries bundled in the PyPI torch wheel are not enough — so it cannot build in the slim runtime image without a ~6GB CUDA-devel base. It is therefore omitted from `TestModules/pyproject.toml`'s dependencies.
+>
+> **All TripoSR code is intact and still supported**; only the package is absent. Nothing imports it at module scope (the import is lazy and guarded inside `_load_tsr_model`), so the sole consequence is that a failure of the primary Hunyuan3D Space backend surfaces as an error instead of silently falling back. Restore it on any machine with the CUDA toolkit with:
+>
+> ```bash
+> pip install "torchmcubes @ git+https://github.com/tatsy/torchmcubes.git"
+> ```
+>
+> No code change is needed — the strategy resumes working on import. See the NOTE in `TestModules/pyproject.toml` and [`docs/deployment/aws-runbook.md`](../../../deployment/aws-runbook.md).
+
 **Alternate backends (not used by default or as fallback):** OpenLRM (`OpenLrmReconstructionStrategy`), Trellis (`TrellisReconstructionStrategy`), and VFusion3D (`Vfusion3dReconstructionStrategy`) — reachable only by injecting a strategy explicitly into `Reconstruction3DFacade(...)`.
 
 **In one line:** Image in → primary strategy (fallback on failure) → GLB out (`bytes`, `Path`, or `BytesIO`).

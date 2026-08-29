@@ -47,7 +47,7 @@ app.add_middleware(
 )
 
 
-@app.get("/")
+@app.get("/healthz")
 async def read_root() -> dict[str, str]:
     """Health/info endpoint for the image processing service."""
 
@@ -56,6 +56,11 @@ async def read_root() -> dict[str, str]:
 
 app.include_router(images_router)
 app.include_router(model_3d_router)
+
+# Mounted last: routers above still win for /images, /3d, /jobs, /debug.
+_SPA_DIR = Path(__file__).resolve().parent.parent / "react-front" / "dist"
+if _SPA_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=_SPA_DIR, html=True), name="frontend")
 logger.info("FastAPI app initialized")
 ```
 
@@ -63,7 +68,8 @@ Things to notice:
 
 - The CORS list is hardcoded to the Vite dev server (`localhost:5173` / `127.0.0.1:5173`). If the frontend ever moves origins, this needs updating.
 - There are two routers: `/images` and `/3d` — see [api-endpoints.md](api-endpoints.md).
-- `GET /` is a health endpoint that returns `{"status": "ok", "service": "image-processing"}`.
+- `GET /healthz` is a health endpoint that returns `{"status": "ok", "service": "image-processing"}`. It is **not** on `/`: when a production frontend build exists at `react-front/dist/`, `/` serves the SPA's `index.html` instead (see below).
+- **The built frontend is served by FastAPI itself** when `react-front/dist/` exists — this is what lets the deployed container run without nginx and without CORS (the SPA is built with `VITE_API_BASE_URL=""`, so its fetches are relative and same-origin). Locally the directory is usually absent and the mount is skipped, so the Vite dev server on `:5173` serves the SPA as before. See [../deployment/aws-runbook.md](../deployment/aws-runbook.md).
  - Logging is configured centrally by `setup_logging()` and startup/shutdown messages are logged via the FastAPI lifespan.
 
 ## Module map

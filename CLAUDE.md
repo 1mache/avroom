@@ -286,6 +286,65 @@ Segment and inpaint are queued server-side now (see "Durable Job Queue" above): 
 
 `GET`/`POST /images/{uid}/preview` (`fastApi-app/api/routes.py`) back the session card thumbnail — a JPEG of the room roughly as the user left it. `POST /images/upload` writes an initial one (downscaled original) via `core/session_preview.py::write_upload_preview` so a card is never empty. `WorkspaceScreen.tsx`'s `capturePreviewRef` composites background + every visible cutout at its current offset (`utils/preview.ts::composeSessionPreview`, canvas-based, 640px long edge, JPEG q0.82) and calls `saveSessionPreview` debounced 500ms (`PREVIEW_DEBOUNCE_MS`) after any mutation settles — wired through `onMutated` for inpaint/rotation/rename/duplicate/delete/hide, and directly from `finishDrag` for drag-end (drags never go through `useSessionJobs`, so `onMutated` alone doesn't cover them). The POST never calls `touch_session` — it fires well after the mutation that already bumped `last_changed`, so the dashboard's `?t=` cache-buster is already correct.
 
+## Deployment (AWS, phase 1)
+
+Deployed as **one EC2 GPU instance** (`g4dn.xlarge`, `eu-central-1`) running the
+whole stack via docker-compose — not ECS/Fargate, which has no GPU support at all.
+Full click-by-click procedure in [docs/deployment/aws-runbook.md](docs/deployment/aws-runbook.md);
+rationale in `docs/superpowers/specs/2026-08-29-aws-integration-design.md`.
+
+- **`fastApi-app/Dockerfile`** — two stages. Stage 1 (`node:20-slim`) runs
+  `npm run build` with `VITE_API_BASE_URL=""`; stage 2 (`python:3.11-slim`)
+  installs the Python stack and copies the built `dist/` in. Build context is the
+  **repo root**, not `fastApi-app/` (requirements.txt and TestModules/ live there).
+  Base is deliberately *not* an `nvidia/cuda` image: PyPI torch wheels bundle their
+  own CUDA runtime as `nvidia-*-cu12` deps, so only the host driver matters and it
+  arrives via the NVIDIA Container Toolkit. `torch` is installed on its own earlier
+  layer because `torchmcubes` (a git dep of TestModules) imports torch in its
+  `setup.py` at build time.
+- **`PYOPENGL_PLATFORM=osmesa`** is set in the image. `pyrender`'s offscreen
+  renderer (`MeshRenderNovelViewStrategy`, novel-view rotation) needs *some* GL
+  context on a headless host. OSMesa is software rendering: unlike EGL it needs no
+  `NVIDIA_DRIVER_CAPABILITIES=graphics` negotiation, and behaves identically on a
+  CPU-only laptop and the GPU box, so local testing exercises the real path.
+  Renders are only 512×512, so CPU rasterization is fast enough.
+- **FastAPI serves the React build itself** — `main.py` mounts
+  `react-front/dist/` with `StaticFiles(html=True)` **after** every
+  `include_router`, so `/images`, `/3d`, `/jobs`, `/debug` still win and the mount
+  only catches `/`, `/assets/*`, `/avroom.png`. No nginx container and **no CORS**:
+  the SPA is built with `VITE_API_BASE_URL=""`, making every fetch relative and
+  therefore same-origin. The mount is skipped when `dist/` is absent, so local dev
+  still uses the Vite dev server on `:5173` unchanged.
+- **The health endpoint is `GET /healthz`, not `GET /`** — `/` now belongs to the
+  SPA's `index.html`. Routes registered before the mount always shadow it, so
+  leaving health on `/` would have hidden the app.
+- **`docker-compose.gpu.yml`** is an overlay, applied with
+  `-f docker-compose.yml -f docker-compose.gpu.yml`. It adds the GPU reservation,
+  `restart: unless-stopped`, port 80, and the three named volumes that must
+  outlive a rebuild: `hf-cache` (~10GB of weights — without it every rebuild
+  re-downloads them), `sam-checkpoints` (fetched via `SAM_AUTO_DOWNLOAD=1`), and
+  `avroom-blobs` (`fastApi-app/tmp`, the real user data). Kept separate from the
+  base file so local dev still works on a machine with no NVIDIA GPU.
+- **`docker-entrypoint.sh`** runs `alembic upgrade head` then uvicorn. It
+  deliberately does *not* run `scripts/migrate_local_sidecars_to_db.py` (which
+  `run.bat` does) — that imports legacy JSON sidecars from a dev machine.
+- **`INFERENCE_WORKERS=0` in production.** Two workers would each load their own
+  copy of every model and exhaust the T4's 16GB VRAM.
+- **`torchmcubes` is deliberately not a dependency**, so the **TripoSR fallback
+  does not work in the container** — a failure of the primary Hunyuan3D Space
+  backend surfaces as an error rather than falling back. It compiles against
+  torch's CMake config, which demands a full CUDA *toolkit* (`nvcc`, headers);
+  the `nvidia-*-cu12` runtime libs inside the PyPI torch wheel are not enough,
+  so it cannot build on the slim base without a ~6GB CUDA-devel image. **All
+  TripoSR code is intentionally retained and still supported** — the import is
+  lazy and guarded in `_load_tsr_model`, so nothing breaks at startup. Restore
+  with `pip install "torchmcubes @ git+https://github.com/tatsy/torchmcubes.git"`
+  on any host with the toolkit; no code change needed. See the NOTE in
+  `TestModules/pyproject.toml`.
+- Still deferred: RDS, S3 blobs (`STORAGE_BACKEND=s3` exists but unused), HTTPS/
+  domain, `AUTH_MODE=jwt`, and self-hosted Hunyuan3D (needs its own 24GB+ box; the
+  public HF Space is flaky and rate-limited, so this is planned for demo day).
+
 ## Planned but Not Yet Implemented
 
 Per the spec, the following are planned but absent from the codebase:

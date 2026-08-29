@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 
 from api.routes import router as images_router
@@ -74,9 +76,15 @@ app.add_middleware(
 )
 
 
-@app.get("/")
+@app.get("/healthz")
 async def read_root() -> dict[str, str]:
-    """Health/info endpoint for the image processing service."""
+    """Health/info endpoint for the image processing service.
+
+    Served at `/healthz` rather than `/` because `/` is claimed by the built
+    frontend's index.html when a SPA build is mounted (see the StaticFiles
+    mount at the bottom of this file). Routes registered here always win over
+    that mount, so keeping this on `/` would shadow the app itself.
+    """
 
     return {"status": "ok", "service": "image-processing"}
 
@@ -88,4 +96,27 @@ app.include_router(model_3d_router)
 app.include_router(novel_view_router)
 app.include_router(debug_vision_router)
 app.include_router(jobs_router)
+
+# Serve the built React SPA from this same app, when a build is present.
+#
+# This is what lets the deployed container answer on one port with no nginx
+# and no CORS: the SPA is built with VITE_API_BASE_URL="" (see
+# fastApi-app/Dockerfile), so its fetches are relative and resolve back to
+# whichever origin served the page.
+#
+# Mounted LAST on purpose. Starlette matches routes in registration order, so
+# every router above still wins for /images, /3d, /jobs and /debug; the mount
+# only catches what is left (/, /assets/*, /avroom.png). Those namespaces do
+# not collide with Vite's output.
+#
+# Absent in local development (no `npm run build` output), where the Vite dev
+# server on :5173 serves the SPA instead - so the mount is skipped rather than
+# raising on a missing directory.
+_SPA_DIR = Path(__file__).resolve().parent.parent / "react-front" / "dist"
+if _SPA_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=_SPA_DIR, html=True), name="frontend")
+    logger.info("Serving built frontend from %s", _SPA_DIR)
+else:
+    logger.info("No frontend build at %s; serving API only", _SPA_DIR)
+
 logger.info("FastAPI app initialized")

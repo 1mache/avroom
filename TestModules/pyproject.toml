@@ -22,7 +22,22 @@ dependencies = [
     "pyrender>=0.1.45",
     "rembg",
     "torch>=2.1",
-    "torchmcubes @ git+https://github.com/tatsy/torchmcubes.git",
+    # NOTE: `torchmcubes` is deliberately NOT listed here, though the TripoSR
+    # backend that needs it is still fully present and supported. It compiles a
+    # C++/CUDA extension via `find_package(Torch)`, and torch's own CMake config
+    # refuses to configure unless a full CUDA *toolkit* (nvcc, headers) is on the
+    # box - the `nvidia-*-cu12` runtime libraries that ship inside the PyPI torch
+    # wheel are not enough. That makes it unbuildable in the slim container image
+    # (see fastApi-app/Dockerfile) without pulling in a ~6GB CUDA-devel base.
+    #
+    # Nothing imports it at module scope: TripoSR's only use is behind a lazy,
+    # guarded import in triposr_reconstruction_strategy.py::_load_tsr_model, so
+    # its absence costs exactly one thing - the TripoSR *fallback* for 3D
+    # reconstruction, behind the primary Hunyuan3D Space backend.
+    #
+    # TO RE-ENABLE (local machines with the CUDA toolkit, or a CUDA-devel image):
+    #     pip install "torchmcubes @ git+https://github.com/tatsy/torchmcubes.git"
+    # No code change is required - the strategy starts working again on import.
     "torchvision>=0.16",
     "transformers>=4.36",
     "trimesh>=4.0.0",

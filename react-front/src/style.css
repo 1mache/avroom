@@ -408,6 +408,11 @@ input {
   z-index: 180;
 }
 
+.stage-area-box.is-pending {
+  border-style: solid;
+  background: color-mix(in srgb, var(--cyan) 18%, transparent);
+}
+
 .stage-pick-marker {
   position: absolute;
   z-index: 220;

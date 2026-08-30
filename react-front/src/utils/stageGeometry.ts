@@ -261,3 +261,15 @@ export const toNaturalPoint = (
     y: (insideY / renderedRect.height) * naturalSize.height,
   };
 };
+
+/** Stage-local CSS box for a natural-pixel batch rectangle. */
+export const batchBoxStageStyle = (
+  box: { x0: number; y0: number; x1: number; y1: number },
+  renderedRect: Rect,
+  naturalSize: Size,
+): { left: string; top: string; width: string; height: string } => ({
+  left: `${renderedRect.x + (box.x0 / naturalSize.width) * renderedRect.width}px`,
+  top: `${renderedRect.y + (box.y0 / naturalSize.height) * renderedRect.height}px`,
+  width: `${((box.x1 - box.x0) / naturalSize.width) * renderedRect.width}px`,
+  height: `${((box.y1 - box.y0) / naturalSize.height) * renderedRect.height}px`,
+});

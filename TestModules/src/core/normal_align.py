@@ -14,6 +14,10 @@ _ORBIT_DEADZONE_DEG = 3.0
 # When |nx| and |nz| are both tiny the surface is near-vertical; yaw is noise.
 _NEAR_VERTICAL_HORIZONTAL = 0.15
 
+# |mesh-up Y| above this → horizontal surface (floor/ceiling). Floor-standing
+# cutouts keep their upright pose when smart-pasted onto walls.
+_FLOOR_LIKE_MESH_NY = 0.7
+
 
 class OrbitPose(NamedTuple):
     """Signed mesh-orbit deltas matching ``Model3DFrame.capture()`` / novel-view."""
@@ -85,6 +89,12 @@ def _wrap_azimuth_delta(delta_deg: float) -> float:
     return wrapped
 
 
+def _is_floor_like_normal(normal: np.ndarray) -> bool:
+    """True when the surface is roughly horizontal (floor or ceiling)."""
+    _, ny, _ = _metric3d_to_mesh_up(normal)
+    return abs(ny) > _FLOOR_LIKE_MESH_NY
+
+
 def orbit_pose_from_normals(
     source_normal: np.ndarray,
     dest_normal: np.ndarray,
@@ -95,8 +105,13 @@ def orbit_pose_from_normals(
     floor-to-floor drops).
 
     # ponytail: novel-view has no roll; floor normals make azimuth undefined.
-    # Upgrade: a third pose axis if wall-hang ever needs in-plane spin.
+    # Floor-standing objects stay upright when repositioned onto walls.
+    # Upgrade: per-object "mount type" if wall-hang needs auto-tilt later.
     """
+    if _is_floor_like_normal(source_normal):
+        logger.debug("Orbit pose skipped: floor-standing source")
+        return None
+
     az_src, el_src = _orbit_components_from_normal(source_normal)
     az_dst, el_dst = _orbit_components_from_normal(dest_normal)
     # Both axes are src - dst so they match novel-view: clockwise+ yaw, up+

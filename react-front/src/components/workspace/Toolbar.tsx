@@ -24,6 +24,9 @@ export interface ToolbarProps {
   areaMode: boolean;
   onArea: () => void;
   batchBusy: boolean;
+  /** A box batch is staged and waiting for submit. */
+  hasPendingBatch: boolean;
+  onSubmitBatch: () => void;
   /** CLIP vs picker for the next cutout. */
   verifyMode: VerifyMode;
   onVerifyModeChange: (mode: VerifyMode) => void;
@@ -57,6 +60,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   areaMode,
   onArea,
   batchBusy,
+  hasPendingBatch,
+  onSubmitBatch,
   verifyMode,
   onVerifyModeChange,
   rotateMode,
@@ -120,6 +125,17 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         onClick={onArea}
       >
         <AreaIcon />
+      </button>
+
+      <button
+        type="button"
+        className={`tool-btn${hasPendingBatch ? " is-armed" : ""}`}
+        data-tip={hasPendingBatch ? "Run batch cut in the box" : "Draw a box first"}
+        aria-label="Submit batch cut"
+        disabled={!hasPendingBatch || batchBusy}
+        onClick={onSubmitBatch}
+      >
+        {batchBusy ? <span className="tool-spinner" /> : <CheckIcon />}
       </button>
 
       <div

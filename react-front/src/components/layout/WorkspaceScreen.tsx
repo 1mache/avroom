@@ -9,7 +9,7 @@ import {
   setSessionName as saveSessionName,
   warmSessionMaps,
 } from "../../api/images";
-import { useAreaSelect } from "../../hooks/useAreaSelect";
+import { boxBoundsFromDraft, useAreaSelect } from "../../hooks/useAreaSelect";
 import { useConflictNotices, type ConflictContext } from "../../hooks/useConflictNotices";
 import { useDashboardPreview } from "../../hooks/useDashboardPreview";
 import { useHitTesting } from "../../hooks/useHitTesting";
@@ -17,7 +17,7 @@ import { useObjectDrag } from "../../hooks/useObjectDrag";
 import { useRotationController } from "../../hooks/useRotationController";
 import { useSessionJobs, type JobErrorContext } from "../../hooks/useSessionJobs";
 import { useSessionSync } from "../../hooks/useSessionSync";
-import type { VerifyMode } from "../../types/api";
+import type { BatchSource, VerifyMode } from "../../types/api";
 import {
   effectiveCutoutBounds,
   effectiveCutoutSrc,
@@ -27,6 +27,7 @@ import {
 } from "../../types/session";
 import {
   ALPHA_HIT_THRESHOLD,
+  batchBoxStageStyle,
   buildHitTestOrder,
   getBoundsStageRect,
   getContainedImageRect,
@@ -94,6 +95,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     start: ClickPosition;
     current: ClickPosition;
   } | null>(null);
+  const [pendingBatchSource, setPendingBatchSource] = useState<BatchSource | null>(null);
   const [batchUuids, setBatchUuids] = useState<Set<string>>(new Set());
   const [pickPoint, setPickPoint] = useState<ClickPosition | null>(null);
   const [verifyMode, setVerifyMode] = useState<VerifyMode>("manual");
@@ -371,20 +373,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     onSettled: capturePreview,
   });
 
-  // --- drag-a-box batch select -----------------------------------------------
-
-  useAreaSelect({
-    areaDraft,
-    setAreaDraft,
-    setAreaMode,
-    naturalSize,
-    renderedRect,
-    stageRef,
-    isBatching: jobs.isBatching,
-    runBatch: jobs.runBatch,
-  });
-
-  // --- selection & tools --------------------------------------------------
+  // --- drag-a-box batch select (hook wired after handlers below) -----------
 
   const selectObject = useCallback(
     (objectId: number) => {
@@ -432,6 +421,29 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     setPickPoint(null);
     setAreaMode((armed) => !armed);
   }, [rotation.setRotateMode]);
+
+  const handleBoxReady = useCallback((source: BatchSource) => {
+    setPendingBatchSource(source);
+  }, []);
+
+  const handleSubmitPendingBatch = useCallback(() => {
+    if (!pendingBatchSource || jobs.isBatching) {
+      return;
+    }
+    const source = pendingBatchSource;
+    setPendingBatchSource(null);
+    void jobs.runBatch(source);
+  }, [jobs.isBatching, jobs.runBatch, pendingBatchSource]);
+
+  useAreaSelect({
+    areaDraft,
+    setAreaDraft,
+    setAreaMode,
+    naturalSize,
+    renderedRect,
+    stageRef,
+    onBoxReady: handleBoxReady,
+  });
 
   const handleMaskSelected = useCallback(
     (maskId: string) => {
@@ -538,6 +550,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         setCutMode(false);
         setAreaMode(false);
         setAreaDraft(null);
+        setPendingBatchSource(null);
         setPickPoint(null);
       } else if (event.key === "Enter" && rotation.rotateMode) {
         event.preventDefault();
@@ -720,6 +733,13 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
   const photoSrc = jobs.backgroundSrc ?? originalSrc;
 
+  const displayedBatchBox = areaDraft
+    ? boxBoundsFromDraft(areaDraft)
+    : pendingBatchSource?.kind === "box"
+      ? pendingBatchSource
+      : null;
+  const batchBoxIsPending = displayedBatchBox !== null && pendingBatchSource !== null && !areaDraft;
+
   const activeJobs = jobs.jobs.filter((job) => job.status === "queued" || job.status === "running");
   const segmentingCount = activeJobs.filter((job) => job.kind === "segment").length;
   const removingCount = activeJobs.filter((job) => job.kind === "inpaint").length;
@@ -762,6 +782,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         areaMode={areaMode}
         onArea={handleArea}
         batchBusy={jobs.isBatching}
+        hasPendingBatch={pendingBatchSource !== null}
+        onSubmitBatch={handleSubmitPendingBatch}
         verifyMode={verifyMode}
         onVerifyModeChange={setVerifyMode}
         rotateMode={rotation.rotateMode}
@@ -818,15 +840,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                 input and hit-tests against real alpha instead. */}
             <div className="stage-input" onPointerDown={handleStagePointerDown} />
 
-            {areaDraft && renderedRect && naturalSize ? (
+            {displayedBatchBox && renderedRect && naturalSize ? (
               <div
-                className="stage-area-box"
-                style={{
-                  left: `${renderedRect.x + (Math.min(areaDraft.start.x, areaDraft.current.x) / naturalSize.width) * renderedRect.width}px`,
-                  top: `${renderedRect.y + (Math.min(areaDraft.start.y, areaDraft.current.y) / naturalSize.height) * renderedRect.height}px`,
-                  width: `${(Math.abs(areaDraft.current.x - areaDraft.start.x) / naturalSize.width) * renderedRect.width}px`,
-                  height: `${(Math.abs(areaDraft.current.y - areaDraft.start.y) / naturalSize.height) * renderedRect.height}px`,
-                }}
+                className={`stage-area-box${batchBoxIsPending ? " is-pending" : ""}`}
+                style={batchBoxStageStyle(displayedBatchBox, renderedRect, naturalSize)}
               />
             ) : null}
 
@@ -876,6 +893,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           <p className="stage-hint">Drag to orbit · Enter applies · Esc cancels</p>
         ) : areaMode ? (
           <p className="stage-hint">Drag a box around the furniture · Esc cancels</p>
+        ) : pendingBatchSource ? (
+          <p className="stage-hint">Submit batch cut (checkmark) · Esc clears box</p>
         ) : cutMode ? (
           <p className="stage-hint">Click the object you want to cut out · Esc cancels</p>
         ) : null}

@@ -106,6 +106,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   // local-only fields to preserve across updates (unlike `objects`).
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [isBatching, setIsBatching] = useState(false);
+  const batchingRef = useRef(false);
   const [segmentState, setSegmentState] = useState<SegmentPickerState>({ status: "idle" });
   const [backgroundSrc, setBackgroundSrc] = useState<string | null>(null);
   const [isDuplicating, setIsDuplicating] = useState(false);
@@ -229,9 +230,10 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   const runBatch = useCallback(
     async (source: BatchRequest["source"]) => {
       const currentImageId = imageIdRef.current;
-      if (!currentImageId || isBatching) {
+      if (!currentImageId || batchingRef.current) {
         return;
       }
+      batchingRef.current = true;
       setIsBatching(true);
       try {
         await runSessionBatch(currentImageId, { source, verify: "auto" });
@@ -244,11 +246,12 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         }
       } finally {
         if (imageIdRef.current === currentImageId) {
+          batchingRef.current = false;
           setIsBatching(false);
         }
       }
     },
-    [isBatching, onError, onMutated],
+    [onError, onMutated],
   );
 
   // Queues segmentation and returns immediately — no local loading state, and

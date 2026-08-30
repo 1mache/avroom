@@ -53,7 +53,7 @@ ENV PYTHONUNBUFFERED=1 \
     # PYOPENGL_PLATFORM=egl + NVIDIA_DRIVER_CAPABILITIES=all if 512px renders
     # ever show up as a bottleneck.
     PYOPENGL_PLATFORM=osmesa \
-    # HF weights land in a named volume (see docker-compose.gpu.yml) so a
+    # HF weights land in a named volume (see docker-compose.deploy.yml) so a
     # rebuild does not re-download ~10GB.
     HF_HOME=/root/.cache/huggingface
 

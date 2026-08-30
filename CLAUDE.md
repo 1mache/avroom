@@ -318,13 +318,21 @@ rationale in `docs/superpowers/specs/2026-08-29-aws-integration-design.md`.
 - **The health endpoint is `GET /healthz`, not `GET /`** — `/` now belongs to the
   SPA's `index.html`. Routes registered before the mount always shadow it, so
   leaving health on `/` would have hidden the app.
-- **`docker-compose.gpu.yml`** is an overlay, applied with
-  `-f docker-compose.yml -f docker-compose.gpu.yml`. It adds the GPU reservation,
-  `restart: unless-stopped`, port 80, and the three named volumes that must
-  outlive a rebuild: `hf-cache` (~10GB of weights — without it every rebuild
-  re-downloads them), `sam-checkpoints` (fetched via `SAM_AUTO_DOWNLOAD=1`), and
-  `avroom-blobs` (`fastApi-app/tmp`, the real user data). Kept separate from the
-  base file so local dev still works on a machine with no NVIDIA GPU.
+- **Two deployment overlays**, applied with `-f docker-compose.yml -f
+  docker-compose.deploy.yml [-f docker-compose.gpu.yml]`. `docker-compose.deploy.yml`
+  carries everything true of *any* deployed instance — `restart: unless-stopped`,
+  port 80, and the three named volumes that must outlive a rebuild: `hf-cache`
+  (~10GB of weights — without it every rebuild re-downloads them),
+  `sam-checkpoints` (fetched via `SAM_AUTO_DOWNLOAD=1`), and `avroom-blobs`
+  (`fastApi-app/tmp`, the real user data). `docker-compose.gpu.yml` adds only the
+  GPU device reservation on top. Split this way because the pipeline runs on
+  CPU today (just slower — minutes per operation, same as a laptop with no
+  CUDA) and the G-family EC2 vCPU quota can take 24-48h to approve on a new
+  account: a CPU instance (`m7i.xlarge`) can take the `deploy` overlay alone
+  and go live immediately, then move to `g4dn.xlarge` plus the `gpu` overlay
+  once approved, with no other file changing. Both overlays are kept separate
+  from the base file so local dev still works with no deploy-specific env
+  vars and no NVIDIA GPU.
 - **`docker-entrypoint.sh`** runs `alembic upgrade head` then uvicorn. It
   deliberately does *not* run `scripts/migrate_local_sidecars_to_db.py` (which
   `run.bat` does) — that imports legacy JSON sidecars from a dev machine.

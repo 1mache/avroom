@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -26,5 +26,6 @@ class SegmentationRoutingStrategy(ABC):
         adapted_depth: np.ndarray,
         x: int,
         y: int,
+        extra_points: Sequence[tuple[int, int]] | None = None,
     ) -> dict[str, Any]:
         raise NotImplementedError

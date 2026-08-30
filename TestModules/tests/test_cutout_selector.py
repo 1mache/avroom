@@ -77,6 +77,31 @@ def test_click_miss_is_prefiltered() -> None:
     assert result.reasons == ("click_miss",)
 
 
+def test_multi_seed_click_miss_when_second_seed_not_covered() -> None:
+    cutout = _bgra(alpha_rect=(10, 10, 40, 40))
+    result = select_best_cutout(
+        [cutout],
+        click_xy=(20, 20),
+        click_xys=((20, 20), (80, 80)),
+        scorer=_scorer({0: _uniform_checks(0.99)}),
+    )
+    assert result.winner_index is None
+    assert result.reasons == ("click_miss",)
+
+
+def test_multi_seed_passes_when_all_seeds_covered() -> None:
+    cutout = _bgra(alpha_rect=(10, 10, 90, 90))
+    result = select_best_cutout(
+        [cutout],
+        click_xy=(20, 20),
+        click_xys=((20, 20), (80, 80)),
+        selection_strategy=RelativeClipRankingStrategy(),
+        scorer=_scorer({0: _uniform_checks(0.99)}),
+    )
+    assert result.winner_index == 0
+    assert result.reasons[0] != "click_miss"
+
+
 def test_area_too_small_is_prefiltered() -> None:
     cutout = _bgra(alpha_rect=(20, 20, 21, 21))
     result = select_best_cutout(

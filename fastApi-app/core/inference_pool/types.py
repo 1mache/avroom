@@ -38,6 +38,7 @@ class JobRequest:
     mask_id: str | None = None
     x: int | None = None
     y: int | None = None
+    points: tuple[tuple[int, int], ...] | None = None
     object_uuid: str | None = None
     cutout_path: str | None = None
     mesh_path: str | None = None

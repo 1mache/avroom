@@ -321,6 +321,7 @@ def segment_candidates_on_image(
     base_dir: Path,
     x: int,
     y: int,
+    points: tuple[tuple[int, int], ...] | None = None,
     options: ImageProcessingOptions | None = None,
     exclude_mask_ids: frozenset[str] | None = None,
     verify: str | VerifyMode | None = None,
@@ -338,7 +339,10 @@ def segment_candidates_on_image(
     del options  # TODO: parameter not used. legacy click options. remove it or use
     pinned = exclude_mask_ids or frozenset()
     image_bytes = load_canvas_bytes(image_id=image_id, base_dir=base_dir)
-    _validate_click_coordinates(image_bytes, x, y, base_dir, image_id)
+    segment_points = points if points else ((x, y),)
+    for point_x, point_y in segment_points:
+        _validate_click_coordinates(image_bytes, point_x, point_y, base_dir, image_id)
+    extra_points = segment_points[1:] if len(segment_points) > 1 else None
 
     with inference_session():
         # New segmentation invalidates older unchosen candidates except pinned masks.
@@ -352,13 +356,20 @@ def segment_candidates_on_image(
             segmentor.depth.map_depth,
         )
         image_key = memory_image_key(image_bytes)
-        logger.info("Running ObjectSegmentor: image_key=%s click=(%d,%d)", image_key, x, y)
+        logger.info(
+            "Running ObjectSegmentor: image_key=%s click=(%d,%d) extra_points=%d",
+            image_key,
+            x,
+            y,
+            len(extra_points or ()),
+        )
         candidate_pairs = segmentor.get_mask_for_object_at_position(
             image_path=image_key,
             x=x,
             y=y,
             image_bytes=image_bytes,
             depth_map=depth_map,
+            extra_points=extra_points,
         )
         logger.info("ObjectSegmentor finished: image_id=%s candidates=%d", image_id, len(candidate_pairs))
 
@@ -380,6 +391,7 @@ def segment_candidates_on_image(
             selection = select_best_cutout(
                 cutouts_bgra,
                 click_xy=(x, y),
+                click_xys=segment_points,
                 refined_masks=refined_masks,
                 scene_bgr=source_bgr,
                 depth_map=depth_map,

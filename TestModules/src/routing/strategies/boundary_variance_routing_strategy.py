@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Sequence
 
 import cv2
 import numpy as np
@@ -51,6 +51,7 @@ class BoundaryVarianceRoutingStrategy(SegmentationRoutingStrategy):
         adapted_depth: np.ndarray,
         x: int,
         y: int,
+        extra_points: Sequence[tuple[int, int]] | None = None,
     ) -> dict[str, Any]:
         h, w = raw_depth.shape[:2]
 
@@ -60,7 +61,12 @@ class BoundaryVarianceRoutingStrategy(SegmentationRoutingStrategy):
         # Probe mask - tight, never broad, so we don't grab nearby objects.
         logger.info(f"Fetching probe mask at ({x}, {y}) for Boundary Analysis...")
         probe_mask, _ = self._segmentation.get_mask_at_point(
-            adapted_depth, x, y, expand_pixels=0, use_broad_mask=False
+            adapted_depth,
+            x,
+            y,
+            expand_pixels=0,
+            use_broad_mask=False,
+            extra_points=extra_points,
         )
         if probe_mask.shape[:2] != (h, w):
             probe_mask = cv2.resize(probe_mask, (w, h), interpolation=cv2.INTER_NEAREST)

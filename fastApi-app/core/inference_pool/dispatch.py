@@ -35,11 +35,13 @@ def _execute_impl(job: JobRequest) -> JobResult:
 
         assert job.image_id is not None and job.x is not None and job.y is not None
         options = ImageProcessingOptions.model_validate(job.options) if job.options else None
+        segment_points = job.points if job.points else ((job.x, job.y),)
         candidates = segment_candidates_on_image(
             image_id=job.image_id,
             base_dir=base_dir,
             x=job.x,
             y=job.y,
+            points=segment_points,
             options=options,
             exclude_mask_ids=frozenset(job.exclude_mask_ids or ()),
             verify=job.verify,

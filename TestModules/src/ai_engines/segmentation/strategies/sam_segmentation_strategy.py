@@ -5,7 +5,7 @@ import logging
 import os
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -149,6 +149,7 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         x: int,
         y: int,
         *,
+        extra_points: Sequence[tuple[int, int]] | None = None,
         save_debug: bool = True,
     ) -> tuple[Any, DebugImageSaver]:
         """Run SAM multimask prediction and optionally save per-candidate debug images.
@@ -166,8 +167,11 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         predictor = self._predictor
         predictor.set_image(image)
 
-        input_point = np.array([[x, y]])
-        input_label = np.array([1])  # 1 = foreground
+        point_list = [(x, y)]
+        if extra_points:
+            point_list.extend(extra_points)
+        input_point = np.array(point_list, dtype=np.float32)
+        input_label = np.ones(len(point_list), dtype=np.int32)
 
         masks, _scores, _logits = predictor.predict(
             point_coords=input_point,
@@ -190,14 +194,15 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         *,
         expand_pixels: int = 0,
         use_broad_mask: bool = False,
+        extra_points: Sequence[tuple[int, int]] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        masks, image_saver = self._run_sam_predict(image, x, y)
+        masks, image_saver = self._run_sam_predict(image, x, y, extra_points=extra_points)
 
         # Index 1 is SAM's "tight" candidate - good for flat objects (TVs,
         # windows). use_broad_mask is accepted for interface symmetry; the
         # legacy code never actually switched indices on it, so we don't either.
         expanded_mask, original_mask = self._mask_refiner.sanitize_then_expand(
-            masks[1], x, y, expand_pixels=expand_pixels
+            masks[1], x, y, expand_pixels=expand_pixels, extra_clicks=extra_points
         )
         if expand_pixels > 0:
             image_saver.save("dilated_mask.png", expanded_mask)
@@ -213,6 +218,7 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         *,
         expand_pixels: int = 0,
         use_broad_mask: bool = False,
+        extra_points: Sequence[tuple[int, int]] | None = None,
     ) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
         """Return one ``(expanded_mask, original_mask)`` pair per SAM candidate.
 
@@ -226,13 +232,15 @@ class SamSegmentationStrategy(ImageSegmentationStrategy):
         # ObjectSegmentor saves labeled per-candidate artifacts for every pair
         # it receives, so we skip the raw unlabeled saves here to avoid writing
         # files that would be silently overwritten by the second (image) pass.
-        masks, _image_saver = self._run_sam_predict(image, x, y, save_debug=False)
+        masks, _image_saver = self._run_sam_predict(
+            image, x, y, extra_points=extra_points, save_debug=False
+        )
 
         candidate_pairs: list[tuple[np.ndarray, np.ndarray]] = []
         for raw_mask in masks:
             candidate_pairs.append(
                 self._mask_refiner.sanitize_then_expand(
-                    raw_mask, x, y, expand_pixels=expand_pixels
+                    raw_mask, x, y, expand_pixels=expand_pixels, extra_clicks=extra_points
                 )
             )
 

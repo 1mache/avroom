@@ -6,6 +6,8 @@ import {
   BackIcon,
   CheckIcon,
   CopyIcon,
+  MultiPointIcon,
+  RevertIcon,
   RotateIcon,
   ScissorsIcon,
   SmartPasteIcon,
@@ -21,10 +23,14 @@ export interface ToolbarProps {
   /** Scissors is armed: the next click on the photo starts a cutout. */
   cutMode: boolean;
   onCut: () => void;
+  multiPoint: boolean;
+  onToggleMultiPoint: () => void;
+  hasPendingSegmentSeeds: boolean;
+  onUndoLastSeed: () => void;
   areaMode: boolean;
   onArea: () => void;
   batchBusy: boolean;
-  /** A box batch is staged and waiting for submit. */
+  /** A box batch or multi-point seeds are staged and waiting for submit. */
   hasPendingBatch: boolean;
   onSubmitBatch: () => void;
   /** CLIP vs picker for the next cutout. */
@@ -57,6 +63,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   hasSelection,
   cutMode,
   onCut,
+  multiPoint,
+  onToggleMultiPoint,
+  hasPendingSegmentSeeds,
+  onUndoLastSeed,
   areaMode,
   onArea,
   batchBusy,
@@ -117,6 +127,32 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
       <button
         type="button"
+        role="switch"
+        aria-checked={multiPoint}
+        className={`tool-switch${multiPoint ? " is-on" : ""}`}
+        data-tip="Multi-point cutout"
+        aria-label="Multi-point cutout"
+        onClick={onToggleMultiPoint}
+      >
+        <MultiPointIcon />
+        <span className="tool-switch-track">
+          <span className="tool-switch-nub" />
+        </span>
+      </button>
+
+      <button
+        type="button"
+        className="tool-btn"
+        data-tip="Remove last seed"
+        aria-label="Remove last seed"
+        disabled={!hasPendingSegmentSeeds}
+        onClick={onUndoLastSeed}
+      >
+        <RevertIcon size={15} />
+      </button>
+
+      <button
+        type="button"
         className={`tool-btn${areaMode ? " is-armed" : ""}`}
         data-tip={areaMode ? "Drag a box on the photo" : "Cut everything in a box"}
         aria-label="Cut objects in area"
@@ -130,8 +166,14 @@ export const Toolbar: React.FC<ToolbarProps> = ({
       <button
         type="button"
         className={`tool-btn${hasPendingBatch ? " is-armed" : ""}`}
-        data-tip={hasPendingBatch ? "Run batch cut in the box" : "Draw a box first"}
-        aria-label="Submit batch cut"
+        data-tip={
+          hasPendingSegmentSeeds
+            ? "Run multi-point cut"
+            : hasPendingBatch
+              ? "Run batch cut in the box"
+              : "Stage seeds or draw a box first"
+        }
+        aria-label="Submit cut"
         disabled={!hasPendingBatch || batchBusy}
         onClick={onSubmitBatch}
       >

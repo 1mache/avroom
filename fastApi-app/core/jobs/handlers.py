@@ -52,8 +52,14 @@ def run_segment_job(job: JobRecord) -> dict[str, Any]:
     options_payload = job.payload.get("options")
     options = ImageProcessingOptions.model_validate(options_payload) if options_payload else None
     verify = job.payload.get("verify")
+    raw_points = job.payload.get("points")
+    if raw_points:
+        segment_points = tuple((int(point["x"]), int(point["y"])) for point in raw_points)
+    else:
+        segment_points = ((x, y),)
 
-    assert_segment_click_allowed(job.session_id, x, y)
+    for point_x, point_y in segment_points:
+        assert_segment_click_allowed(job.session_id, point_x, point_y)
 
     # Pinned = masks reserved by in-flight inpaint leases; reserved = masks
     # belonging to an earlier segment job's still-unconsumed result. Both must
@@ -66,6 +72,7 @@ def run_segment_job(job: JobRecord) -> dict[str, Any]:
         base_dir=storage_dir,
         x=x,
         y=y,
+        points=segment_points,
         options=options,
         exclude_mask_ids=frozenset(excluded),
         verify=verify,

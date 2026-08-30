@@ -151,19 +151,22 @@ async def segment_image(
     the result.
     """
     logger.info(
-        "Segmentation queued: image_id=%s x=%d y=%d verify=%s user_id=%s",
+        "Segmentation queued: image_id=%s x=%d y=%d points=%d verify=%s user_id=%s",
         request.image_id,
         request.x,
         request.y,
+        len(request.points) if request.points else 1,
         request.verify.value,
         user_id,
     )
-    payload = {
+    payload: dict[str, object] = {
         "x": request.x,
         "y": request.y,
         "options": request.options.model_dump() if request.options else None,
         "verify": request.verify.value,
     }
+    if request.points is not None:
+        payload["points"] = [{"x": point.x, "y": point.y} for point in request.points]
     job = create_job(user_id, request.image_id, "segment", payload)
     return JobSubmitResponse(job_id=job.id)
 

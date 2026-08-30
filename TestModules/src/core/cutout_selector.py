@@ -63,6 +63,7 @@ def select_best_cutout(
     cutouts_bgra: Sequence[np.ndarray],
     *,
     click_xy: tuple[int, int],
+    click_xys: Sequence[tuple[int, int]] | None = None,
     scorer: LabelScorer | None = None,
     refined_masks: Sequence[np.ndarray] | None = None,
     scene_bgr: np.ndarray | None = None,
@@ -84,12 +85,14 @@ def select_best_cutout(
     del threshold
 
     policy = selection_strategy or SceneConsensusMaskSelectionStrategy()
+    normalized_clicks = tuple(click_xys) if click_xys else (click_xy,)
 
     ctx = MaskSelectionContext(
         cutouts_bgra=cutouts_bgra,
         click_xy=click_xy,
         scene_bgr=scene_bgr,
         depth_map=depth_map,
+        click_xys=normalized_clicks,
     )
     needs_clip = policy.needs_clip()
 
@@ -104,7 +107,7 @@ def select_best_cutout(
 
     scored_candidates: list[ScoredCandidate] = []
     for index, cutout in enumerate(cutouts_bgra):
-        reason = _prefilter_reason(cutout, click_xy)
+        reason = _prefilter_reason(cutout, normalized_clicks)
         if reason is not None:
             reasons[index] = reason
             _log_candidate(index, passed=False, avg=0.0, checks=None, reason=reason)
@@ -200,6 +203,7 @@ def select_best_cutout(
                 TiebreakRequest(
                     scene_bgr=scene_bgr,
                     click_xy=click_xy,
+                    click_xys=normalized_clicks,
                     finalist_indices=tuple(finalists),
                     cutout_crops_bgr=crops_bgr,
                     clip_averages={index: scores[index] for index in finalists},
@@ -239,6 +243,7 @@ def select_best_cutout(
         _save_auto_mask_debug(
             cutouts_bgra,
             click_xy=click_xy,
+            click_xys=normalized_clicks,
             result=result,
             reasons=tuple(reasons),
             clip_crops_bgr=clip_crops_bgr,
@@ -251,17 +256,20 @@ def select_best_cutout(
     return result
 
 
-def _prefilter_reason(cutout_bgra: np.ndarray, click_xy: tuple[int, int]) -> str | None:
+def _prefilter_reason(
+    cutout_bgra: np.ndarray,
+    click_xys: Sequence[tuple[int, int]],
+) -> str | None:
     """Return a reject reason, or None if the cutout may be scored."""
     if cutout_bgra.ndim != 3 or cutout_bgra.shape[2] < 4:
         return "invalid_cutout"
 
     height, width = cutout_bgra.shape[:2]
-    click_x, click_y = click_xy
-    if click_x < 0 or click_y < 0 or click_x >= width or click_y >= height:
-        return "click_miss"
-    if cutout_bgra[click_y, click_x, 3] == 0:
-        return "click_miss"
+    for click_x, click_y in click_xys:
+        if click_x < 0 or click_y < 0 or click_x >= width or click_y >= height:
+            return "click_miss"
+        if cutout_bgra[click_y, click_x, 3] == 0:
+            return "click_miss"
 
     alpha = cutout_bgra[:, :, 3] > 0
     area_fraction = float(np.count_nonzero(alpha)) / float(height * width)
@@ -330,11 +338,15 @@ def _pil_rgb_to_bgr(image: Image.Image) -> np.ndarray:
     return cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
 
-def _cutout_preview_bgr(cutout_bgra: np.ndarray, click_xy: tuple[int, int]) -> np.ndarray:
+def _cutout_preview_bgr(
+    cutout_bgra: np.ndarray,
+    click_xys: Sequence[tuple[int, int]],
+) -> np.ndarray:
     bgr = cutout_bgra[:, :, :3].copy()
     visible = cutout_bgra[:, :, 3] > 0
     bgr[~visible] = 0
-    cv2.circle(bgr, click_xy, 6, (0, 0, 255), 2)
+    for click_x, click_y in click_xys:
+        cv2.circle(bgr, (click_x, click_y), 6, (0, 0, 255), 2)
     return bgr
 
 
@@ -342,6 +354,7 @@ def _save_auto_mask_debug(
     cutouts_bgra: Sequence[np.ndarray],
     *,
     click_xy: tuple[int, int],
+    click_xys: Sequence[tuple[int, int]],
     result: CutoutSelectionResult,
     reasons: tuple[str, ...],
     clip_crops_bgr: Sequence[np.ndarray | None],
@@ -365,7 +378,7 @@ def _save_auto_mask_debug(
         saver.save(f"{index:02d}_cutout", cutout)
         if cutout.ndim == 3 and cutout.shape[2] >= 4:
             saver.save(f"{index:02d}_alpha", cutout[:, :, 3])
-            saver.save(f"{index:02d}_preview", _cutout_preview_bgr(cutout, click_xy))
+            saver.save(f"{index:02d}_preview", _cutout_preview_bgr(cutout, click_xys))
         crop_bgr = clip_crops_bgr[index] if index < len(clip_crops_bgr) else None
         if crop_bgr is not None:
             saver.save(f"{index:02d}_clip_crop", crop_bgr)
@@ -383,6 +396,7 @@ def _save_auto_mask_debug(
 
     summary = {
         "click_xy": [click_xy[0], click_xy[1]],
+        "click_xys": [[point[0], point[1]] for point in click_xys],
         "winner_index": result.winner_index,
         "finalist_indices": list(result.finalist_indices),
         "tiebreak_method": result.tiebreak_method,

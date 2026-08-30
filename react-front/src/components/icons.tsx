@@ -38,6 +38,15 @@ export const ScissorsIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
+/** Two foreground seeds — multi-point cutout mode. */
+export const MultiPointIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <circle cx="8" cy="8" r="2.2" />
+    <circle cx="16" cy="16" r="2.2" />
+    <path d="M9.8 9.8l4.4 4.4" />
+  </Svg>
+);
+
 export const AreaIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>
     <rect x="5" y="5" width="14" height="14" />

@@ -263,13 +263,23 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       x: number,
       y: number,
       verify: VerifyMode = "manual",
-      _normalizedClickPos: ClickPosition | null = null,
+      points?: { x: number; y: number }[],
     ) => {
       const currentImageId = imageIdRef.current;
       if (!currentImageId) {
         return;
       }
-      segmentImage({ image_id: currentImageId, x, y, verify })
+      const payload: {
+        image_id: string;
+        x: number;
+        y: number;
+        verify: VerifyMode;
+        points?: { x: number; y: number }[];
+      } = { image_id: currentImageId, x, y, verify };
+      if (points && points.length > 1) {
+        payload.points = points;
+      }
+      segmentImage(payload)
         .then(() => onMutated?.())
         .catch((err) => onError(err, "segment"));
     },

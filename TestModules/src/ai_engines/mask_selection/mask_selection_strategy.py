@@ -25,6 +25,7 @@ class MaskSelectionContext:
     click_xy: tuple[int, int]
     scene_bgr: np.ndarray | None = None
     depth_map: np.ndarray | None = None
+    click_xys: tuple[tuple[int, int], ...] = ()
 
 
 class MaskSelectionStrategy(ABC):

@@ -278,3 +278,35 @@ def test_inpaint_job_success_deletes_row_and_creates_object(
     cutout_out_path = storage_sandbox / "sess-1_0_cutout.png"
     assert background_path.read_bytes() == b"fake-bg"
     assert cutout_out_path.read_bytes() == b"fake-cutout"
+
+
+def test_run_segment_job_leases_every_seed(storage_sandbox: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import MagicMock, patch
+
+    from core.jobs.handlers import run_segment_job
+
+    user_id = _make_user_and_session("sess-multi-seed")
+    job = create_job(
+        user_id,
+        "sess-multi-seed",
+        "segment",
+        {
+            "x": 10,
+            "y": 10,
+            "points": [{"x": 10, "y": 10}, {"x": 30, "y": 30}],
+            "verify": "manual",
+        },
+    )
+
+    lease_calls: list[tuple[int, int]] = []
+
+    def _record_lease(_image_id: str, x: int, y: int) -> None:
+        lease_calls.append((x, y))
+
+    fake_client = MagicMock(run_segment=MagicMock(return_value=[("0", b"png")]))
+    monkeypatch.setattr("core.jobs.handlers.get_inference_client", lambda: fake_client)
+    with patch("core.jobs.handlers.assert_segment_click_allowed", side_effect=_record_lease):
+        result = run_segment_job(job)
+
+    assert result == {"mask_ids": ["0"]}
+    assert lease_calls == [(10, 10), (30, 30)]

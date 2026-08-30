@@ -43,6 +43,8 @@ import { MODEL_3D_FRAME_PADDING, Model3DFrame } from "../widgets/Model3DFrame";
 import { ObjectRail } from "../workspace/ObjectRail";
 import { Toolbar } from "../workspace/Toolbar";
 
+const MAX_SEGMENT_SEEDS = 8;
+
 const errorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback;
 
@@ -87,8 +89,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const [stageSize, setStageSize] = useState<Size | null>(null);
 
   // cutMode: scissors is armed and the next click on the photo starts a cutout.
-  // pickPoint: that click, in natural-image pixels, kept on screen while the
-  // mask picker is open so the user can see what they aimed at.
+  // pendingSeeds: foreground clicks in natural-image pixels — shown while
+  // collecting multi-point seeds and kept on screen until the mask picker closes.
   const [cutMode, setCutMode] = useState(false);
   const [areaMode, setAreaMode] = useState(false);
   const [areaDraft, setAreaDraft] = useState<{
@@ -97,7 +99,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   } | null>(null);
   const [pendingBatchSource, setPendingBatchSource] = useState<BatchSource | null>(null);
   const [batchUuids, setBatchUuids] = useState<Set<string>>(new Set());
-  const [pickPoint, setPickPoint] = useState<ClickPosition | null>(null);
+  const [pendingSeeds, setPendingSeeds] = useState<ClickPosition[]>([]);
+  const [multiPoint, setMultiPoint] = useState(false);
   const [verifyMode, setVerifyMode] = useState<VerifyMode>("manual");
 
   // Per-object: show the pristine cutout instead of the rotated result.
@@ -382,7 +385,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       // closes the angle picker.
       rotation.setRotateMode(false);
       setCutMode(false);
-      setPickPoint(null);
+      setPendingSeeds([]);
     },
     [jobs.setSelectedObjectId, rotation.setRotateMode],
   );
@@ -408,32 +411,61 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     });
   }, []);
 
+  const fireSegmentFromSeeds = useCallback(
+    (seeds: ClickPosition[]) => {
+      if (seeds.length === 0) {
+        return;
+      }
+      const rounded = seeds.map((seed) => ({
+        x: Math.round(seed.x),
+        y: Math.round(seed.y),
+      }));
+      setPendingSeeds(seeds);
+      setCutMode(false);
+      jobs.runSegment(rounded[0].x, rounded[0].y, verifyMode, rounded);
+    },
+    [jobs.runSegment, verifyMode],
+  );
+
   const handleCut = useCallback(() => {
     rotation.setRotateMode(false);
     setAreaMode(false);
-    setPickPoint(null);
+    setPendingBatchSource(null);
+    setPendingSeeds([]);
     setCutMode((armed) => !armed);
   }, [rotation.setRotateMode]);
 
   const handleArea = useCallback(() => {
     rotation.setRotateMode(false);
     setCutMode(false);
-    setPickPoint(null);
+    setPendingSeeds([]);
     setAreaMode((armed) => !armed);
   }, [rotation.setRotateMode]);
+
+  const handleToggleMultiPoint = useCallback(() => {
+    setMultiPoint((on) => !on);
+  }, []);
+
+  const handleUndoLastSeed = useCallback(() => {
+    setPendingSeeds((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
+  }, []);
 
   const handleBoxReady = useCallback((source: BatchSource) => {
     setPendingBatchSource(source);
   }, []);
 
   const handleSubmitPendingBatch = useCallback(() => {
+    if (pendingSeeds.length > 0) {
+      fireSegmentFromSeeds(pendingSeeds);
+      return;
+    }
     if (!pendingBatchSource || jobs.isBatching) {
       return;
     }
     const source = pendingBatchSource;
     setPendingBatchSource(null);
     void jobs.runBatch(source);
-  }, [jobs.isBatching, jobs.runBatch, pendingBatchSource]);
+  }, [fireSegmentFromSeeds, jobs.isBatching, jobs.runBatch, pendingBatchSource, pendingSeeds.length]);
 
   useAreaSelect({
     areaDraft,
@@ -450,14 +482,14 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       if (jobs.currentSegmentJobId) {
         jobs.selectMask(jobs.currentSegmentJobId, maskId);
       }
-      setPickPoint(null);
+      setPendingSeeds([]);
     },
     [jobs.selectMask, jobs.currentSegmentJobId],
   );
 
   const handleMaskPickerClosed = useCallback(() => {
     jobs.closeMaskPicker();
-    setPickPoint(null);
+    setPendingSeeds([]);
   }, [jobs.closeMaskPicker]);
 
   const handleCopy = useCallback(() => {
@@ -534,7 +566,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // Enter commits the rotation (same as pressing rotate again); Escape backs
   // out of whichever mode is armed. Both bail while a text field owns focus.
   useEffect(() => {
-    if (!rotation.rotateMode && !cutMode && !areaMode) {
+    if (!rotation.rotateMode && !cutMode && !areaMode && pendingSeeds.length === 0) {
       return;
     }
 
@@ -551,16 +583,27 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         setAreaMode(false);
         setAreaDraft(null);
         setPendingBatchSource(null);
-        setPickPoint(null);
+        setPendingSeeds([]);
       } else if (event.key === "Enter" && rotation.rotateMode) {
         event.preventDefault();
         void rotation.commitCurrentRotation();
+      } else if (event.key === "Enter" && pendingSeeds.length > 0) {
+        event.preventDefault();
+        fireSegmentFromSeeds(pendingSeeds);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [rotation.rotateMode, cutMode, areaMode, rotation.commitCurrentRotation, rotation.setRotateMode]);
+  }, [
+    rotation.rotateMode,
+    cutMode,
+    areaMode,
+    pendingSeeds,
+    fireSegmentFromSeeds,
+    rotation.commitCurrentRotation,
+    rotation.setRotateMode,
+  ]);
 
   // --- pointer interaction on the photo -----------------------------------
 
@@ -585,16 +628,34 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         return;
       }
 
+      // Shift+click arms scissors and drops a seed — no need to press scissors first.
+      if (event.shiftKey && !cutMode && !rotation.rotateMode) {
+        event.preventDefault();
+        setCutMode(true);
+        if (pendingSeeds.length >= MAX_SEGMENT_SEEDS) {
+          return;
+        }
+        setPendingSeeds((prev) => [...prev, natural]);
+        return;
+      }
+
       if (cutMode) {
         event.preventDefault();
-        setPickPoint(natural);
-        setCutMode(false);
-        void jobs.runSegment(
-          Math.round(natural.x),
-          Math.round(natural.y),
-          verifyMode,
-          { x: natural.x / naturalSize.width, y: natural.y / naturalSize.height },
-        );
+        const collectMode = multiPoint || event.shiftKey;
+
+        if (pendingSeeds.length > 0 && !collectMode) {
+          return;
+        }
+
+        if (collectMode) {
+          if (pendingSeeds.length >= MAX_SEGMENT_SEEDS) {
+            return;
+          }
+          setPendingSeeds((prev) => [...prev, natural]);
+          return;
+        }
+
+        fireSegmentFromSeeds([natural]);
         return;
       }
 
@@ -648,8 +709,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       renderedRect,
       cutMode,
       areaMode,
-      verifyMode,
-      jobs.runSegment,
+      multiPoint,
+      pendingSeeds.length,
+      fireSegmentFromSeeds,
       jobs.objects,
       jobs.selectedObjectId,
       rotation.rotateMode,
@@ -779,10 +841,14 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         hasSelection={jobs.selectedObjectId !== null}
         cutMode={cutMode}
         onCut={handleCut}
+        multiPoint={multiPoint}
+        onToggleMultiPoint={handleToggleMultiPoint}
+        hasPendingSegmentSeeds={pendingSeeds.length > 0}
+        onUndoLastSeed={handleUndoLastSeed}
         areaMode={areaMode}
         onArea={handleArea}
         batchBusy={jobs.isBatching}
-        hasPendingBatch={pendingBatchSource !== null}
+        hasPendingBatch={pendingBatchSource !== null || pendingSeeds.length > 0}
         onSubmitBatch={handleSubmitPendingBatch}
         verifyMode={verifyMode}
         onVerifyModeChange={setVerifyMode}
@@ -847,14 +913,22 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
               />
             ) : null}
 
-            {pickPoint && renderedRect && naturalSize ? (
-              <span
-                className="stage-pick-marker"
-                style={{
-                  left: `${renderedRect.x + (pickPoint.x / naturalSize.width) * renderedRect.width}px`,
-                  top: `${renderedRect.y + (pickPoint.y / naturalSize.height) * renderedRect.height}px`,
-                }}
-              />
+            {pendingSeeds.length > 0 && renderedRect && naturalSize ? (
+              <div className="stage-seed-markers" aria-hidden="true">
+                {pendingSeeds.map((seed, index) => (
+                  <span
+                    key={`${seed.x}-${seed.y}-${index}`}
+                    className={`stage-pick-marker${cutMode ? " is-armed" : ""}`}
+                    style={{
+                      left: `${renderedRect.x + (seed.x / naturalSize.width) * renderedRect.width}px`,
+                      top: `${renderedRect.y + (seed.y / naturalSize.height) * renderedRect.height}px`,
+                    }}
+                  >
+                    <span className="stage-pick-marker-ring" />
+                    <span className="stage-pick-marker-label">{index + 1}</span>
+                  </span>
+                ))}
+              </div>
             ) : null}
 
             {rotation.rotateMode && rotation.glbData ? (
@@ -895,8 +969,17 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           <p className="stage-hint">Drag a box around the furniture · Esc cancels</p>
         ) : pendingBatchSource ? (
           <p className="stage-hint">Submit batch cut (checkmark) · Esc clears box</p>
+        ) : pendingSeeds.length > 0 ? (
+          <p className="stage-hint">
+            {pendingSeeds.length} seed{pendingSeeds.length === 1 ? "" : "s"} placed · Shift+click adds · Enter or
+            checkmark runs · Esc clears
+          </p>
         ) : cutMode ? (
-          <p className="stage-hint">Click the object you want to cut out · Esc cancels</p>
+          <p className="stage-hint">
+            {multiPoint
+              ? "Click to add seeds · Enter or checkmark runs · Esc cancels"
+              : "Click the object · Shift+click adds seeds · Esc cancels"}
+          </p>
         ) : null}
 
         {conflictNotices.notices.length > 0 ? (

@@ -96,7 +96,39 @@ def test_auto_verify_returns_only_winner(tmp_path: Path) -> None:
     kwargs = select_mock.call_args.kwargs
     assert kwargs["refined_masks"] is not None
     assert kwargs["scene_bgr"] is not None
+    assert kwargs["click_xys"] == ((10, 10),)
     assert "tiebreaker" in kwargs
+
+
+def test_auto_verify_passes_all_points_to_selector(tmp_path: Path) -> None:
+    image_id = "session-auto-multi"
+    _write_session_png(tmp_path, image_id)
+    depth = np.zeros((40, 40), dtype=np.uint8)
+    selection = CutoutSelectionResult(
+        winner_index=1,
+        scores=(0.1, 0.9, 0.3, 0.2, 0.4, 0.5),
+        reasons=("scored", "winner", "scored", "scored", "scored", "scored"),
+    )
+    points = ((10, 10), (30, 30))
+
+    with (
+        _patch_segmentor(_six_pairs()),
+        patch("core.image_processing.get_or_compute_depth", return_value=(depth, "cache")),
+        patch("core.image_processing._get_cutout_clip_scorer", return_value=MagicMock()),
+        patch("core.image_processing._get_cutout_tiebreaker", return_value=None),
+        patch("avroom_object_removal.select_best_cutout", return_value=selection) as select_mock,
+    ):
+        segment_candidates_on_image(
+            image_id=image_id,
+            base_dir=tmp_path,
+            x=10,
+            y=10,
+            points=points,
+            verify="auto",
+        )
+
+    kwargs = select_mock.call_args.kwargs
+    assert kwargs["click_xys"] == points
 
 
 def test_auto_verify_raises_when_no_winner(tmp_path: Path) -> None:

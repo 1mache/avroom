@@ -9,9 +9,9 @@ What's left here is the legacy `POST /images/click` request/response plus
 the segment-only variant that reuses it.
 """
 
-from typing import Annotated
+from typing import Annotated, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from schemas.common import CutoutBounds, VerifyMode
 
@@ -58,9 +58,28 @@ class ClickRequest(BaseModel):
     ]
 
 
+class SegmentPoint(BaseModel):
+    """One foreground seed in natural-image pixel space."""
+
+    x: Annotated[int, Field(ge=0, description="Seed X coordinate in pixels from the left edge.")]
+    y: Annotated[int, Field(ge=0, description="Seed Y coordinate in pixels from the top edge.")]
+
+
 class SegmentRequest(ClickRequest):
     """Request payload for segmentation-only candidate generation."""
 
+    points: Annotated[
+        list[SegmentPoint] | None,
+        Field(
+            default=None,
+            min_length=1,
+            max_length=8,
+            description=(
+                "Optional multi-point seeds for one SAM prompt. When set, "
+                "must include the primary (x, y) as the first entry."
+            ),
+        ),
+    ] = None
     verify: Annotated[
         VerifyMode,
         Field(
@@ -70,6 +89,15 @@ class SegmentRequest(ClickRequest):
             ),
         ),
     ] = VerifyMode.MANUAL
+
+    @model_validator(mode="after")
+    def _primary_matches_first_point(self) -> Self:
+        if self.points is None:
+            return self
+        first = self.points[0]
+        if first.x != self.x or first.y != self.y:
+            raise ValueError("x and y must match points[0]")
+        return self
 
 
 class ClickResultResponse(BaseModel):

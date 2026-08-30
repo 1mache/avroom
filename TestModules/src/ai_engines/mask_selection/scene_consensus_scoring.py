@@ -106,9 +106,14 @@ def depth_coherence_score(
     mask_bool: np.ndarray,
     click_xy: tuple[int, int],
     *,
+    click_xys: Sequence[tuple[int, int]] | None = None,
     tol: float = 0.15,
 ) -> float:
-    """How consistent mask depths are with the click depth."""
+    """How consistent mask depths are with the click depth(s).
+
+    When multiple seeds are provided, each mask pixel matches if it is within
+    ``tol`` of **any** seed depth (nearest-seed rule).
+    """
     if depth_map is None or mask_bool.sum() == 0:
         return 0.0
 
@@ -119,19 +124,23 @@ def depth_coherence_score(
         return 0.0
 
     h, w = depth.shape[:2]
-    x, y = click_xy
-    if x < 0 or y < 0 or x >= w or y >= h:
-        return 0.0
-
+    seeds = list(click_xys) if click_xys else [click_xy]
+    seed_depths: list[float] = []
     depth_norm = depth.astype(np.float32) / 255.0
-    click_depth = float(depth_norm[y, x])
+    for seed_x, seed_y in seeds:
+        if seed_x < 0 or seed_y < 0 or seed_x >= w or seed_y >= h:
+            continue
+        seed_depths.append(float(depth_norm[seed_y, seed_x]))
+    if not seed_depths:
+        return 0.0
 
     mask_depths = depth_norm[mask_bool]
     if mask_depths.size == 0:
         return 0.0
 
-    mismatched = np.abs(mask_depths - click_depth) > tol
-    mismatch_fraction = float(mismatched.sum()) / float(mask_depths.size)
+    seed_arr = np.asarray(seed_depths, dtype=np.float32)
+    nearest = np.min(np.abs(mask_depths[:, None] - seed_arr[None, :]), axis=1)
+    mismatch_fraction = float(np.count_nonzero(nearest > tol)) / float(mask_depths.size)
     return 1.0 - mismatch_fraction
 
 
@@ -141,13 +150,14 @@ def purity_score(
     depth_map: np.ndarray | None,
     mask_bool: np.ndarray,
     click_xy: tuple[int, int],
+    click_xys: Sequence[tuple[int, int]] | None = None,
 ) -> float:
     """Composite purity score: boundary alignment + depth coherence."""
     b = boundary_edge_score(scene_bgr, mask_bool)
     if depth_map is None:
         return b
 
-    d = depth_coherence_score(depth_map, mask_bool, click_xy)
+    d = depth_coherence_score(depth_map, mask_bool, click_xy, click_xys=click_xys)
     return 0.5 * b + 0.5 * d
 
 

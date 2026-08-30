@@ -413,17 +413,62 @@ input {
   background: color-mix(in srgb, var(--cyan) 18%, transparent);
 }
 
+.stage-seed-markers {
+  position: absolute;
+  inset: 0;
+  z-index: 220;
+  pointer-events: none;
+}
+
 .stage-pick-marker {
   position: absolute;
-  z-index: 220;
-  width: 11px;
-  height: 11px;
-  margin: -5.5px 0 0 -5.5px;
-  border-radius: 50%;
-  border: 1.5px solid var(--cyan-bright);
-  background: rgba(22, 179, 184, 0.3);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   pointer-events: none;
+}
+
+.stage-pick-marker-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--cyan-bright);
+  background: color-mix(in srgb, var(--cyan) 35%, transparent);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.65),
+    0 0 10px color-mix(in srgb, var(--cyan-bright) 45%, transparent);
+}
+
+.stage-pick-marker.is-armed .stage-pick-marker-ring {
+  animation: seed-marker-pulse 1.6s ease-in-out infinite;
+}
+
+.stage-pick-marker-label {
+  position: relative;
+  z-index: 1;
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+  user-select: none;
+}
+
+@keyframes seed-marker-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 0.88;
+  }
 }
 
 .selection-frame {

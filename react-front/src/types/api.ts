@@ -85,7 +85,13 @@ export interface ClickRequest {
   options?: ClickRequestOptions;
 }
 
+export interface SegmentPoint {
+  x: number;
+  y: number;
+}
+
 export interface SegmentRequest extends ClickRequest {
+  points?: SegmentPoint[];
   verify?: VerifyMode;
 }
 

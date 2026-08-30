@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Sequence
 
 import cv2
 import numpy as np
@@ -101,32 +102,46 @@ class MaskRefiner:
         mask: np.ndarray,
         click_x: int,
         click_y: int,
+        extra_clicks: Sequence[tuple[int, int]] | None = None,
     ) -> np.ndarray:
-        """Reduce ``mask`` to the one blob under the click, with holes filled.
+        """Reduce ``mask`` to blob(s) under the click(s), with holes filled.
 
         SAM routinely returns a correct silhouette plus detached speckles
         elsewhere in the frame, and sometimes drops interior pixels. Both are
         corruption: the user clicked one object, so anything not connected to
-        that click is not part of it, and an enclosed gap inside it is a miss.
+        any click is not part of it, and an enclosed gap inside it is a miss.
         Concavities (the space between chair legs) reach the image border and
         are deliberately preserved.
 
-        Returns the mask unchanged when the click falls outside it — callers
-        rely on the click/mask agreement gate to reject that case.
+        When ``extra_clicks`` is provided, every connected component that
+        contains at least one seed is unioned (multi-point segmentation).
+
+        Returns the mask unchanged when no seed falls on foreground pixels.
         """
         mask_uint8 = mask.astype(np.uint8)
         if mask_uint8.max() == 1:
             mask_uint8 = mask_uint8 * 255
 
         height, width = mask_uint8.shape[:2]
-        if not (0 <= click_x < width and 0 <= click_y < height):
-            return mask_uint8
-        if mask_uint8[click_y, click_x] == 0:
-            return mask_uint8
+        seeds: list[tuple[int, int]] = [(click_x, click_y)]
+        if extra_clicks:
+            seeds.extend(extra_clicks)
 
         _, labels = cv2.connectedComponents((mask_uint8 > 0).astype(np.uint8), connectivity=8)
-        click_label = int(labels[click_y, click_x])
-        kept = np.where(labels == click_label, 255, 0).astype(np.uint8)
+        keep_labels: set[int] = set()
+        for seed_x, seed_y in seeds:
+            if not (0 <= seed_x < width and 0 <= seed_y < height):
+                continue
+            if mask_uint8[seed_y, seed_x] == 0:
+                continue
+            keep_labels.add(int(labels[seed_y, seed_x]))
+
+        if not keep_labels:
+            return mask_uint8
+
+        kept = np.zeros_like(mask_uint8)
+        for label in keep_labels:
+            kept = np.where(labels == label, 255, kept).astype(np.uint8)
 
         padded = cv2.copyMakeBorder(kept, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
         outside = cv2.bitwise_not(padded)
@@ -162,6 +177,7 @@ class MaskRefiner:
         click_x: int,
         click_y: int,
         expand_pixels: int = 0,
+        extra_clicks: Sequence[tuple[int, int]] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Drop detached speckles, then dilate the click component.
 
@@ -175,7 +191,9 @@ class MaskRefiner:
             that mask after ``expand_pixels`` dilation (a distinct copy when
             ``expand_pixels == 0``).
         """
-        original_mask = self.keep_click_component(mask, click_x, click_y)
+        original_mask = self.keep_click_component(
+            mask, click_x, click_y, extra_clicks=extra_clicks
+        )
         if expand_pixels > 0:
             expanded_mask = self.dilate_mask(original_mask, pixels=expand_pixels)
         else:

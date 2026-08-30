@@ -56,7 +56,12 @@ def extract_cutout_bounds_from_png_bytes(image_bytes: bytes) -> CutoutBounds | N
 
 
 def scale_cutout_bounds(bounds: CutoutBounds, scale_factor: float) -> CutoutBounds:
-    """Grow or shrink *bounds* about its center by *scale_factor*."""
+    """Grow or shrink *bounds* about its center by *scale_factor*.
+
+    Does not clamp to the canvas: large scales may push edges outside
+    ``[0, natural_width]`` / ``[0, natural_height]``. That overflow is
+    intentional so placement APIs can report logical display size.
+    """
     grow_x = ((bounds.right - bounds.left) * (scale_factor - 1.0)) / 2.0
     grow_y = ((bounds.bottom - bounds.top) * (scale_factor - 1.0)) / 2.0
     return CutoutBounds(

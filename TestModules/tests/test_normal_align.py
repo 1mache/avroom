@@ -42,16 +42,39 @@ def test_near_vertical_pair_forces_zero_azimuth() -> None:
     assert pose is None or abs(pose.azimuth_deg) < 1.0
 
 
-def test_facing_wall_to_side_wall_is_mostly_azimuth() -> None:
+def test_facing_wall_to_side_wall_adds_wall_mount_pitch() -> None:
     front = _unit(0.0, 0.0, -1.0)
     side = _unit(1.0, 0.0, 0.0)
 
     pose = orbit_pose_from_normals(front, side)
 
     assert pose is not None
-    # Right-hand wall: clockwise-positive yaw so the object turns toward +X.
-    assert pose.azimuth_deg > 45.0
-    assert abs(pose.relative_elevation_deg) < 20.0
+    assert abs(pose.azimuth_deg) < 5.0
+    assert abs(pose.relative_elevation_deg) > 70.0
+
+
+def test_perpendicular_wall_repro_normals_add_pitch() -> None:
+    """Regression for smart-paste side wall → back wall (debug session 32f685)."""
+    source = _unit(-0.9997962713241577, 0.011782204732298851, 0.016390038654208183)
+    dest = _unit(-0.05202031880617142, -0.006351917050778866, -0.9986258149147034)
+
+    pose = orbit_pose_from_normals(source, dest)
+
+    assert pose is not None
+    assert 85.0 < pose.azimuth_deg < 95.0
+    assert pose.relative_elevation_deg < -70.0
+
+
+def test_opposite_walls_add_wall_mount_pitch() -> None:
+    """Regression for smart-paste right wall → left wall (opposite normals)."""
+    right = _unit(-0.9997962713241577, 0.011782204732298851, 0.016390038654208183)
+    left = _unit(0.9988390207290649, 0.0011867205612361431, -0.0481584295630455)
+
+    pose = orbit_pose_from_normals(right, left)
+
+    assert pose is not None
+    assert 85.0 < pose.azimuth_deg < 95.0
+    assert pose.relative_elevation_deg < -70.0
 
 
 def test_floor_to_camera_facing_wall_skips_rotation() -> None:
@@ -88,6 +111,5 @@ def test_wrap_azimuth_across_180() -> None:
     pose = orbit_pose_from_normals(back, side)
 
     assert pose is not None
-    assert abs(pose.azimuth_deg) <= 180.0
-    assert math.isfinite(pose.azimuth_deg)
-    assert math.isfinite(pose.relative_elevation_deg)
+    assert abs(pose.azimuth_deg - 180.0) < 5.0
+    assert abs(pose.relative_elevation_deg) > 70.0

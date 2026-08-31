@@ -96,6 +96,8 @@ export function useSessionSync(options: UseSessionSyncOptions) {
               displayScale: info.display_scale ?? local.displayScale ?? 1,
               sourceElevationDeg:
                 info.source_elevation_deg ?? local.sourceElevationDeg,
+              has3d: info.has_3d ?? local.has3d,
+              cloneRootUuid: info.clone_root_uuid ?? local.cloneRootUuid,
             };
           }
 
@@ -112,6 +114,8 @@ export function useSessionSync(options: UseSessionSyncOptions) {
             offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
             displayScale: info.display_scale ?? 1,
             sourceElevationDeg: info.source_elevation_deg ?? 15,
+            has3d: info.has_3d ?? false,
+            cloneRootUuid: info.clone_root_uuid ?? null,
           };
         });
 

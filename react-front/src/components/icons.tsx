@@ -86,6 +86,15 @@ export const TrashIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
+/** Vertical three-dot overflow menu trigger. */
+export const MoreIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <circle cx="12" cy="6" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="18" r="1.2" fill="currentColor" stroke="none" />
+  </Svg>
+);
+
 export const CheckIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>
     <path d="M4.5 12.6l4.8 4.7L19.5 6.9" />

@@ -144,7 +144,11 @@ export function useRotationController({
           throw new Error("3D generation finished but no model was found.");
         }
       }
-      setObjects((prev) => prev.map((o) => (o.objectId === targetObjectId ? { ...o, glbData: buffer } : o)));
+      setObjects((prev) =>
+        prev.map((o) =>
+          o.objectId === targetObjectId ? { ...o, glbData: buffer, has3d: true } : o,
+        ),
+      );
       // Only surface the picker if the user hasn't switched selection away.
       setSelectedObjectId((current) => {
         if (current === targetObjectId) setRotateMode(true);

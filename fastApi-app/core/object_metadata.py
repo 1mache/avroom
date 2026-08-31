@@ -493,4 +493,5 @@ def to_object_metadata_response(
         offset_x=metadata.offset_x,
         offset_y=metadata.offset_y,
         display_scale=metadata.display_scale,
+        clone_root_uuid=metadata.clone_root_uuid,
     )

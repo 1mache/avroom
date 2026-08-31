@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteJob,
   deleteObject as deleteObjectRequest,
+  deleteObject3d as deleteObject3dRequest,
   duplicateObject as duplicateObjectRequest,
   fetchCached3DModel,
   getJob,
@@ -205,6 +206,34 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [isDeleting, onError, onMutated],
   );
 
+  const clearObject3d = useCallback(
+    async (objectId: number) => {
+      const currentImageId = imageIdRef.current;
+      const target = objectsRef.current.find((o) => o.objectId === objectId);
+      if (!currentImageId || !target?.uuid) {
+        return;
+      }
+
+      try {
+        await deleteObject3dRequest(target.uuid);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+        setObjects((prev) =>
+          prev.map((o) =>
+            o.objectId === objectId ? { ...o, glbData: null, has3d: false } : o,
+          ),
+        );
+        onMutated?.();
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "generic");
+        }
+      }
+    },
+    [onError, onMutated],
+  );
+
   const loadRestoredObjects = useCallback((restored: ObjectInfo[]) => {
     const loaded: CutoutObject[] = restored.map((info) => ({
       objectId: info.object_id,
@@ -219,6 +248,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
       sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
       displayScale: info.display_scale ?? 1,
+      has3d: info.has_3d ?? false,
+      cloneRootUuid: info.clone_root_uuid ?? null,
     }));
     setObjects(loaded);
     highestCommittedObjectIdRef.current = loaded.reduce(
@@ -599,6 +630,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           displayScale: info.display_scale ?? source.displayScale ?? 1,
           sourceElevationDeg:
             info.source_elevation_deg ?? source.sourceElevationDeg ?? FALLBACK_SOURCE_ELEVATION_DEG,
+          has3d: info.has_3d ?? source.has3d,
+          cloneRootUuid: info.clone_root_uuid ?? source.uuid,
         };
 
         setObjects((prev) => upsertObject(prev, newObject));
@@ -701,6 +734,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     renameObject,
     duplicateObject,
     deleteObject,
+    clearObject3d,
     runSmartPasteAfterDrag,
     isDeleting,
     isObjectDeleted,

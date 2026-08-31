@@ -55,6 +55,7 @@ from core.object_storage import (
     copy_object_artifacts,
     delete_legacy_object_artifacts,
     delete_object_artifact_files,
+    delete_object_glb_files,
     resolve_object_cutout_path,
 )
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes, scale_cutout_bounds
@@ -441,6 +442,45 @@ def delete_object(object_uuid: str) -> Response:
 
     logger.info(
         "Object deleted: uuid=%s session_id=%s object_id=%d files_removed=%d",
+        object_uuid,
+        target.session_id,
+        target.object_id,
+        removed,
+    )
+    return Response(status_code=204)
+
+
+@router.delete("/objects/{object_uuid}/3d", status_code=204)
+def delete_object_3d(object_uuid: str) -> Response:
+    """Remove this object's cached GLB only; cutout and metadata stay intact."""
+    logger.info("Object 3D delete requested: uuid=%s", object_uuid)
+    three_d_dir = get_3d_storage_dir()
+
+    target = get_object_by_uuid(object_uuid)
+    if target is None:
+        logger.warning("Object 3D delete failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(
+            status_code=404,
+            detail=f"Object not found for uuid='{object_uuid}'",
+        )
+
+    removed = delete_object_glb_files(
+        glb_dir=three_d_dir,
+        uid=target.session_id,
+        object_id=target.object_id,
+    )
+    if removed == 0:
+        logger.warning(
+            "Object 3D delete failed — no GLB on disk: uuid=%s session_id=%s object_id=%d",
+            object_uuid,
+            target.session_id,
+            target.object_id,
+        )
+        raise HTTPException(status_code=404, detail="No 3D model cached for this object.")
+
+    touch_session(target.session_id)
+    logger.info(
+        "Object 3D deleted: uuid=%s session_id=%s object_id=%d files_removed=%d",
         object_uuid,
         target.session_id,
         target.object_id,

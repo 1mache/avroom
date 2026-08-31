@@ -269,6 +269,27 @@ def delete_object_artifact_files(
     return removed
 
 
+def delete_object_glb_files(
+    *,
+    glb_dir: Path,
+    uid: str,
+    object_id: int,
+) -> int:
+    """Delete only the GLB for *object_id*. Returns files removed."""
+
+    removed = remove_file(resolve_object_glb_path(glb_dir, uid, object_id))
+    if object_id == 0:
+        removed += remove_file(legacy_object_glb_path(glb_dir, uid))
+
+    logger.debug(
+        "Deleted object GLB files: uid=%s object_id=%d removed=%d",
+        uid,
+        object_id,
+        removed,
+    )
+    return removed
+
+
 def delete_legacy_object_artifacts(*, base_dir: Path, glb_dir: Path, uid: str) -> int:
     """Delete the pre-numbering ``{uid}_cutout.png`` / ``{uid}.glb`` pair.
 

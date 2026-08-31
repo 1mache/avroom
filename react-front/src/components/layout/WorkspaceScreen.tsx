@@ -22,6 +22,7 @@ import {
   effectiveCutoutBounds,
   effectiveCutoutSrc,
   effectiveDisplayBounds,
+  hasCloneSiblings,
   type ClickPosition,
   type CutoutObject,
 } from "../../types/session";
@@ -496,9 +497,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     if (jobs.selectedObjectId === null) {
       return;
     }
-    // Objects segmented before server-side UUID tracking was added have no
-    // uuid, and duplication is keyed on it — surface that instead of a silent
-    // no-op (see useSessionJobs.duplicateObject).
     if (!selectedObject?.uuid) {
       setError("This object is from an older session and can't be duplicated.");
       return;
@@ -506,20 +504,39 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     void jobs.duplicateObject(jobs.selectedObjectId);
   }, [jobs.duplicateObject, jobs.selectedObjectId, selectedObject]);
 
-  // Arms the confirm dialog; the actual DELETE fires from
-  // handleConfirmDeleteObject once the user confirms.
+  const requestDeleteObject = useCallback(
+    (objectId: number) => {
+      const target = jobs.objects.find((o) => o.objectId === objectId);
+      if (!target?.uuid) {
+        setError("This object is from an older session and can't be deleted.");
+        return;
+      }
+      rotation.setRotateMode(false);
+      if (hasCloneSiblings(target, jobs.objects)) {
+        void jobs.deleteObject(objectId);
+        return;
+      }
+      setPendingDeleteObjectId(objectId);
+    },
+    [jobs.deleteObject, jobs.objects, rotation.setRotateMode],
+  );
+
   const handleDeleteObject = useCallback(() => {
     if (jobs.selectedObjectId === null) {
       return;
     }
-    // Same uuid precondition as duplicate — deletion is keyed on it too.
-    if (!selectedObject?.uuid) {
-      setError("This object is from an older session and can't be deleted.");
-      return;
-    }
-    rotation.setRotateMode(false);
-    setPendingDeleteObjectId(jobs.selectedObjectId);
-  }, [jobs.selectedObjectId, selectedObject, rotation.setRotateMode]);
+    requestDeleteObject(jobs.selectedObjectId);
+  }, [jobs.selectedObjectId, requestDeleteObject]);
+
+  const handleClearObject3d = useCallback(
+    (objectId: number) => {
+      if (jobs.selectedObjectId === objectId) {
+        rotation.setRotateMode(false);
+      }
+      void jobs.clearObject3d(objectId);
+    },
+    [jobs.clearObject3d, jobs.selectedObjectId, rotation.setRotateMode],
+  );
 
   const pendingDeleteObject =
     jobs.objects.find((o) => o.objectId === pendingDeleteObjectId) ?? null;
@@ -1007,6 +1024,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             selectedObjectId={jobs.selectedObjectId}
             showOriginalIds={showOriginalIds}
             disabled={rotation.isPreparing3D}
+            isDuplicating={jobs.isDuplicating}
+            isDeleting={jobs.isDeleting}
             onSelectObject={selectObject}
             onToggleBatchUuid={(uuid, on) => {
               setBatchUuids((prev) => {
@@ -1036,6 +1055,16 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             onToggleHidden={handleToggleHidden}
             onToggleShowOriginal={handleToggleShowOriginal}
             onRenameObject={handleRenameObject}
+            onDuplicateObject={(objectId) => {
+              const target = jobs.objects.find((o) => o.objectId === objectId);
+              if (!target?.uuid) {
+                setError("This object is from an older session and can't be duplicated.");
+                return;
+              }
+              void jobs.duplicateObject(objectId);
+            }}
+            onDeleteObject={requestDeleteObject}
+            onClearObject3d={handleClearObject3d}
             onDismissJob={handleDismissJob}
           />
         ) : null}

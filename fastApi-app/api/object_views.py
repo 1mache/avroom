@@ -117,6 +117,7 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
                     offset_x=meta.offset_x if meta is not None else 0.0,
                     offset_y=meta.offset_y if meta is not None else 0.0,
                     display_scale=meta.display_scale if meta is not None else 1.0,
+                    clone_root_uuid=meta.clone_root_uuid if meta is not None else None,
                 )
             )
         except FileNotFoundError as exc:

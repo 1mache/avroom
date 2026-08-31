@@ -20,8 +20,9 @@
   --danger: #e2564f;
 
   --toolbar-h: 44px;
-  --rail-w: 214px;
+  --rail-w: 232px;
   --rail-edge: 26px;
+  --rail-thumb: 58px;
 
   --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   --mono: "IBM Plex Mono", "Cascadia Code", ui-monospace, monospace;
@@ -706,6 +707,7 @@ input {
   box-shadow: -14px 0 34px rgba(0, 0, 0, 0.4);
   transform: translateX(100%);
   transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  overflow: visible;
 }
 
 .rail[data-open="true"] .rail-panel {
@@ -759,16 +761,24 @@ input {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  overflow-x: hidden;
+  overflow-x: visible;
   padding: 6px 0;
 }
 
 .rail-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 6px 10px;
   border-left: 2px solid transparent;
+  position: relative;
+  overflow: visible;
+  z-index: 0;
+}
+
+.rail-row.is-menu-open {
+  z-index: 20;
 }
 
 .rail-row.is-selected {
@@ -796,21 +806,151 @@ input {
   color: var(--danger);
 }
 
+.rail-thumb-wrap {
+  position: relative;
+  flex: 0 0 var(--rail-thumb);
+  width: var(--rail-thumb);
+  height: var(--rail-thumb);
+  overflow: visible;
+  z-index: 1;
+}
+
 .rail-thumb {
   position: relative;
-  flex: 0 0 46px;
-  width: 46px;
-  height: 46px;
+  flex: 0 0 var(--rail-thumb);
+  width: var(--rail-thumb);
+  height: var(--rail-thumb);
   padding: 2px;
   border: 1px solid var(--chrome-line);
   border-radius: 2px;
   cursor: pointer;
-  overflow: hidden;
+  overflow: visible;
   background-color: var(--chrome-sunk);
   background-image: var(--checker);
   background-position: 0 0, 0 6px, 6px -6px, -6px 0;
   background-size: 12px 12px;
   transition: border-color 0.13s ease;
+}
+
+.rail-thumb-overlay {
+  position: absolute;
+  inset: -4px -4px auto auto;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.rail-thumb-overlay-actions {
+  display: flex;
+  gap: 3px;
+  padding: 2px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  background: rgba(12, 12, 12, 0.94);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+
+.rail-thumb-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  color: var(--ink-bright);
+  background: rgba(255, 255, 255, 0.06);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.rail-thumb-action:hover:not(:disabled) {
+  background: var(--chrome-raised);
+  color: var(--ink-bright);
+}
+
+.rail-thumb-action.is-danger {
+  color: var(--danger);
+}
+
+.rail-thumb-action.is-danger:hover:not(:disabled) {
+  background: rgba(180, 40, 40, 0.92);
+  color: #fff;
+}
+
+.rail-thumb-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rail-menu {
+  flex: 1 1 100%;
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  margin: -2px 0 2px;
+  padding: 4px 0;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  background: var(--chrome-raise);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  z-index: 30;
+}
+
+.rail-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--ink-bright);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rail-menu-item:hover:not(:disabled) {
+  background: var(--chrome-sunk);
+}
+
+.rail-menu-item.is-danger {
+  color: var(--danger);
+}
+
+.rail-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rail-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rail-rename-submit {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--chrome-line);
+  border-radius: 2px;
+  cursor: pointer;
+  color: var(--cyan-bright);
+  background: var(--chrome-sunk);
+}
+
+.rail-rename-submit:hover {
+  border-color: var(--cyan);
+  background: var(--chrome-raised);
 }
 
 .rail-thumb:hover:not(:disabled) {
@@ -861,6 +1001,7 @@ input {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  padding-top: 2px;
 }
 
 .rail-name {
@@ -1649,7 +1790,8 @@ input {
 
 @media (max-width: 720px) {
   :root {
-    --rail-w: 168px;
+    --rail-w: 188px;
+    --rail-thumb: 52px;
   }
 
   .dash-main {

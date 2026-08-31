@@ -377,6 +377,17 @@ export async function deleteObject(objectUuid: string): Promise<void> {
   }
 }
 
+/** Removes this object's cached GLB only; cutout and metadata stay intact. */
+export async function deleteObject3d(objectUuid: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}/3d`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    return throwApiError(response);
+  }
+}
+
 // Compares a client-held last_changed timestamp against server truth so a
 // session that changed elsewhere (another tab, another client) can be
 // detected without unconditionally re-fetching everything.

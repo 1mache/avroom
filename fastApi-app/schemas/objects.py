@@ -62,6 +62,13 @@ class ObjectMetadataResponse(ObjectFields):
         bool,
         Field(default=False, description="Whether a GLB 3D model has been generated for this object."),
     ]
+    clone_root_uuid: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="UUID of the clone root when this object was duplicated from another.",
+        ),
+    ]
     cutout_bounds: Annotated[
         CutoutBounds | None,
         Field(default=None, description="Tight visible-object bounds inside the cutout PNG."),
@@ -102,6 +109,13 @@ class ObjectInfo(ObjectFields):
     has_3d: Annotated[
         bool,
         Field(description="Whether a GLB 3D model has been generated for this object."),
+    ]
+    clone_root_uuid: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="UUID of the clone root when this object was duplicated from another.",
+        ),
     ]
 
 

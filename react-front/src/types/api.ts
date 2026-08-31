@@ -118,6 +118,7 @@ export interface ObjectMetadataResponse {
   offset_x: number;
   offset_y: number;
   display_scale: number;
+  clone_root_uuid?: string | null;
 }
 
 // Every field optional: a caller sends only what it's actually changing
@@ -195,6 +196,7 @@ export interface ObjectInfo {
   offset_x: number;
   offset_y: number;
   display_scale?: number;
+  clone_root_uuid?: string | null;
 }
 
 export interface ObjectListResponse {

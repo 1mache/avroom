@@ -2,6 +2,7 @@ import type {
   DuplicateObjectResponse,
   Generate3DJobRequest,
   ImageUploadResponse,
+  ImportObjectResponse,
   JobDetailResponse,
   JobInfo,
   JobSubmitResponse,
@@ -394,6 +395,18 @@ export async function duplicateObject(objectUuid: string): Promise<DuplicateObje
   });
 
   return handleJsonResponse<DuplicateObjectResponse>(response);
+}
+
+export async function importObjectCutout(uid: string, file: File): Promise<ImportObjectResponse> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await fetch(`${API_BASE_URL}/images/${uid}/objects/import`, {
+    method: "POST",
+    body: formData,
+  });
+
+  return handleJsonResponse<ImportObjectResponse>(response);
 }
 
 /**

@@ -134,6 +134,10 @@ export interface DuplicateObjectResponse {
   object_uuid: string;
 }
 
+export interface ImportObjectResponse {
+  object_uuid: string;
+}
+
 export interface UidCacheStatusResponse {
   uid: string;
   name?: string | null;

@@ -32,6 +32,7 @@ from core.inference_pool.session_runtime import (
 from core.camera_calib_cache import save_camera_calib
 from core.session_preview import write_upload_preview
 from core.normal_cache import warm_normals_for_session
+from core.object_import import ImportValidationError, import_object_cutout
 from core.object_metadata import (
     ObjectMetadata,
     build_clone_metadata,
@@ -46,6 +47,7 @@ from core.object_metadata import (
 )
 from schemas.objects import (
     DuplicateObjectResponse,
+    ImportObjectResponse,
     ObjectMetadataResponse,
     PlacementRequest,
     PlacementResponse,
@@ -292,6 +294,93 @@ def reset_object_transform_route(object_uuid: str) -> ObjectMetadataResponse:
         metadata.object_id,
     )
     return response
+
+
+@router.post("/{uid}/objects/import", response_model=ImportObjectResponse, status_code=201)
+async def import_object(
+    uid: str,
+    file: Annotated[UploadFile, File(..., description="PNG cutout to add to the session.")],
+) -> ImportObjectResponse:
+    """Import a user-supplied PNG cutout as a new overlay object.
+
+    Does not modify the session background. Content/AI validation is not wired
+    yet — see ``core.object_import.validate_import_cutout`` for the future seam.
+    """
+    logger.info(
+        "Object import requested: session_id=%s filename=%s content_type=%s",
+        uid,
+        file.filename,
+        file.content_type,
+    )
+    if not is_session_registered(uid):
+        logger.warning("Object import failed — session not found: session_id=%s", uid)
+        raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'")
+
+    try:
+        file_bytes = await file.read()
+    except Exception as exc:
+        logger.error("Object import failed — could not read upload: session_id=%s", uid)
+        raise HTTPException(status_code=422, detail=f"Failed to read upload: {exc}") from exc
+
+    storage_dir = get_image_storage_dir()
+    three_d_dir = get_3d_storage_dir()
+    imported: ObjectMetadata | None = None
+    allocated_object_id: int | None = None
+
+    def rollback_import() -> None:
+        if allocated_object_id is None:
+            return
+        delete_object_artifact_files(
+            base_dir=storage_dir,
+            glb_dir=three_d_dir,
+            uid=uid,
+            object_id=allocated_object_id,
+        )
+        if imported is not None:
+            remove_object_index_entry(imported.uuid)
+
+    try:
+        try:
+            acquire_canvas_writer(uid)
+        except SessionConflictError as exc:
+            logger.warning(
+                "Object import rejected due to canvas writer timeout: session_id=%s",
+                uid,
+            )
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        try:
+            imported = import_object_cutout(
+                session_id=uid,
+                base_dir=storage_dir,
+                file_bytes=file_bytes,
+                filename=file.filename,
+                content_type=file.content_type,
+            )
+            allocated_object_id = imported.object_id
+        finally:
+            release_canvas_writer(uid)
+    except ImportValidationError as exc:
+        logger.warning("Object import rejected: session_id=%s reason=%s", uid, exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except FileNotFoundError as exc:
+        logger.warning("Object import failed — missing session canvas: session_id=%s", uid)
+        rollback_import()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Object import failed: session_id=%s", uid)
+        rollback_import()
+        raise HTTPException(status_code=500, detail=f"Object import failed: {exc}") from exc
+
+    logger.info(
+        "Object import succeeded: session_id=%s object_id=%d object_uuid=%s",
+        uid,
+        imported.object_id,
+        imported.uuid,
+    )
+    return ImportObjectResponse(object_uuid=imported.uuid)
 
 
 @router.post("/objects/{object_uuid}/duplicate", response_model=DuplicateObjectResponse)

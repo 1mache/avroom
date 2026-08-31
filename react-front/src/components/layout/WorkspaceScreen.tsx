@@ -1099,6 +1099,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             onDeleteObject={requestDeleteObject}
             onClearObject3d={handleClearObject3d}
             onResetObjectChanges={handleResetObjectChanges}
+            onImportObject={(file) => {
+              void jobs.importObject(file);
+            }}
+            importDisabled={rotation.isPreparing3D || jobs.isImporting || jobs.isBatching}
             onDismissJob={handleDismissJob}
           />
         ) : null}

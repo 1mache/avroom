@@ -8,6 +8,7 @@ import {
   fetchCached3DModel,
   getJob,
   getSessionObjects,
+  importObjectCutout,
   inpaintMask,
   runSessionBatch,
   segmentImage,
@@ -112,6 +113,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   const [segmentState, setSegmentState] = useState<SegmentPickerState>({ status: "idle" });
   const [backgroundSrc, setBackgroundSrc] = useState<string | null>(null);
   const [isDuplicating, setIsDuplicating] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
   const imageIdRef = useRef(imageId);
@@ -738,6 +740,79 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [isDuplicating, onError, onMutated],
   );
 
+  const importObject = useCallback(
+    async (file: File) => {
+      const currentImageId = imageIdRef.current;
+      if (!currentImageId || isImporting) {
+        return;
+      }
+
+      if (file.size === 0) {
+        onError(new Error("PNG file is empty."), "generic");
+        return;
+      }
+
+      const isPng =
+        file.type === "image/png" || file.name.toLowerCase().endsWith(".png");
+      if (!isPng) {
+        onError(new Error("Only PNG cutouts can be imported."), "generic");
+        return;
+      }
+
+      setIsImporting(true);
+      try {
+        const { object_uuid: importedUuid } = await importObjectCutout(currentImageId, file);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+
+        const list = await getSessionObjects(currentImageId);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+
+        const info = list.objects.find((o) => o.uuid === importedUuid);
+        if (!info) {
+          onMutated?.();
+          return;
+        }
+
+        const newObject: CutoutObject = {
+          objectId: info.object_id,
+          uuid: info.uuid ?? importedUuid,
+          name: info.name ?? null,
+          cutoutSrc: `data:image/${info.format};base64,${info.cutout_b64}`,
+          cutoutAlphaBounds: toCutoutAlphaBounds(info.cutout_bounds),
+          normalizedClickPos: null,
+          glbData: null,
+          rotation: null,
+          hidden: false,
+          offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
+          displayScale: info.display_scale ?? 1,
+          sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
+          has3d: info.has_3d ?? false,
+          cloneRootUuid: info.clone_root_uuid ?? null,
+        };
+
+        setObjects((prev) => upsertObject(prev, newObject));
+        setSelectedObjectId(info.object_id);
+        if (info.object_id > highestCommittedObjectIdRef.current) {
+          highestCommittedObjectIdRef.current = info.object_id;
+        }
+        onMutated?.();
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "generic");
+        }
+      } finally {
+        if (imageIdRef.current === currentImageId) {
+          setIsImporting(false);
+        }
+      }
+    },
+    [isImporting, onError, onMutated],
+  );
+
   const applySmartPasteResult = useCallback(
     (objectId: number, result: SmartPasteResponse) => {
       setObjects((prev) =>
@@ -800,6 +875,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       jobs.some((job) => job.status === "queued" || job.status === "running") ||
       isBatching ||
       isDuplicating ||
+      isImporting ||
       isDeleting ||
       objects.some((o) => o.rotation?.status === "pending"),
     segmentState,
@@ -809,6 +885,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     backgroundSrc,
     setBackgroundSrc,
     isDuplicating,
+    isImporting,
     runSegment,
     runBatch,
     isBatching,
@@ -821,6 +898,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     updateOffset,
     renameObject,
     duplicateObject,
+    importObject,
     deleteObject,
     clearObject3d,
     resetObjectChanges,

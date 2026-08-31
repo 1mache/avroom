@@ -184,6 +184,15 @@ class DuplicateObjectResponse(BaseModel):
     ]
 
 
+class ImportObjectResponse(BaseModel):
+    """Result of importing a user-supplied PNG cutout into a session."""
+
+    object_uuid: Annotated[
+        str,
+        Field(description="Server-generated UUID of the newly imported object."),
+    ]
+
+
 class PlacementRequest(BaseModel):
     """Request payload for a placement-point operation (rescale-by-depth, smart-paste)."""
 

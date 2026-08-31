@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import type { JobInfo } from "../../types/api";
 import { effectiveCutoutSrc, hasUndoableObjectChanges, type ObjectRotation } from "../../types/session";
-import { CheckIcon, EyeIcon, EyeOffIcon, MoreIcon, RevertIcon, TrashIcon } from "../icons";
+import { CheckIcon, EyeIcon, EyeOffIcon, MoreIcon, PlusIcon, RevertIcon, TrashIcon } from "../icons";
 
 const JOB_KIND_LABEL: Record<JobInfo["kind"], string> = {
   segment: "Segmenting",
@@ -45,6 +45,8 @@ export interface ObjectRailProps {
   onDeleteObject: (objectId: number) => void;
   onClearObject3d: (objectId: number) => void;
   onResetObjectChanges: (objectId: number) => void;
+  onImportObject: (file: File) => void;
+  importDisabled: boolean;
   onDismissJob: (jobId: string) => void;
 }
 
@@ -75,6 +77,8 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
   onDeleteObject,
   onClearObject3d,
   onResetObjectChanges,
+  onImportObject,
+  importDisabled,
   onDismissJob,
 }) => {
   const pending = jobs.filter((job) => job.status === "queued" || job.status === "running");
@@ -87,6 +91,7 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
   const [draftName, setDraftName] = useState("");
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const cancelClose = useCallback(() => {
     if (closeTimerRef.current) {
@@ -190,6 +195,17 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
     [commitEditing],
   );
 
+  const handleImportInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const picked = event.target.files?.[0];
+      event.target.value = "";
+      if (picked) {
+        onImportObject(picked);
+      }
+    },
+    [onImportObject],
+  );
+
   const total = objects.length + pending.length + failed.length;
 
   return (
@@ -225,14 +241,35 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
         <div className="rail-head">
           <span className="rail-title">Objects</span>
           <span className="rail-count">{String(total).padStart(2, "0")}</span>
-          <button
-            type="button"
-            className="rail-3d"
-            onClick={onGenerate3D}
-            disabled={generate3DDisabled || objects.every((o) => !o.uuid)}
-          >
-            3D
-          </button>
+          <div className="rail-head-actions">
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="image/png"
+              className="rail-import-input"
+              onChange={handleImportInputChange}
+              aria-hidden="true"
+              tabIndex={-1}
+            />
+            <button
+              type="button"
+              className="rail-add"
+              data-tip="Add object from PNG"
+              aria-label="Add object from PNG"
+              disabled={importDisabled || disabled}
+              onClick={() => importInputRef.current?.click()}
+            >
+              <PlusIcon size={12} />
+            </button>
+            <button
+              type="button"
+              className="rail-3d"
+              onClick={onGenerate3D}
+              disabled={generate3DDisabled || objects.every((o) => !o.uuid)}
+            >
+              3D
+            </button>
+          </div>
         </div>
 
         <div className="rail-list">

@@ -178,7 +178,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     selectedObjectId: jobs.selectedObjectId,
     setSelectedObjectId: jobs.setSelectedObjectId,
     setBackgroundSrc: jobs.setBackgroundSrc,
-    setJobs: jobs.setJobs,
+    applyServerJobs: jobs.applyServerJobs,
     isDeleted: jobs.isObjectDeleted,
   });
 
@@ -488,10 +488,19 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     [jobs.selectMask, jobs.currentSegmentJobId],
   );
 
-  const handleMaskPickerClosed = useCallback(() => {
-    jobs.closeMaskPicker();
+  const handleMaskPickerDeferred = useCallback(() => {
+    jobs.deferMaskPicker();
     setPendingSeeds([]);
-  }, [jobs.closeMaskPicker]);
+  }, [jobs.deferMaskPicker]);
+
+  const handleMaskPickerDiscarded = useCallback(() => {
+    const jobId = jobs.currentSegmentJobId;
+    if (!jobId) {
+      return;
+    }
+    void jobs.discardMaskPicker(jobId);
+    setPendingSeeds([]);
+  }, [jobs.currentSegmentJobId, jobs.discardMaskPicker]);
 
   const handleCopy = useCallback(() => {
     if (jobs.selectedObjectId === null) {
@@ -536,6 +545,24 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       void jobs.clearObject3d(objectId);
     },
     [jobs.clearObject3d, jobs.selectedObjectId, rotation.setRotateMode],
+  );
+
+  const handleResetObjectChanges = useCallback(
+    (objectId: number) => {
+      if (jobs.selectedObjectId === objectId) {
+        rotation.setRotateMode(false);
+      }
+      setShowOriginalIds((prev) => {
+        if (!prev.has(objectId)) {
+          return prev;
+        }
+        const next = new Set(prev);
+        next.delete(objectId);
+        return next;
+      });
+      void jobs.resetObjectChanges(objectId);
+    },
+    [jobs.resetObjectChanges, jobs.selectedObjectId, rotation.setRotateMode],
   );
 
   const pendingDeleteObject =
@@ -583,7 +610,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // Enter commits the rotation (same as pressing rotate again); Escape backs
   // out of whichever mode is armed. Both bail while a text field owns focus.
   useEffect(() => {
-    if (!rotation.rotateMode && !cutMode && !areaMode && pendingSeeds.length === 0) {
+    if (!jobs.isChoosingMask && !rotation.rotateMode && !cutMode && !areaMode && pendingSeeds.length === 0) {
       return;
     }
 
@@ -595,6 +622,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
       if (event.key === "Escape") {
         event.preventDefault();
+        if (jobs.isChoosingMask) {
+          handleMaskPickerDeferred();
+          return;
+        }
         rotation.setRotateMode(false);
         setCutMode(false);
         setAreaMode(false);
@@ -613,6 +644,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
+    jobs.isChoosingMask,
+    handleMaskPickerDeferred,
     rotation.rotateMode,
     cutMode,
     areaMode,
@@ -1065,6 +1098,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             }}
             onDeleteObject={requestDeleteObject}
             onClearObject3d={handleClearObject3d}
+            onResetObjectChanges={handleResetObjectChanges}
             onDismissJob={handleDismissJob}
           />
         ) : null}
@@ -1074,7 +1108,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         <MaskPickerModal
           masks={jobs.maskOptions}
           onSelect={handleMaskSelected}
-          onClose={handleMaskPickerClosed}
+          onDefer={handleMaskPickerDeferred}
+          onDiscard={handleMaskPickerDiscarded}
         />
       ) : null}
 

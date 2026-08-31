@@ -271,6 +271,16 @@ def set_object_rescale_state(
     return updated
 
 
+def reset_object_transform(object_uuid: str) -> ObjectMetadata:
+    """Restore creation-default placement: origin offset and unit display scale."""
+    updated = _update_object_fields(
+        object_uuid,
+        {"offset_x": 0.0, "offset_y": 0.0, "display_scale": 1.0},
+    )
+    logger.info("Reset object transform: uuid=%s", object_uuid)
+    return updated
+
+
 def delete_session_metadata(session_id: str, object_ids: list[int]) -> int:
     """Delete metadata rows for the given object ids within one session."""
     if not object_ids:

@@ -25,6 +25,27 @@ import type {
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000";
 
+const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
+
+async function fetchWithTimeout(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  timeoutMs: number = DEFAULT_FETCH_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ApiError(0, "Request timed out — is the image service running?");
+    }
+    throw err;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 // Carries the HTTP status through so callers can distinguish e.g. 409
 // (expected concurrency conflict) from 404/500 (real failure) instead of
 // string-matching the message. `detail` is the raw FastAPI error body text
@@ -106,7 +127,7 @@ export async function submitGenerate3D(uid: string, objectId: number): Promise<s
 }
 
 export async function getSessions(): Promise<SessionInfo[]> {
-  const response = await fetch(`${API_BASE_URL}/images/sessions`);
+  const response = await fetchWithTimeout(`${API_BASE_URL}/images/sessions`);
   return handleJsonResponse<SessionInfo[]>(response);
 }
 
@@ -203,7 +224,7 @@ export async function inpaintMask(payload: SubmitInpaintRequest): Promise<JobSub
 // --- Job queue ---------------------------------------------------------
 
 export async function getActiveJobs(): Promise<JobInfo[]> {
-  const response = await fetch(`${API_BASE_URL}/jobs/active`);
+  const response = await fetchWithTimeout(`${API_BASE_URL}/jobs/active`);
   return handleJsonResponse<JobInfo[]>(response);
 }
 
@@ -308,6 +329,19 @@ export async function setObjectName(
  * survives a session close/reopen -- omits `name` entirely (not `name:
  * null`) so the backend's partial-update semantics leave it untouched.
  */
+export async function resetObjectTransform(
+  objectUuid: string,
+): Promise<ObjectMetadataResponse> {
+  const response = await fetch(
+    `${API_BASE_URL}/images/objects/${objectUuid}/reset-transform`,
+    {
+      method: "POST",
+    },
+  );
+
+  return handleJsonResponse<ObjectMetadataResponse>(response);
+}
+
 export async function setObjectOffset(
   objectUuid: string,
   offsetX: number,

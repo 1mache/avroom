@@ -12,6 +12,7 @@ import {
   runSessionBatch,
   segmentImage,
   setObjectName,
+  resetObjectTransform as resetObjectTransformRequest,
   smartPasteObject,
   submitGenerate3D,
   synthesizeNovelView,
@@ -128,6 +129,17 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     jobsRef.current = jobs;
   }, [jobs]);
 
+  useEffect(() => {
+    segmentChoosingJobIdRef.current =
+      segmentState.status === "choosing" ? segmentState.jobId : null;
+  }, [segmentState]);
+
+  const applyServerJobs = useCallback((serverJobs: JobInfo[]) => {
+    setJobs(
+      serverJobs.filter((job) => !purgedSegmentJobIdsRef.current.has(job.job_id)),
+    );
+  }, []);
+
   // Only ever moves forward. The canvas writer lock serializes commits
   // server-side so object_id is a valid commit order; this guards purely
   // against out-of-order *network* delivery of concurrent responses.
@@ -146,6 +158,10 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   // is purely a "not right now" — resets on remount, meaning re-entering the
   // session offers the same result again.
   const dismissedSegmentJobIdsRef = useRef<Set<string>>(new Set());
+  // Segment jobs the user discarded via Close — hidden locally until DELETE
+  // settles so sync-check can't resurrect the row mid-flight.
+  const purgedSegmentJobIdsRef = useRef<Set<string>>(new Set());
+  const segmentChoosingJobIdRef = useRef<string | null>(null);
   // Guards the picker-chain effect against re-fetching the same head job
   // while its GET /jobs/{id} inflate call is still in flight.
   const inflatingJobIdRef = useRef<string | null>(null);
@@ -164,6 +180,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     highestCommittedObjectIdRef.current = -1;
     deletedObjectIdsRef.current = new Set();
     dismissedSegmentJobIdsRef.current = new Set();
+    purgedSegmentJobIdsRef.current = new Set();
+    segmentChoosingJobIdRef.current = null;
     notifiedConflictIdsRef.current = new Set();
   }, []);
 
@@ -223,6 +241,41 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           prev.map((o) =>
             o.objectId === objectId
               ? { ...o, glbData: null, has3d: false, rotation: null }
+              : o,
+          ),
+        );
+        onMutated?.();
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "generic");
+        }
+      }
+    },
+    [onError, onMutated],
+  );
+
+  const resetObjectChanges = useCallback(
+    async (objectId: number) => {
+      const currentImageId = imageIdRef.current;
+      const target = objectsRef.current.find((o) => o.objectId === objectId);
+      if (!currentImageId || !target?.uuid) {
+        return;
+      }
+
+      try {
+        await resetObjectTransformRequest(target.uuid);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+        setObjects((prev) =>
+          prev.map((o) =>
+            o.objectId === objectId
+              ? {
+                  ...o,
+                  offset: { x: 0, y: 0 },
+                  displayScale: 1,
+                  rotation: null,
+                }
               : o,
           ),
         );
@@ -319,7 +372,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [onError, onMutated],
   );
 
-  const closeMaskPicker = useCallback(() => {
+  const deferMaskPicker = useCallback(() => {
     setSegmentState((prev) => {
       if (prev.status === "choosing") {
         dismissedSegmentJobIdsRef.current.add(prev.jobId);
@@ -327,6 +380,36 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       return { status: "idle" };
     });
   }, []);
+
+  const discardMaskPicker = useCallback(
+    async (jobId: string) => {
+      const currentImageId = imageIdRef.current;
+      if (!currentImageId) {
+        return;
+      }
+
+      purgedSegmentJobIdsRef.current.add(jobId);
+      dismissedSegmentJobIdsRef.current.add(jobId);
+      inflatingJobIdRef.current = null;
+      setSegmentState({ status: "idle" });
+      setJobs((prev) => prev.filter((job) => job.job_id !== jobId));
+
+      try {
+        await deleteJob(jobId);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+        onMutated?.();
+      } catch (err) {
+        purgedSegmentJobIdsRef.current.delete(jobId);
+        dismissedSegmentJobIdsRef.current.delete(jobId);
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "generic");
+        }
+      }
+    },
+    [onError, onMutated],
+  );
 
   // Consumes the segment job (from_job_id) atomically with the inpaint
   // submission and closes the picker. The created object isn't built here —
@@ -712,6 +795,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     setSelectedObjectId,
     jobs,
     setJobs,
+    applyServerJobs,
     hasPendingWork:
       jobs.some((job) => job.status === "queued" || job.status === "running") ||
       isBatching ||
@@ -728,7 +812,9 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     runSegment,
     runBatch,
     isBatching,
-    closeMaskPicker,
+    closeMaskPicker: deferMaskPicker,
+    deferMaskPicker,
+    discardMaskPicker,
     selectMask,
     commitRotation,
     toggleHidden,
@@ -737,6 +823,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     duplicateObject,
     deleteObject,
     clearObject3d,
+    resetObjectChanges,
     runSmartPasteAfterDrag,
     isDeleting,
     isObjectDeleted,

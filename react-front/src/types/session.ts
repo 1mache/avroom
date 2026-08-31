@@ -64,6 +64,19 @@ export interface CutoutObject {
   cloneRootUuid: string | null;
 }
 
+/** True when *obj* has a non-default canvas transform or a rotation result. */
+export function hasUndoableObjectChanges(
+  obj: Pick<CutoutObject, "offset" | "displayScale" | "rotation">,
+): boolean {
+  if (obj.rotation !== null) {
+    return true;
+  }
+  if (obj.displayScale !== 1) {
+    return true;
+  }
+  return obj.offset.x !== 0 || obj.offset.y !== 0;
+}
+
 /** True when *obj* shares a clone lineage with at least one other object. */
 export function hasCloneSiblings(
   obj: Pick<CutoutObject, "uuid" | "cloneRootUuid">,

@@ -38,6 +38,7 @@ from core.object_metadata import (
     get_object_by_uuid,
     next_object_id,
     remove_object_index_entry,
+    reset_object_transform,
     save_object_metadata,
     set_object_name,
     set_object_offset,
@@ -267,6 +268,29 @@ async def update_object(object_uuid: str, request: UpdateObjectRequest) -> Objec
     touch_session(metadata.session_id)
     response = to_object_metadata_response(metadata, storage_dir, get_3d_storage_dir())
     logger.info("Object updated: uuid=%s fields=%s", object_uuid, sorted(fields))
+    return response
+
+
+@router.post("/objects/{object_uuid}/reset-transform", response_model=ObjectMetadataResponse)
+def reset_object_transform_route(object_uuid: str) -> ObjectMetadataResponse:
+    """Reset drag offset and display scale to creation defaults; cutout PNG unchanged."""
+    logger.info("Object transform reset requested: uuid=%s", object_uuid)
+    storage_dir = get_image_storage_dir()
+
+    metadata = get_object_by_uuid(object_uuid)
+    if metadata is None:
+        logger.warning("Object transform reset failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
+
+    metadata = reset_object_transform(object_uuid)
+    touch_session(metadata.session_id)
+    response = to_object_metadata_response(metadata, storage_dir, get_3d_storage_dir())
+    logger.info(
+        "Object transform reset: uuid=%s session_id=%s object_id=%d",
+        object_uuid,
+        metadata.session_id,
+        metadata.object_id,
+    )
     return response
 
 

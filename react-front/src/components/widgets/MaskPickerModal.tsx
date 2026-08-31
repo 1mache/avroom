@@ -5,19 +5,26 @@ import type { SegmentMaskResult } from "../../types/api";
 export interface MaskPickerModalProps {
   masks: SegmentMaskResult[];
   onSelect: (maskId: string) => void;
-  onClose: () => void;
+  /** Hide the picker for now; segment job and candidates stay on the server. */
+  onDefer: () => void;
+  /** Discard this segment result and delete its candidate masks. */
+  onDiscard: () => void;
 }
 
 const toDataUrl = (mask: SegmentMaskResult): string =>
   `data:image/${mask.format};base64,${mask.cutout_b64}`;
 
 // Selecting a mask closes this modal immediately and fires inpainting detached
-// (see useSessionJobs.selectMask) — the object appears as a pending row in the
-// object rail while it runs. There is no in-flight state left for this modal
-// to protect, so a backdrop click or Close always dismisses.
-export const MaskPickerModal: React.FC<MaskPickerModalProps> = ({ masks, onSelect, onClose }) => {
+// (see useSessionJobs.selectMask). Backdrop click and "Not now" defer only;
+// "Close" discards the unconsumed segment job via DELETE /jobs/{id}.
+export const MaskPickerModal: React.FC<MaskPickerModalProps> = ({
+  masks,
+  onSelect,
+  onDefer,
+  onDiscard,
+}) => {
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onClose}>
+    <div className="modal-backdrop" role="presentation" onClick={onDefer}>
       <div
         className="modal is-masks"
         role="dialog"
@@ -30,9 +37,28 @@ export const MaskPickerModal: React.FC<MaskPickerModalProps> = ({ masks, onSelec
             <h2 id="mask-title">Choose a cutout</h2>
             <p className="modal-sub">Removal starts as soon as you pick one.</p>
           </div>
-          <button type="button" className="modal-close" onClick={onClose}>
-            Close
-          </button>
+          <div className="modal-head-actions">
+            <button
+              type="button"
+              className="modal-close"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDefer();
+              }}
+            >
+              Not now
+            </button>
+            <button
+              type="button"
+              className="modal-close is-danger"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDiscard();
+              }}
+            >
+              Close
+            </button>
+          </div>
         </div>
 
         {/* Candidate masks from SAM: opaque where the object was segmented,

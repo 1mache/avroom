@@ -1128,6 +1128,12 @@ input {
   font-size: 12px;
 }
 
+.modal-head-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
 .modal-close {
   padding: 5px 11px;
   border: 1px solid var(--chrome-line);
@@ -1136,6 +1142,16 @@ input {
   color: var(--ink);
   font-size: 12px;
   cursor: pointer;
+}
+
+.modal-close.is-danger {
+  border-color: rgba(226, 86, 79, 0.45);
+  color: var(--danger);
+}
+
+.modal-close.is-danger:hover {
+  border-color: var(--danger);
+  background: rgba(226, 86, 79, 0.08);
 }
 
 .modal-close:hover {

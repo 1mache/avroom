@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import type { JobInfo } from "../../types/api";
-import { effectiveCutoutSrc, type ObjectRotation } from "../../types/session";
+import { effectiveCutoutSrc, hasUndoableObjectChanges, type ObjectRotation } from "../../types/session";
 import { CheckIcon, EyeIcon, EyeOffIcon, MoreIcon, RevertIcon, TrashIcon } from "../icons";
 
 const JOB_KIND_LABEL: Record<JobInfo["kind"], string> = {
@@ -21,6 +21,8 @@ interface ObjectEntry {
   hidden: boolean;
   has3d: boolean;
   cloneRootUuid: string | null;
+  offset: { x: number; y: number };
+  displayScale: number;
 }
 
 export interface ObjectRailProps {
@@ -42,6 +44,7 @@ export interface ObjectRailProps {
   onDuplicateObject: (objectId: number) => void;
   onDeleteObject: (objectId: number) => void;
   onClearObject3d: (objectId: number) => void;
+  onResetObjectChanges: (objectId: number) => void;
   onDismissJob: (jobId: string) => void;
 }
 
@@ -71,6 +74,7 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
   onDuplicateObject,
   onDeleteObject,
   onClearObject3d,
+  onResetObjectChanges,
   onDismissJob,
 }) => {
   const pending = jobs.filter((job) => job.status === "queued" || job.status === "running");
@@ -240,6 +244,8 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
               hoveredObjectId === obj.objectId || menuObjectId === obj.objectId;
             const menuOpen = menuObjectId === obj.objectId;
             const showRemove3d = obj.has3d;
+            const showUndoChanges =
+              hasUndoableObjectChanges(obj) && obj.rotation?.status !== "pending";
             const rowBusy = isDuplicating || isDeleting;
 
             return (
@@ -409,6 +415,20 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
                     >
                       Duplicate
                     </button>
+                    {showUndoChanges ? (
+                      <button
+                        type="button"
+                        className="rail-menu-item"
+                        role="menuitem"
+                        disabled={rowBusy}
+                        onClick={() => {
+                          closeMenu();
+                          onResetObjectChanges(obj.objectId);
+                        }}
+                      >
+                        Undo all changes
+                      </button>
+                    ) : null}
                     {showRemove3d ? (
                       <button
                         type="button"

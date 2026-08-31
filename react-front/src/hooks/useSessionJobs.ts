@@ -221,7 +221,9 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         }
         setObjects((prev) =>
           prev.map((o) =>
-            o.objectId === objectId ? { ...o, glbData: null, has3d: false } : o,
+            o.objectId === objectId
+              ? { ...o, glbData: null, has3d: false, rotation: null }
+              : o,
           ),
         );
         onMutated?.();

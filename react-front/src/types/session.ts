@@ -81,14 +81,6 @@ export function hasCloneSiblings(
   );
 }
 
-/** True when *obj* is in a clone family and has a cached GLB. */
-export function canUndoObject3d(
-  obj: Pick<CutoutObject, "uuid" | "cloneRootUuid" | "has3d">,
-  objects: ReadonlyArray<Pick<CutoutObject, "uuid" | "cloneRootUuid">>,
-): boolean {
-  return obj.has3d && hasCloneSiblings(obj, objects);
-}
-
 // Which image should currently represent an object on the stage: its rotated
 // view (synthesized result, or the in-flight snapshot while waiting), or the
 // original cutout when the user asked to see it / no rotation exists yet.

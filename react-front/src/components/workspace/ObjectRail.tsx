@@ -1,11 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import type { JobInfo } from "../../types/api";
-import {
-  canUndoObject3d,
-  effectiveCutoutSrc,
-  type ObjectRotation,
-} from "../../types/session";
+import { effectiveCutoutSrc, type ObjectRotation } from "../../types/session";
 import { CheckIcon, EyeIcon, EyeOffIcon, MoreIcon, RevertIcon, TrashIcon } from "../icons";
 
 const JOB_KIND_LABEL: Record<JobInfo["kind"], string> = {
@@ -243,7 +239,7 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
             const showThumbChrome =
               hoveredObjectId === obj.objectId || menuObjectId === obj.objectId;
             const menuOpen = menuObjectId === obj.objectId;
-            const showUndo3d = canUndoObject3d(obj, objects);
+            const showRemove3d = obj.has3d;
             const rowBusy = isDuplicating || isDeleting;
 
             return (
@@ -413,7 +409,7 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
                     >
                       Duplicate
                     </button>
-                    {showUndo3d ? (
+                    {showRemove3d ? (
                       <button
                         type="button"
                         className="rail-menu-item"
@@ -424,7 +420,7 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
                           onClearObject3d(obj.objectId);
                         }}
                       >
-                        Undo 3D
+                        Remove 3D render
                       </button>
                     ) : null}
                     <button

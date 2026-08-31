@@ -362,6 +362,23 @@ export async function setObjectOffset(
   return handleJsonResponse<ObjectMetadataResponse>(response);
 }
 
+export async function setObjectDisplayScale(
+  objectUuid: string,
+  displayScale: number,
+): Promise<ObjectMetadataResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      display_scale: displayScale,
+    } satisfies UpdateObjectRequest),
+  });
+
+  return handleJsonResponse<ObjectMetadataResponse>(response);
+}
+
 export async function smartPasteObject(
   objectUuid: string,
   x: number,

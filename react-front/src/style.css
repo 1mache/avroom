@@ -477,29 +477,145 @@ input {
   border: 1px solid rgba(69, 224, 229, 0.55);
 }
 
-.selection-corner {
+.selection-handle {
   position: absolute;
-  width: 6px;
-  height: 6px;
+  pointer-events: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  touch-action: none;
+}
+
+.selection-handle::after {
+  content: "";
+  position: absolute;
   background: var(--cyan-bright);
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7);
 }
 
+.selection-corner {
+  width: 14px;
+  height: 14px;
+}
+
+.selection-corner::after {
+  width: 6px;
+  height: 6px;
+}
+
 .selection-corner.tl {
-  top: -3px;
-  left: -3px;
+  top: -7px;
+  left: -7px;
+  cursor: nwse-resize;
 }
+
+.selection-corner.tl::after {
+  top: 4px;
+  left: 4px;
+}
+
 .selection-corner.tr {
-  top: -3px;
-  right: -3px;
+  top: -7px;
+  right: -7px;
+  cursor: nesw-resize;
 }
+
+.selection-corner.tr::after {
+  top: 4px;
+  right: 4px;
+}
+
 .selection-corner.bl {
-  bottom: -3px;
-  left: -3px;
+  bottom: -7px;
+  left: -7px;
+  cursor: nesw-resize;
 }
+
+.selection-corner.bl::after {
+  bottom: 4px;
+  left: 4px;
+}
+
 .selection-corner.br {
-  bottom: -3px;
-  right: -3px;
+  bottom: -7px;
+  right: -7px;
+  cursor: nwse-resize;
+}
+
+.selection-corner.br::after {
+  bottom: 4px;
+  right: 4px;
+}
+
+.selection-edge {
+  background: transparent;
+}
+
+.selection-edge.t,
+.selection-edge.b {
+  left: 50%;
+  width: 20px;
+  height: 10px;
+  margin-left: -10px;
+  cursor: ns-resize;
+}
+
+.selection-edge.t {
+  top: -5px;
+}
+
+.selection-edge.t::after {
+  top: 2px;
+  left: 7px;
+  width: 6px;
+  height: 6px;
+}
+
+.selection-edge.b {
+  bottom: -5px;
+}
+
+.selection-edge.b::after {
+  bottom: 2px;
+  left: 7px;
+  width: 6px;
+  height: 6px;
+}
+
+.selection-edge.l,
+.selection-edge.r {
+  top: 50%;
+  width: 10px;
+  height: 20px;
+  margin-top: -10px;
+  cursor: ew-resize;
+}
+
+.selection-edge.l {
+  left: -5px;
+}
+
+.selection-edge.l::after {
+  top: 7px;
+  left: 2px;
+  width: 6px;
+  height: 6px;
+}
+
+.selection-edge.r {
+  right: -5px;
+}
+
+.selection-edge.r::after {
+  top: 7px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+}
+
+body.is-resizing-object {
+  cursor: grabbing;
+  user-select: none;
 }
 
 .stage-hint {

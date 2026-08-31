@@ -14,6 +14,7 @@ import { useConflictNotices, type ConflictContext } from "../../hooks/useConflic
 import { useDashboardPreview } from "../../hooks/useDashboardPreview";
 import { useHitTesting } from "../../hooks/useHitTesting";
 import { useObjectDrag } from "../../hooks/useObjectDrag";
+import { useObjectResize } from "../../hooks/useObjectResize";
 import { useRotationController } from "../../hooks/useRotationController";
 import { useSessionJobs, type JobErrorContext } from "../../hooks/useSessionJobs";
 import { useSessionSync } from "../../hooks/useSessionSync";
@@ -36,6 +37,7 @@ import {
   mapPointThroughInverseScale,
   toNaturalPoint,
   type Rect,
+  type ResizeHandle,
   type Size,
 } from "../../utils/stageGeometry";
 import { ConfirmDialog } from "../widgets/ConfirmDialog";
@@ -113,6 +115,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // background keeps its inpainted hole), so the trash button arms this
   // instead of deleting directly.
   const [pendingDeleteObjectId, setPendingDeleteObjectId] = useState<number | null>(null);
+  const stageInputRef = useRef<HTMLDivElement | null>(null);
 
   const conflictNotices = useConflictNotices();
 
@@ -374,6 +377,32 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     smartPasteEnabled: smartPaste,
     updateOffset: jobs.updateOffset,
     runSmartPasteAfterDrag: jobs.runSmartPasteAfterDrag,
+    onSettled: capturePreview,
+  });
+
+  const clientToNatural = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!naturalSize || !renderedRect || !stageInputRef.current) {
+        return null;
+      }
+      const stageRect = stageInputRef.current.getBoundingClientRect();
+      return toNaturalPoint(
+        clientX - stageRect.left,
+        clientY - stageRect.top,
+        renderedRect,
+        naturalSize,
+      );
+    },
+    [naturalSize, renderedRect],
+  );
+
+  const objectResize = useObjectResize({
+    objects: jobs.objects,
+    showOriginalIds,
+    clientToNatural,
+    naturalSize,
+    updateDisplayScale: jobs.updateDisplayScale,
+    onError: (err) => setError(errorMessage(err, "Failed to save object size.")),
     onSettled: capturePreview,
   });
 
@@ -659,7 +688,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
   const handleStagePointerDown: React.PointerEventHandler<HTMLDivElement> = useCallback(
     (event) => {
-      if (!naturalSize || !renderedRect) {
+      if (!naturalSize || !renderedRect || objectResize.isResizing) {
         return;
       }
 
@@ -768,6 +797,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       isShowingOriginal,
       sampleObjectAlpha,
       objectDrag,
+      objectResize.isResizing,
       selectObject,
     ],
   );
@@ -842,6 +872,30 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         touchAction: "none",
       }
     : undefined;
+
+  const canResize =
+    Boolean(selectedObject?.uuid) &&
+    !rotation.rotateMode &&
+    !cutMode &&
+    !objectDrag.isDragging &&
+    !objectResize.isResizing;
+
+  const handleResizePointerDown = useCallback(
+    (handle: ResizeHandle) => (event: React.PointerEvent<HTMLElement>) => {
+      event.stopPropagation();
+      event.preventDefault();
+      if (!canResize || jobs.selectedObjectId === null) {
+        return;
+      }
+      const natural = clientToNatural(event.clientX, event.clientY);
+      if (!natural) {
+        return;
+      }
+      event.currentTarget.setPointerCapture(event.pointerId);
+      objectResize.beginResize(jobs.selectedObjectId, handle, event.pointerId, natural);
+    },
+    [canResize, clientToNatural, jobs.selectedObjectId, objectResize],
+  );
 
   const photoSrc = jobs.backgroundSrc ?? originalSrc;
 
@@ -954,7 +1008,11 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             {/* Cutouts are full-size transparent PNGs, so a topmost overlay
                 would swallow every click; this transparent layer owns pointer
                 input and hit-tests against real alpha instead. */}
-            <div className="stage-input" onPointerDown={handleStagePointerDown} />
+            <div
+              ref={stageInputRef}
+              className="stage-input"
+              onPointerDown={handleStagePointerDown}
+            />
 
             {displayedBatchBox && renderedRect && naturalSize ? (
               <div
@@ -985,12 +1043,60 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
               <Model3DFrame ref={rotation.model3DFrameRef} glbData={rotation.glbData} style={model3DFrameStyle} />
             ) : null}
 
-            {selectedRect ? (
+            {selectedRect && !rotation.rotateMode ? (
               <div className="selection-frame" style={{ ...rectStyle(selectedRect), zIndex: 210 }}>
-                <span className="selection-corner tl" />
-                <span className="selection-corner tr" />
-                <span className="selection-corner bl" />
-                <span className="selection-corner br" />
+                {canResize ? (
+                  <>
+                    <button
+                      type="button"
+                      className="selection-handle selection-corner tl"
+                      aria-label="Resize top left"
+                      onPointerDown={handleResizePointerDown("tl")}
+                    />
+                    <button
+                      type="button"
+                      className="selection-handle selection-corner tr"
+                      aria-label="Resize top right"
+                      onPointerDown={handleResizePointerDown("tr")}
+                    />
+                    <button
+                      type="button"
+                      className="selection-handle selection-corner bl"
+                      aria-label="Resize bottom left"
+                      onPointerDown={handleResizePointerDown("bl")}
+                    />
+                    <button
+                      type="button"
+                      className="selection-handle selection-corner br"
+                      aria-label="Resize bottom right"
+                      onPointerDown={handleResizePointerDown("br")}
+                    />
+                    <button
+                      type="button"
+                      className="selection-handle selection-edge t"
+                      aria-label="Resize top"
+                      onPointerDown={handleResizePointerDown("t")}
+                    />
+                    <button
+                      type="button"
+                      className="selection-handle selection-edge r"
+                      aria-label="Resize right"
+                      onPointerDown={handleResizePointerDown("r")}
+                    />
+                    <button
+                      type="button"
+                      className="selection-handle selection-edge b"
+                      aria-label="Resize bottom"
+                      onPointerDown={handleResizePointerDown("b")}
+                    />
+                    <button
+                      type="button"
+                      className="selection-handle selection-edge l"
+                      aria-label="Resize left"
+                      onPointerDown={handleResizePointerDown("l")}
+                    />
+                  </>
+                ) : null}
               </div>
             ) : null}
           </>

@@ -153,3 +153,31 @@ def test_update_bumps_last_changed(storage_sandbox: Path) -> None:
     after = session_repo.get_session_last_changed("sess-1")
     assert after is not None
     assert after >= before
+
+
+def test_display_scale_only_update_leaves_name_and_offset_untouched(storage_sandbox: Path) -> None:
+    object_uuid = _seed_object(storage_sandbox)
+
+    with _build_client() as client:
+        client.patch(f"/images/objects/{object_uuid}", json={"offset_x": 30.0, "offset_y": 20.0})
+        response = client.patch(f"/images/objects/{object_uuid}", json={"display_scale": 1.5})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["display_scale"] == 1.5
+    assert body["name"] == "Chair"
+    assert body["offset_x"] == 30.0
+    assert body["offset_y"] == 20.0
+
+    metadata = get_object_by_uuid(object_uuid)
+    assert metadata is not None
+    assert metadata.display_scale == 1.5
+
+
+def test_display_scale_zero_rejected(storage_sandbox: Path) -> None:
+    object_uuid = _seed_object(storage_sandbox)
+
+    with _build_client() as client:
+        response = client.patch(f"/images/objects/{object_uuid}", json={"display_scale": 0})
+
+    assert response.status_code == 422

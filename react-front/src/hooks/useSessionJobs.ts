@@ -534,6 +534,10 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     setObjects((prev) => prev.map((o) => (o.objectId === objectId ? { ...o, offset } : o)));
   }, []);
 
+  const updateDisplayScale = useCallback((objectId: number, displayScale: number) => {
+    setObjects((prev) => prev.map((o) => (o.objectId === objectId ? { ...o, displayScale } : o)));
+  }, []);
+
   // Fires the novel-view request detached, same pattern as before: the
   // object's `rotation` field itself is the pending-state marker. Re-rotating
   // an object simply overwrites its rotation -- always starting over from the
@@ -896,6 +900,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     commitRotation,
     toggleHidden,
     updateOffset,
+    updateDisplayScale,
     renameObject,
     duplicateObject,
     importObject,

@@ -150,15 +150,15 @@ class UidCacheStatusResponse(BaseModel):
 
 
 class UpdateObjectRequest(BaseModel):
-    """Partial update for one object by UUID: name and/or drag offset.
+    """Partial update for one object by UUID: name, drag offset, and/or display scale.
 
-    Each field is independently optional so a caller can send just a rename
-    or just a position update. ``name``'s ``None`` means "clear the name"
-    (existing behavior). ``offset_x``/``offset_y``'s ``None`` means "not
-    included in this request" -- the handler distinguishes an omitted field
-    from an explicit ``null`` via ``model_fields_set``, so a drag-persist
-    call (which never mentions ``name``) can never accidentally clear it,
-    and vice versa.
+    Each field is independently optional so a caller can send just a rename,
+    just a position update, or just a manual resize. ``name``'s ``None`` means
+    "clear the name" (existing behavior). ``offset_x``/``offset_y``'s ``None``
+    means "not included in this request" -- the handler distinguishes an omitted
+    field from an explicit ``null`` via ``model_fields_set``, so a drag-persist
+    call (which never mentions ``name``) can never accidentally clear it, and
+    vice versa.
     """
 
     name: Annotated[
@@ -172,6 +172,14 @@ class UpdateObjectRequest(BaseModel):
     offset_y: Annotated[
         float | None,
         Field(default=None, description="New drag offset Y, natural-image pixels. Omit to leave unchanged."),
+    ]
+    display_scale: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            description="UI display scale vs original cutout size. Omit to leave unchanged.",
+        ),
     ]
 
 

@@ -128,6 +128,7 @@ export interface UpdateObjectRequest {
   name?: string | null;
   offset_x?: number;
   offset_y?: number;
+  display_scale?: number;
 }
 
 export interface DuplicateObjectResponse {

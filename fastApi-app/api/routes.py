@@ -43,6 +43,7 @@ from core.object_metadata import (
     save_object_metadata,
     set_object_name,
     set_object_offset,
+    set_object_rescale_state,
     to_object_metadata_response,
 )
 from schemas.objects import (
@@ -239,7 +240,7 @@ def warm_session_maps_endpoint(uid: str) -> WarmSessionMapsResponse:
 
 @router.patch("/objects/{object_uuid}", response_model=ObjectMetadataResponse)
 async def update_object(object_uuid: str, request: UpdateObjectRequest) -> ObjectMetadataResponse:
-    """Partially update one object identified by UUID: name and/or drag offset.
+    """Partially update one object identified by UUID: name, offset, and/or scale.
 
     Only fields actually present in the request body are touched --
     ``request.model_fields_set`` distinguishes an omitted field from an
@@ -266,6 +267,9 @@ async def update_object(object_uuid: str, request: UpdateObjectRequest) -> Objec
         next_offset_x = request.offset_x if request.offset_x is not None else metadata.offset_x
         next_offset_y = request.offset_y if request.offset_y is not None else metadata.offset_y
         metadata = set_object_offset(object_uuid, next_offset_x, next_offset_y)
+    if "display_scale" in fields:
+        assert request.display_scale is not None
+        metadata = set_object_rescale_state(object_uuid, display_scale=request.display_scale)
 
     touch_session(metadata.session_id)
     response = to_object_metadata_response(metadata, storage_dir, get_3d_storage_dir())

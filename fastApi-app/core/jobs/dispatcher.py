@@ -18,7 +18,7 @@ import logging
 import threading
 
 from core.inference_pool.session_runtime import SessionConflictError
-from core.jobs.handlers import run_generate_3d_job, run_inpaint_job, run_segment_job
+from core.jobs.handlers import run_erase_job, run_generate_3d_job, run_inpaint_job, run_segment_job
 from core.repositories.job_repo import JobRecord, claim_next_job, delete_job, fail_job, finish_job
 from settings import get_inference_worker_count
 
@@ -39,6 +39,9 @@ def _dispatch_one(job: JobRecord) -> None:
             finish_job(job.id, result)
         elif job.kind == "inpaint":
             run_inpaint_job(job)
+            delete_job(job.id)
+        elif job.kind == "erase":
+            run_erase_job(job)
             delete_job(job.id)
         elif job.kind == "generate_3d":
             run_generate_3d_job(job)

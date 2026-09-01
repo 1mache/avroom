@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import functools
 import io
 import logging
@@ -429,6 +430,106 @@ def segment_candidates_on_image(
             return [results[selection.winner_index]]
 
     return results
+
+
+ERASE_MIN_COMPONENT_PIXELS = 64
+
+
+def canvas_shape_from_bytes(image_bytes: bytes) -> tuple[int, int]:
+    """Return (height, width) for stored canvas/upload bytes."""
+
+    with Image.open(io.BytesIO(image_bytes)) as source_image:
+        width, height = source_image.size
+    return height, width
+
+
+def decode_erase_mask_png(mask_b64: str, expected_shape: tuple[int, int]) -> np.ndarray:
+    """Decode a client-drawn erase mask PNG into uint8 HxW with values 0/255.
+
+    Args:
+        mask_b64: Base64-encoded PNG (grayscale or RGB — luminance is used).
+        expected_shape: ``(height, width)`` of the session canvas.
+
+    Raises:
+        ValueError: When decoding fails, shapes mismatch, or the mask is empty.
+    """
+
+    try:
+        raw = base64.b64decode(mask_b64, validate=True)
+    except Exception as exc:
+        raise ValueError("Erase mask is not valid base64.") from exc
+
+    try:
+        with Image.open(io.BytesIO(raw)) as img:
+            gray = img.convert("L")
+            if gray.size != (expected_shape[1], expected_shape[0]):
+                raise ValueError(
+                    f"Erase mask shape {gray.size[::-1]} does not match canvas {expected_shape}."
+                )
+            arr = np.array(gray, dtype=np.uint8)
+    except UnidentifiedImageError as exc:
+        raise ValueError("Erase mask is not a valid PNG image.") from exc
+
+    mask = np.where(arr >= 128, 255, 0).astype(np.uint8)
+    if not np.any(mask):
+        raise ValueError("Erase mask has no foreground pixels.")
+    return mask
+
+
+def split_mask_components(
+    mask: np.ndarray,
+    min_pixels: int = ERASE_MIN_COMPONENT_PIXELS,
+) -> list[np.ndarray]:
+    """Split a binary mask into disconnected 8-connected foreground blobs.
+
+    Drops blobs smaller than ``min_pixels`` (lasso speckle). Raises when
+    nothing usable remains.
+    """
+
+    _, labels = cv2.connectedComponents((mask > 0).astype(np.uint8), connectivity=8)
+    components: list[np.ndarray] = []
+    for label in range(1, int(labels.max()) + 1):
+        component = np.where(labels == label, 255, 0).astype(np.uint8)
+        if int(np.count_nonzero(component)) >= min_pixels:
+            components.append(component)
+    if not components:
+        raise ValueError("Erase mask has no foreground blobs large enough to erase.")
+    return components
+
+
+def erase_mask_on_image(
+    image_id: str,
+    mask_id: str,
+    base_dir: Path,
+) -> bytes:
+    """Run background inpainting for one client-provided erase mask (no cutout)."""
+
+    image_bytes = load_canvas_bytes(image_id=image_id, base_dir=base_dir)
+    source_bgr = _decode_original_bgr(image_bytes, image_id)
+    refined_mask = load_refined_mask(base_dir, image_id, mask_id)
+
+    with inference_session():
+        inpainter = load_avroom_attr("BackgroundInpainter")()
+        logger.info(
+            "Running erase inpaint: image_id=%s mask_id=%s image_shape=%s mask_shape=%s",
+            image_id,
+            mask_id,
+            source_bgr.shape,
+            refined_mask.shape,
+        )
+        background_bgr = inpainter.cut_mask_from_image(
+            original_image=source_bgr,
+            mask=refined_mask,
+            compose_mask=None,
+        )
+        logger.info(
+            "Erase inpaint finished: image_id=%s mask_id=%s bg_shape=%s",
+            image_id,
+            mask_id,
+            background_bgr.shape,
+        )
+
+    return encode_png(background_bgr, "background")
 
 
 def inpaint_selected_mask_on_image(

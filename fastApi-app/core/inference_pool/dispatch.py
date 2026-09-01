@@ -65,6 +65,22 @@ def _execute_impl(job: JobRequest) -> JobResult:
             image_format=image_format,
         )
 
+    if job.kind == JobKind.ERASE:
+        from core.image_processing import erase_mask_on_image
+
+        assert job.image_id is not None and job.mask_id is not None
+        background_bytes = erase_mask_on_image(
+            image_id=job.image_id,
+            mask_id=job.mask_id,
+            base_dir=base_dir,
+        )
+        return JobResult(
+            job_id=job.job_id,
+            ok=True,
+            background_bytes=background_bytes,
+            image_format="png",
+        )
+
     if job.kind == JobKind.CLICK:
         from core.image_processing import process_click_on_image
         from schemas.image import ImageProcessingOptions

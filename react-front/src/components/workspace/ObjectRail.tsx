@@ -7,6 +7,7 @@ import { CheckIcon, EyeIcon, EyeOffIcon, MoreIcon, PlusIcon, RevertIcon, TrashIc
 const JOB_KIND_LABEL: Record<JobInfo["kind"], string> = {
   segment: "Segmenting",
   inpaint: "Removing",
+  erase: "Erasing",
   generate_3d: "Building 3D",
 };
 

@@ -102,6 +102,17 @@ module boundaries.
 | `object_id` | `int` | Zero-based integer id assigned to the newly created object within the session. |
 | `object_uuid` | `str` | Server-generated UUID; primary searchable key for object metadata endpoints. |
 
+## Erase
+
+`SubmitEraseRequest` is sent to `POST /images/erase`. Response is `JobSubmitResponse` (`202 {job_id}`) — the first blob's job id when the mask splits into several.
+
+| Field | Type | Description |
+|---|---|---|
+| `image_id` | `str` | Session UID. |
+| `mask_b64` | `str` | Base64 PNG of the full canvas erase mask (uint8 H×W, 255 = erase). |
+
+No cutout or object metadata is created. Disconnected blobs in the mask become separate `kind="erase"` jobs queued in FIFO order.
+
 ## Object Metadata
 
 `ObjectMetadataResponse` is returned by `GET /images/objects/{object_uuid}`, `PATCH /images/objects/{object_uuid}`, and `setObjectName`/`setObjectOffset` on the frontend.

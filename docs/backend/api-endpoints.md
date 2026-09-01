@@ -101,6 +101,22 @@ Behavior:
 
 If `mask_id` is unknown or candidate cache is gone, endpoint returns `404`. Overlap or canvas-busy conflicts return `409`. See [concurrency.md](concurrency.md).
 
+## `POST /images/erase`
+
+Queues erasure of one or more client-drawn mask regions and returns immediately (`202 {job_id}`). No segmentation, no cutout object — only the session background is inpainted.
+
+Request: `SubmitEraseRequest` — `{ image_id, mask_b64 }` where `mask_b64` is a PNG of the full canvas (uint8 H×W, 255 = erase). The frontend unions Shift-staged lasso regions into one PNG before submit.
+
+Behavior:
+
+1. Decode/threshold the PNG; **422** if shape ≠ current canvas or no usable foreground.
+2. Split disconnected 8-connected blobs (`cv2.connectedComponents`); drop specks under 64 px.
+3. For each blob: `create_job(kind="erase")`, persist `{uid}_mask_{job_id}_refined.npy`, return the first job id (siblings appear on the next sync-check).
+4. At claim time: same region lease + canvas writer sandwich as inpaint, but `BackgroundInpainter.cut_mask_from_image(..., compose_mask=None)` only — no `ObjectRow`, no cutout PNG.
+5. Write `{uid}_background.png`, `touch_session`, delete the job row on success.
+
+Handler: [`fastApi-app/core/jobs/handlers.py::run_erase_job`](../../fastApi-app/core/jobs/handlers.py).
+
 ## `POST /images/{uid}/batch`
 
 Blocking `def` handler. Discovers masks (`box` via SAM-everything on adapted depth, `clicks` via `verify=auto` segment, `objects` skips inpaint), peels overlapping stacks nearer-first using exclusive-region depth, inpaints sequentially with Hybrid verification, then generates GLBs. Per-object failures are skipped. Same-batch canvas updates are not treated as 409. External overlapping leases still 409 that object (skip). `verify` is forced to `auto`.

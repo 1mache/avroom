@@ -6,6 +6,7 @@ import {
   BackIcon,
   CheckIcon,
   CopyIcon,
+  EraserIcon,
   MultiPointIcon,
   RevertIcon,
   RotateIcon,
@@ -29,6 +30,9 @@ export interface ToolbarProps {
   onUndoLastSeed: () => void;
   areaMode: boolean;
   onArea: () => void;
+  eraserMode: boolean;
+  onEraser: () => void;
+  hasPendingEraseRegions: boolean;
   batchBusy: boolean;
   /** A box batch or multi-point seeds are staged and waiting for submit. */
   hasPendingBatch: boolean;
@@ -69,6 +73,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onUndoLastSeed,
   areaMode,
   onArea,
+  eraserMode,
+  onEraser,
+  hasPendingEraseRegions,
   batchBusy,
   hasPendingBatch,
   onSubmitBatch,
@@ -167,17 +174,30 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         type="button"
         className={`tool-btn${hasPendingBatch ? " is-armed" : ""}`}
         data-tip={
-          hasPendingSegmentSeeds
-            ? "Run multi-point cut"
-            : hasPendingBatch
-              ? "Run batch cut in the box"
-              : "Stage seeds or draw a box first"
+          hasPendingEraseRegions
+            ? "Run staged erase regions"
+            : hasPendingSegmentSeeds
+              ? "Run multi-point cut"
+              : hasPendingBatch
+                ? "Run batch cut in the box"
+                : "Stage seeds, a box, or erase regions first"
         }
-        aria-label="Submit cut"
+        aria-label="Submit pending work"
         disabled={!hasPendingBatch || batchBusy}
         onClick={onSubmitBatch}
       >
         {batchBusy ? <span className="tool-spinner" /> : <CheckIcon />}
+      </button>
+
+      <button
+        type="button"
+        className={`tool-btn${eraserMode ? " is-armed" : ""}`}
+        data-tip={eraserMode ? "Drag a loop on the photo" : "Erase area"}
+        aria-label="Erase area"
+        aria-pressed={eraserMode}
+        onClick={onEraser}
+      >
+        <EraserIcon />
       </button>
 
       <div

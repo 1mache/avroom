@@ -5,6 +5,7 @@ import {
   deleteObject as deleteObjectRequest,
   deleteObject3d as deleteObject3dRequest,
   duplicateObject as duplicateObjectRequest,
+  eraseMask,
   fetchCached3DModel,
   getJob,
   getSessionObjects,
@@ -370,6 +371,19 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       segmentImage(payload)
         .then(() => onMutated?.())
         .catch((err) => onError(err, "segment"));
+    },
+    [onError, onMutated],
+  );
+
+  const runErase = useCallback(
+    (maskB64: string) => {
+      const currentImageId = imageIdRef.current;
+      if (!currentImageId) {
+        return;
+      }
+      eraseMask({ image_id: currentImageId, mask_b64: maskB64 })
+        .then(() => onMutated?.())
+        .catch((err) => onError(err, "inpaint"));
     },
     [onError, onMutated],
   );
@@ -891,6 +905,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     isDuplicating,
     isImporting,
     runSegment,
+    runErase,
     runBatch,
     isBatching,
     closeMaskPicker: deferMaskPicker,

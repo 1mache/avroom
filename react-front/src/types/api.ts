@@ -11,7 +11,7 @@ export interface ImageUploadResponse {
   last_changed: string;
 }
 
-export type JobKind = "segment" | "inpaint" | "generate_3d";
+export type JobKind = "segment" | "inpaint" | "erase" | "generate_3d";
 export type JobStatus = "queued" | "running" | "done" | "failed" | "conflict";
 
 // One durable queued-work row, as returned by GET /jobs/active and embedded
@@ -49,6 +49,11 @@ export interface SubmitInpaintRequest {
   image_id: string;
   mask_id: string;
   from_job_id?: string | null;
+}
+
+export interface SubmitEraseRequest {
+  image_id: string;
+  mask_b64: string;
 }
 
 export interface Generate3DJobRequest {

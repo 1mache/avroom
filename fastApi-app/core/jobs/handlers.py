@@ -141,6 +141,38 @@ def run_inpaint_job(job: JobRecord) -> None:
     notify_pipeline_event(job.session_id, "Object removed", detail=f"Object {object_id}")
 
 
+def run_erase_job(job: JobRecord) -> None:
+    """Run erase for a queued job: inpaint the mask region, no object created."""
+    storage_dir = get_image_storage_dir()
+    mask_id = job.id
+    lease = None
+
+    try:
+        lease = try_admit_inpaint(job.session_id, mask_id, storage_dir)
+        acquire_canvas_writer(job.session_id)
+        try:
+            background_bytes = get_inference_client().run_erase(
+                image_id=job.session_id,
+                mask_id=mask_id,
+                base_dir=storage_dir,
+            )
+        except Exception as exc:
+            logger.exception("Erase job failed: job_id=%s session_id=%s", job.id, job.session_id)
+            notify_pipeline_event(job.session_id, "Region erased", ok=False, detail=str(exc))
+            raise
+
+        current_background_path(storage_dir, job.session_id).write_bytes(background_bytes)
+        delete_candidate(storage_dir, job.session_id, mask_id)
+        touch_session(job.session_id)
+    finally:
+        if lease is not None:
+            drop_lease(job.session_id, lease)
+        release_canvas_writer(job.session_id)
+
+    logger.info("Erase job complete: job_id=%s session_id=%s", job.id, job.session_id)
+    notify_pipeline_event(job.session_id, "Region erased")
+
+
 def run_generate_3d_job(job: JobRecord) -> None:
     """Run 3D generation for a queued job, reusing the shared GLB cache-or-generate helper."""
     object_id = job.payload["object_id"]

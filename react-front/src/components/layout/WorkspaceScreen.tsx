@@ -10,6 +10,7 @@ import {
   warmSessionMaps,
 } from "../../api/images";
 import { boxBoundsFromDraft, useAreaSelect } from "../../hooks/useAreaSelect";
+import { useLassoSelect, type LassoDraft } from "../../hooks/useLassoSelect";
 import { useConflictNotices, type ConflictContext } from "../../hooks/useConflictNotices";
 import { useDashboardPreview } from "../../hooks/useDashboardPreview";
 import { useHitTesting } from "../../hooks/useHitTesting";
@@ -40,6 +41,7 @@ import {
   type ResizeHandle,
   type Size,
 } from "../../utils/stageGeometry";
+import { rasterizeEraseMask } from "../../utils/lassoMask";
 import { ConfirmDialog } from "../widgets/ConfirmDialog";
 import { MaskPickerModal } from "../widgets/MaskPickerModal";
 import { MODEL_3D_FRAME_PADDING, Model3DFrame } from "../widgets/Model3DFrame";
@@ -47,6 +49,20 @@ import { ObjectRail } from "../workspace/ObjectRail";
 import { Toolbar } from "../workspace/Toolbar";
 
 const MAX_SEGMENT_SEEDS = 8;
+
+function lassoPolygonStagePoints(
+  polygon: ClickPosition[],
+  renderedRect: Rect,
+  naturalSize: Size,
+): string {
+  return polygon
+    .map((point) => {
+      const x = renderedRect.x + (point.x / naturalSize.width) * renderedRect.width;
+      const y = renderedRect.y + (point.y / naturalSize.height) * renderedRect.height;
+      return `${x},${y}`;
+    })
+    .join(" ");
+}
 
 const errorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback;
@@ -95,6 +111,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // pendingSeeds: foreground clicks in natural-image pixels — shown while
   // collecting multi-point seeds and kept on screen until the mask picker closes.
   const [cutMode, setCutMode] = useState(false);
+  const [eraserMode, setEraserMode] = useState(false);
   const [areaMode, setAreaMode] = useState(false);
   const [areaDraft, setAreaDraft] = useState<{
     start: ClickPosition;
@@ -103,6 +120,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const [pendingBatchSource, setPendingBatchSource] = useState<BatchSource | null>(null);
   const [batchUuids, setBatchUuids] = useState<Set<string>>(new Set());
   const [pendingSeeds, setPendingSeeds] = useState<ClickPosition[]>([]);
+  const [lassoDraft, setLassoDraft] = useState<LassoDraft | null>(null);
+  const [pendingEraseRegions, setPendingEraseRegions] = useState<ClickPosition[][]>([]);
   const [multiPoint, setMultiPoint] = useState(false);
   const [verifyMode, setVerifyMode] = useState<VerifyMode>("manual");
 
@@ -460,14 +479,35 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const handleCut = useCallback(() => {
     rotation.setRotateMode(false);
     setAreaMode(false);
+    setEraserMode(false);
+    setLassoDraft(null);
+    setPendingEraseRegions([]);
     setPendingBatchSource(null);
     setPendingSeeds([]);
     setCutMode((armed) => !armed);
   }, [rotation.setRotateMode]);
 
+  const handleEraser = useCallback(() => {
+    rotation.setRotateMode(false);
+    setCutMode(false);
+    setAreaMode(false);
+    setPendingBatchSource(null);
+    setPendingSeeds([]);
+    setEraserMode((armed) => {
+      if (armed) {
+        setLassoDraft(null);
+        setPendingEraseRegions([]);
+      }
+      return !armed;
+    });
+  }, [rotation.setRotateMode]);
+
   const handleArea = useCallback(() => {
     rotation.setRotateMode(false);
     setCutMode(false);
+    setEraserMode(false);
+    setLassoDraft(null);
+    setPendingEraseRegions([]);
     setPendingSeeds([]);
     setAreaMode((armed) => !armed);
   }, [rotation.setRotateMode]);
@@ -484,7 +524,40 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     setPendingBatchSource(source);
   }, []);
 
+  const submitEraseRegions = useCallback(
+    (regions: ClickPosition[][]) => {
+      if (!naturalSize || regions.length === 0) {
+        return;
+      }
+      const maskB64 = rasterizeEraseMask(naturalSize.width, naturalSize.height, regions);
+      if (!maskB64) {
+        return;
+      }
+      setPendingEraseRegions([]);
+      setEraserMode(false);
+      jobs.runErase(maskB64);
+    },
+    [jobs.runErase, naturalSize],
+  );
+
+  const handleLassoComplete = useCallback(
+    (polygon: ClickPosition[], shiftKey: boolean) => {
+      if (shiftKey) {
+        setPendingEraseRegions((prev) => [...prev, polygon]);
+        return;
+      }
+      const regions =
+        pendingEraseRegions.length > 0 ? [...pendingEraseRegions, polygon] : [polygon];
+      submitEraseRegions(regions);
+    },
+    [pendingEraseRegions, submitEraseRegions],
+  );
+
   const handleSubmitPendingBatch = useCallback(() => {
+    if (pendingEraseRegions.length > 0) {
+      submitEraseRegions(pendingEraseRegions);
+      return;
+    }
     if (pendingSeeds.length > 0) {
       fireSegmentFromSeeds(pendingSeeds);
       return;
@@ -495,7 +568,24 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     const source = pendingBatchSource;
     setPendingBatchSource(null);
     void jobs.runBatch(source);
-  }, [fireSegmentFromSeeds, jobs.isBatching, jobs.runBatch, pendingBatchSource, pendingSeeds.length]);
+  }, [
+    fireSegmentFromSeeds,
+    jobs.isBatching,
+    jobs.runBatch,
+    pendingBatchSource,
+    pendingEraseRegions,
+    pendingSeeds.length,
+    submitEraseRegions,
+  ]);
+
+  useLassoSelect({
+    lassoDraft,
+    setLassoDraft,
+    naturalSize,
+    renderedRect,
+    stageRef,
+    onLassoComplete: handleLassoComplete,
+  });
 
   useAreaSelect({
     areaDraft,
@@ -639,7 +729,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // Enter commits the rotation (same as pressing rotate again); Escape backs
   // out of whichever mode is armed. Both bail while a text field owns focus.
   useEffect(() => {
-    if (!jobs.isChoosingMask && !rotation.rotateMode && !cutMode && !areaMode && pendingSeeds.length === 0) {
+    if (
+      !jobs.isChoosingMask &&
+      !rotation.rotateMode &&
+      !cutMode &&
+      !areaMode &&
+      !eraserMode &&
+      pendingSeeds.length === 0 &&
+      pendingEraseRegions.length === 0
+    ) {
       return;
     }
 
@@ -658,12 +756,18 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         rotation.setRotateMode(false);
         setCutMode(false);
         setAreaMode(false);
+        setEraserMode(false);
         setAreaDraft(null);
+        setLassoDraft(null);
         setPendingBatchSource(null);
         setPendingSeeds([]);
+        setPendingEraseRegions([]);
       } else if (event.key === "Enter" && rotation.rotateMode) {
         event.preventDefault();
         void rotation.commitCurrentRotation();
+      } else if (event.key === "Enter" && pendingEraseRegions.length > 0) {
+        event.preventDefault();
+        submitEraseRegions(pendingEraseRegions);
       } else if (event.key === "Enter" && pendingSeeds.length > 0) {
         event.preventDefault();
         fireSegmentFromSeeds(pendingSeeds);
@@ -678,8 +782,11 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     rotation.rotateMode,
     cutMode,
     areaMode,
+    eraserMode,
     pendingSeeds,
+    pendingEraseRegions,
     fireSegmentFromSeeds,
+    submitEraseRegions,
     rotation.commitCurrentRotation,
     rotation.setRotateMode,
   ]);
@@ -700,6 +807,13 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         return;
       }
 
+      // Eraser armed: pointer-down starts a freehand lasso, not a selection.
+      if (eraserMode) {
+        event.preventDefault();
+        setLassoDraft({ points: [natural] });
+        return;
+      }
+
       // Scissors armed: this click is the segmentation seed, not a selection.
       if (areaMode) {
         event.preventDefault();
@@ -708,7 +822,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       }
 
       // Shift+click arms scissors and drops a seed — no need to press scissors first.
-      if (event.shiftKey && !cutMode && !rotation.rotateMode) {
+      if (event.shiftKey && !cutMode && !rotation.rotateMode && !eraserMode) {
         event.preventDefault();
         setCutMode(true);
         if (pendingSeeds.length >= MAX_SEGMENT_SEEDS) {
@@ -787,6 +901,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       naturalSize,
       renderedRect,
       cutMode,
+      eraserMode,
       areaMode,
       multiPoint,
       pendingSeeds.length,
@@ -909,6 +1024,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const activeJobs = jobs.jobs.filter((job) => job.status === "queued" || job.status === "running");
   const segmentingCount = activeJobs.filter((job) => job.kind === "segment").length;
   const removingCount = activeJobs.filter((job) => job.kind === "inpaint").length;
+  const erasingCount = activeJobs.filter((job) => job.kind === "erase").length;
+  const canvasWorkCount = removingCount + erasingCount;
 
   const status = jobs.isBatching
     ? "batch cutting"
@@ -916,8 +1033,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       ? "smart pasting"
       : segmentingCount > 0
         ? `finding masks${segmentingCount > 1 ? ` (${segmentingCount})` : ""}`
-        : removingCount > 0
-          ? `removing ${removingCount}`
+        : canvasWorkCount > 0
+          ? `removing ${canvasWorkCount}`
       : jobs.objects.some((o) => o.rotation?.status === "pending")
         ? "rotating"
         : jobs.isDuplicating
@@ -951,8 +1068,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         onUndoLastSeed={handleUndoLastSeed}
         areaMode={areaMode}
         onArea={handleArea}
+        eraserMode={eraserMode}
+        onEraser={handleEraser}
+        hasPendingEraseRegions={pendingEraseRegions.length > 0}
         batchBusy={jobs.isBatching}
-        hasPendingBatch={pendingBatchSource !== null || pendingSeeds.length > 0}
+        hasPendingBatch={
+          pendingBatchSource !== null ||
+          pendingSeeds.length > 0 ||
+          pendingEraseRegions.length > 0
+        }
         onSubmitBatch={handleSubmitPendingBatch}
         verifyMode={verifyMode}
         onVerifyModeChange={setVerifyMode}
@@ -970,7 +1094,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
       <main
         ref={stageRef}
-        className={`stage${cutMode || areaMode ? " is-picking" : ""}${objectDrag.isDragging ? " is-dragging" : ""}`}
+        className={`stage${cutMode || areaMode || eraserMode ? " is-picking" : ""}${objectDrag.isDragging ? " is-dragging" : ""}`}
       >
         {photoSrc ? (
           <>
@@ -1037,6 +1161,24 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                   </span>
                 ))}
               </div>
+            ) : null}
+
+            {renderedRect && naturalSize && (lassoDraft || pendingEraseRegions.length > 0) ? (
+              <svg className="stage-lasso-layer" aria-hidden="true">
+                {pendingEraseRegions.map((polygon, index) => (
+                  <polygon
+                    key={`pending-erase-${index}`}
+                    className="stage-lasso-path is-pending"
+                    points={lassoPolygonStagePoints(polygon, renderedRect, naturalSize)}
+                  />
+                ))}
+                {lassoDraft ? (
+                  <polyline
+                    className="stage-lasso-path"
+                    points={lassoPolygonStagePoints(lassoDraft.points, renderedRect, naturalSize)}
+                  />
+                ) : null}
+              </svg>
             ) : null}
 
             {rotation.rotateMode && rotation.glbData ? (
@@ -1121,6 +1263,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
         {rotation.rotateMode ? (
           <p className="stage-hint">Drag to orbit · Enter applies · Esc cancels</p>
+        ) : eraserMode ? (
+          <p className="stage-hint">
+            {pendingEraseRegions.length > 0
+              ? `${pendingEraseRegions.length} region${pendingEraseRegions.length === 1 ? "" : "s"} · Shift-drag adds · Enter or checkmark runs · Esc cancels`
+              : "Drag a loop to erase · Shift-drag stages · Esc cancels"}
+          </p>
         ) : areaMode ? (
           <p className="stage-hint">Drag a box around the furniture · Esc cancels</p>
         ) : pendingBatchSource ? (

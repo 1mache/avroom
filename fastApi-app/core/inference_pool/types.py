@@ -10,6 +10,7 @@ class JobKind(str, Enum):
 
     SEGMENT = "segment"
     INPAINT = "inpaint"
+    ERASE = "erase"
     CLICK = "click"
     RESCALE_BY_DEPTH = "rescale_by_depth"
     SMART_PASTE = "smart_paste"

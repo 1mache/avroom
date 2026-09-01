@@ -16,6 +16,7 @@ import type {
   SmartPasteRequest,
   SmartPasteResponse,
   SubmitInpaintRequest,
+  SubmitEraseRequest,
   WarmSessionMapsResponse,
   UidCacheStatusResponse,
   UpdateObjectRequest,
@@ -212,6 +213,19 @@ export async function segmentImage(payload: SegmentRequest): Promise<JobSubmitRe
 // Queues inpainting and returns its job id immediately (202).
 export async function inpaintMask(payload: SubmitInpaintRequest): Promise<JobSubmitResponse> {
   const response = await fetch(`${API_BASE_URL}/images/inpaint`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  return handleJsonResponse<JobSubmitResponse>(response);
+}
+
+// Queues erase inpainting and returns the first job id immediately (202).
+export async function eraseMask(payload: SubmitEraseRequest): Promise<JobSubmitResponse> {
+  const response = await fetch(`${API_BASE_URL}/images/erase`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

@@ -414,6 +414,26 @@ input {
   background: color-mix(in srgb, var(--cyan) 18%, transparent);
 }
 
+.stage-lasso-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 180;
+}
+
+.stage-lasso-path {
+  fill: color-mix(in srgb, var(--cyan) 14%, transparent);
+  stroke: var(--cyan);
+  stroke-width: 1.5;
+}
+
+.stage-lasso-path.is-pending {
+  fill: color-mix(in srgb, var(--cyan) 8%, transparent);
+  stroke: var(--ink-dim);
+}
+
 .stage-seed-markers {
   position: absolute;
   inset: 0;

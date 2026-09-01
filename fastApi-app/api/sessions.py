@@ -17,11 +17,17 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pathlib import Path
 
 from core.image_codec import to_base64_ascii
-from core.image_processing import debug_click_image_path
+from core.image_processing import (
+    canvas_shape_from_bytes,
+    debug_click_image_path,
+    decode_erase_mask_png,
+    load_canvas_bytes,
+    split_mask_components,
+)
 from core.auth.identity import current_user_id
 from core.inference_pool.client import get_inference_client
 from core.inference_pool.session_runtime import SessionConflictError
-from core.mask_cache import delete_candidates
+from core.mask_cache import delete_candidates, save_refined_mask_only
 from core.repositories.job_repo import create_job, delete_job, get_job, list_session_jobs
 from core.depth_cache import delete_session_depth_maps
 from core.normal_cache import delete_session_normal_maps
@@ -29,7 +35,7 @@ from core.camera_calib_cache import delete_session_camera_calib
 from core.object_metadata import list_object_ids
 from schemas.batch import BatchRequest, BatchResponse
 from schemas.image import ClickRequest, ClickResultResponse, SegmentRequest
-from schemas.jobs import JobSubmitResponse, SubmitInpaintRequest
+from schemas.jobs import JobSubmitResponse, SubmitEraseRequest, SubmitInpaintRequest
 from schemas.sessions import (
     SessionInfo,
     SessionSyncCheckRequest,
@@ -197,6 +203,45 @@ async def inpaint_mask(
             delete_job(request.from_job_id)
 
     return JobSubmitResponse(job_id=job.id)
+
+
+@router.post("/erase", response_model=JobSubmitResponse, status_code=202)
+async def erase_region(
+    request: SubmitEraseRequest, user_id: str = Depends(current_user_id)
+) -> JobSubmitResponse:
+    """Queue erasure of client-drawn mask region(s) and return immediately.
+
+    The submitted mask may contain several disconnected blobs (e.g. chair +
+    table lassoed with Shift). Each blob becomes its own durable erase job so
+    later jobs inpaint against the canvas the earlier ones already wrote.
+    """
+    if not is_session_registered(request.image_id):
+        raise HTTPException(status_code=404, detail=f"Unknown session uid={request.image_id}")
+
+    storage_dir = get_image_storage_dir()
+    try:
+        canvas_bytes = load_canvas_bytes(image_id=request.image_id, base_dir=storage_dir)
+        expected_shape = canvas_shape_from_bytes(canvas_bytes)
+        mask = decode_erase_mask_png(request.mask_b64, expected_shape)
+        components = split_mask_components(mask)
+    except ValueError as exc:
+        logger.warning("Erase rejected: image_id=%s reason=%s", request.image_id, exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    job_ids: list[str] = []
+    for component in components:
+        job = create_job(user_id, request.image_id, "erase", {})
+        save_refined_mask_only(storage_dir, request.image_id, job.id, component)
+        job_ids.append(job.id)
+
+    logger.info(
+        "Erase queued: image_id=%s blobs=%d first_job_id=%s user_id=%s",
+        request.image_id,
+        len(job_ids),
+        job_ids[0],
+        user_id,
+    )
+    return JobSubmitResponse(job_id=job_ids[0])
 
 
 @router.post("/{uid}/batch", response_model=BatchResponse)

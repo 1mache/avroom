@@ -54,6 +54,14 @@ export const AreaIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
+/** Freehand erase — lasso loop with a gap at the tip. */
+export const EraserIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <path d="M6 18l8-8 4 4-8 8H6v-4z" />
+    <path d="M13 7l3-3 2 2-3 3" />
+  </Svg>
+);
+
 export const RotateIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>
     <ellipse cx="12" cy="12" rx="9" ry="4.2" transform="rotate(-24 12 12)" />

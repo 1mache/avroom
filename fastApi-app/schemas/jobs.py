@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from schemas.common import CutoutBounds
 
-JobKind = Literal["segment", "inpaint", "generate_3d"]
+JobKind = Literal["segment", "inpaint", "erase", "generate_3d"]
 JobStatus = Literal["queued", "running", "done", "failed", "conflict"]
 
 
@@ -39,7 +39,7 @@ class JobInfo(BaseModel):
 
 
 class JobSubmitResponse(BaseModel):
-    """Response for the three job-submitting routes: segment, inpaint, generate_3d."""
+    """Response for job-submitting routes: segment, inpaint, erase, generate_3d."""
 
     job_id: Annotated[str, Field(description="Id of the newly queued job. Poll via GET /jobs/{job_id}.")]
 
@@ -102,6 +102,16 @@ class SubmitInpaintRequest(BaseModel):
             default=None,
             description="Id of the segment job this mask came from, so its row is consumed atomically.",
         ),
+    ]
+
+
+class SubmitEraseRequest(BaseModel):
+    """Request payload for POST /images/erase (submit)."""
+
+    image_id: Annotated[str, Field(description="Session UID.")]
+    mask_b64: Annotated[
+        str,
+        Field(min_length=1, description="Base64-encoded PNG erase mask (uint8 HxW, 255=erase)."),
     ]
 
 

@@ -102,6 +102,25 @@ class InferenceClient:
         assert result.image_format is not None
         return result.background_bytes, result.cutout_bytes, result.image_format
 
+    def run_erase(
+        self,
+        *,
+        image_id: str,
+        mask_id: str,
+        base_dir: Path,
+    ) -> bytes:
+        job = JobRequest(
+            job_id=_new_job_id(),
+            kind=JobKind.ERASE,
+            storage_dir=str(base_dir.resolve()),
+            image_id=image_id,
+            mask_id=mask_id,
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.background_bytes is not None
+        return result.background_bytes
+
     def run_click(
         self,
         *,

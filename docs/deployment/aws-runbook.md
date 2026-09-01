@@ -210,6 +210,21 @@ Save with `Ctrl+O`, `Enter`, `Ctrl+X`.
 
 ## 6. Build and start
 
+`run-ec2.sh` (repo root) wraps the compose invocation below — same two `-f`
+files, `--profile full`, then follows logs — so the flags don't need typing by
+hand every time:
+
+```bash
+chmod +x run-ec2.sh   # once, if git didn't carry the exec bit
+./run-ec2.sh           # CPU path
+GPU=1 ./run-ec2.sh     # GPU path (adds -f docker-compose.gpu.yml)
+```
+
+Ctrl+C stops following logs, not the containers — they're `restart:
+unless-stopped`. Anything else (`./run-ec2.sh down`, `ps`, `exec api bash`)
+passes straight through with the right flags already applied. Equivalent by
+hand:
+
 ```bash
 # CPU path
 docker compose -f docker-compose.yml -f docker-compose.deploy.yml \
@@ -220,7 +235,9 @@ docker compose -f docker-compose.yml -f docker-compose.deploy.yml \
   -f docker-compose.gpu.yml --profile full up -d --build
 ```
 
-First build takes **15–30 minutes** (torch alone is ~3GB). Watch it with:
+First build takes **15–30 minutes** on `m7i.xlarge`/`g4dn.xlarge` (torch alone
+is ~3GB); on a smaller `m7i-flex.large` (2 vCPU) budget 40–60 minutes. Watch it
+with:
 
 ```bash
 docker compose logs -f api
@@ -262,8 +279,23 @@ seconds — that is the expected cost of this path, not a bug.
 ## Day-to-day
 
 ```bash
+# logs (Ctrl+C detaches, containers keep running)
+./run-ec2.sh logs -f
+
+# restart after changing .env (GPU box: GPU=1 ./run-ec2.sh ...)
+./run-ec2.sh up -d
+
+# deploy new code
+git pull
+./run-ec2.sh
+```
+
+Equivalent raw compose commands, if not using the script:
+
+```bash
 # logs
-docker compose logs -f api
+docker compose -f docker-compose.yml -f docker-compose.deploy.yml \
+  --profile full logs -f api
 
 # restart after changing .env (CPU path; add -f docker-compose.gpu.yml for GPU)
 docker compose -f docker-compose.yml -f docker-compose.deploy.yml --profile full up -d

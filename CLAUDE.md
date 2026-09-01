@@ -336,6 +336,12 @@ rationale in `docs/superpowers/specs/2026-08-29-aws-integration-design.md`.
 - **`docker-entrypoint.sh`** runs `alembic upgrade head` then uvicorn. It
   deliberately does *not* run `scripts/migrate_local_sidecars_to_db.py` (which
   `run.bat` does) — that imports legacy JSON sidecars from a dev machine.
+- **`run-ec2.sh`** (repo root) is the deployed box's entry point — the Linux,
+  containers-only counterpart to `run.bat`. Wraps `docker compose -f
+  docker-compose.yml -f docker-compose.deploy.yml [-f docker-compose.gpu.yml]
+  --profile full`, builds/starts, then follows logs; any args (`down`, `ps`,
+  `exec api bash`) pass through with those flags already applied. `GPU=1
+  ./run-ec2.sh` adds the GPU overlay. See `docs/deployment/aws-runbook.md`.
 - **`INFERENCE_WORKERS=0` in production.** Two workers would each load their own
   copy of every model and exhaust the T4's 16GB VRAM.
 - **`torchmcubes` is deliberately not a dependency**, so the **TripoSR fallback

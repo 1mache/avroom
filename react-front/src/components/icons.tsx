@@ -133,6 +133,22 @@ export const RevertIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
+/** Backtrack one background history stage. */
+export const BacktrackIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <path d="M9 5.5L4.5 10l4.5 4.5" />
+    <path d="M4.5 10H16a5.5 5.5 0 010 11H14" />
+  </Svg>
+);
+
+/** Move forward one background history stage. */
+export const ForwardIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <path d="M15 5.5l4.5 4.5-4.5 4.5" />
+    <path d="M19.5 10H8a5.5 5.5 0 000 11h2" />
+  </Svg>
+);
+
 export const PlusIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>
     <path d="M12 4.8v14.4M4.8 12h14.4" />

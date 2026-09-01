@@ -26,7 +26,7 @@ from core.image_processing import (
 )
 from core.auth.identity import current_user_id
 from core.inference_pool.client import get_inference_client
-from core.inference_pool.session_runtime import SessionConflictError
+from core.inference_pool.session_runtime import SessionConflictError, acquire_canvas_writer, release_canvas_writer
 from core.mask_cache import delete_candidates, save_refined_mask_only
 from core.repositories.job_repo import create_job, delete_job, get_job, list_session_jobs
 from core.depth_cache import delete_session_depth_maps
@@ -44,6 +44,7 @@ from schemas.sessions import (
 )
 from core.object_storage import (
     current_background_path,
+    delete_session_background_history,
     legacy_object_cutout_path,
     legacy_object_glb_path,
     object_cutout_path,
@@ -60,6 +61,13 @@ from core.repositories.session_repo import (
     list_sessions_with_names,
     set_session_name,
     touch_session,
+)
+from core.session_history import (
+    HistoryBoundaryError,
+    HistoryConflictError,
+    commit_background,
+    redo_background,
+    undo_background,
 )
 from settings import get_3d_storage_dir, get_image_storage_dir
 
@@ -117,7 +125,7 @@ def handle_click(request: ClickRequest) -> ClickResultResponse:
 
     # Legacy endpoint: writes the pre-numbering artifact names, which
     # resolve_object_cutout_path still reads back as object id 0.
-    current_background_path(storage_dir, request.image_id).write_bytes(background_bytes)
+    commit_background(request.image_id, background_bytes, storage_dir)
     legacy_object_cutout_path(storage_dir, request.image_id).write_bytes(cutout_bytes)
     touch_session(request.image_id)
 
@@ -316,6 +324,7 @@ async def delete_session(uid: str) -> Response:
         removed += delete_session_depth_maps(storage_dir, uid)
         removed += delete_session_normal_maps(storage_dir, uid)
         removed += delete_session_camera_calib(storage_dir, uid)
+        removed += delete_session_background_history(storage_dir, uid)
 
     except Exception as exc:
         logger.error("Session delete failed: uid=%s error=%s", uid, exc)
@@ -342,6 +351,60 @@ async def set_name(uid: str, request: SetNameRequest) -> SessionInfo:
     last_changed = touch_session(uid)
     logger.info("Name set: uid=%s name=%r", uid, request.name)
     return SessionInfo(uid=uid, name=request.name, last_changed=last_changed)
+
+
+def _run_history_step(uid: str, *, undo: bool) -> Response:
+    """Shared body for undo/redo: canvas-writer lock, history step, touch."""
+
+    storage_dir = get_image_storage_dir()
+    action = "undo" if undo else "redo"
+    logger.info("Background %s requested: uid=%s", action, uid)
+    try:
+        try:
+            acquire_canvas_writer(uid)
+        except SessionConflictError as exc:
+            logger.warning("Background %s rejected — canvas writer timeout: uid=%s", action, uid)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        try:
+            if undo:
+                undo_background(uid, storage_dir)
+            else:
+                redo_background(uid, storage_dir)
+            touch_session(uid)
+        finally:
+            release_canvas_writer(uid)
+    except SessionNotFoundError:
+        logger.warning("Background %s failed — unknown uid: %s", action, uid)
+        raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'") from None
+    except HistoryConflictError as exc:
+        logger.warning("Background %s rejected — active jobs: uid=%s", action, uid)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except HistoryBoundaryError as exc:
+        logger.warning("Background %s rejected — boundary: uid=%s", action, uid)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Background %s failed: uid=%s", action, uid)
+        raise HTTPException(status_code=500, detail=f"Background {action} failed: {exc}") from exc
+
+    logger.info("Background %s complete: uid=%s", action, uid)
+    return Response(status_code=204)
+
+
+@router.post("/{uid}/history/undo", status_code=204)
+def undo_session_background(uid: str) -> Response:
+    """Restore the previous background stage (and hide later objects)."""
+
+    return _run_history_step(uid, undo=True)
+
+
+@router.post("/{uid}/history/redo", status_code=204)
+def redo_session_background(uid: str) -> Response:
+    """Move one stage forward on the background history stack."""
+
+    return _run_history_step(uid, undo=False)
 
 
 @router.post("/{uid}/sync-check", response_model=SessionSyncCheckResponse)

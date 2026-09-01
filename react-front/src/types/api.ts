@@ -150,6 +150,8 @@ export interface UidCacheStatusResponse {
   has_background: boolean;
   has_cutout: boolean;
   has_3d: boolean;
+  can_undo: boolean;
+  can_redo: boolean;
   cutout_bounds?: CutoutBounds | null;
 }
 

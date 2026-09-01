@@ -6,7 +6,9 @@ import {
   deleteJob,
   getSessionObjects,
   getUidCacheStatus,
+  redoSessionBackground,
   setSessionName as saveSessionName,
+  undoSessionBackground,
   warmSessionMaps,
 } from "../../api/images";
 import { boxBoundsFromDraft, useAreaSelect } from "../../hooks/useAreaSelect";
@@ -129,6 +131,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const [showOriginalIds, setShowOriginalIds] = useState<ReadonlySet<number>>(new Set());
 
   const [smartPaste, setSmartPaste] = useState(false);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const [historyBusy, setHistoryBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Object id awaiting delete confirmation. Deletion is permanent (the
   // background keeps its inpainted hole), so the trash button arms this
@@ -161,6 +166,18 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // Same trick for the dashboard thumbnail: capturing it needs state declared
   // further down, but onMutated has to be passed into useSessionJobs up here.
   const capturePreviewRef = useRef<() => void>(() => {});
+  const applyHistoryFlags = useCallback((flags: { canUndo: boolean; canRedo: boolean }) => {
+    setCanUndo(flags.canUndo);
+    setCanRedo(flags.canRedo);
+  }, []);
+  const refreshHistoryFlags = useCallback(async () => {
+    try {
+      const status = await getUidCacheStatus(uid);
+      applyHistoryFlags({ canUndo: status.can_undo, canRedo: status.can_redo });
+    } catch {
+      // Non-fatal — toolbar buttons stay at their last known state.
+    }
+  }, [uid, applyHistoryFlags]);
   const handleMutated = useCallback(() => {
     // A mutation (inpaint, most commonly) can change the canvas the depth/
     // normal maps were warmed for — forget the "already warm" mark so the
@@ -168,7 +185,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     warmedSessionIds.delete(uid);
     recordLocalMutationRef.current();
     capturePreviewRef.current();
-  }, [uid]);
+    void refreshHistoryFlags();
+  }, [uid, refreshHistoryFlags]);
 
   // A queued segment/inpaint job resolving to "conflict" (its mask/click
   // overlapped an in-flight removal) reuses the same inline notice a
@@ -202,11 +220,24 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     setBackgroundSrc: jobs.setBackgroundSrc,
     applyServerJobs: jobs.applyServerJobs,
     isDeleted: jobs.isObjectDeleted,
+    applyHistoryFlags,
   });
 
   useEffect(() => {
     recordLocalMutationRef.current = sync.recordLocalMutation;
   }, [sync.recordLocalMutation]);
+
+  // Polling stops when hasPendingWork flips false — often the same tick the
+  // erase/inpaint job lands. Reconcile may have already run, but if polling
+  // ended before needs_refresh was seen, refresh history flags once here.
+  const hadPendingWorkRef = useRef(jobs.hasPendingWork);
+  useEffect(() => {
+    if (hadPendingWorkRef.current && !jobs.hasPendingWork) {
+      void refreshHistoryFlags();
+      recordLocalMutationRef.current();
+    }
+    hadPendingWorkRef.current = jobs.hasPendingWork;
+  }, [jobs.hasPendingWork, refreshHistoryFlags]);
 
   const selectedObject = jobs.objects.find((o) => o.objectId === jobs.selectedObjectId) ?? null;
 
@@ -273,6 +304,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           return;
         }
         setSessionName(status.name ?? uid);
+        setCanUndo(status.can_undo);
+        setCanRedo(status.can_redo);
 
         if (status.has_background) {
           jobs.setBackgroundSrc(`${API_BASE_URL}/images/${uid}/background`);
@@ -1052,6 +1085,66 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     });
   }, [jobs.setJobs]);
 
+  const runHistoryStep = useCallback(
+    async (direction: "undo" | "redo") => {
+      if (historyBusy || jobs.hasPendingWork) {
+        return;
+      }
+      setHistoryBusy(true);
+      try {
+        if (direction === "undo") {
+          await undoSessionBackground(uid);
+        } else {
+          await redoSessionBackground(uid);
+        }
+        handleMutated();
+      } catch (stepError) {
+        setError(errorMessage(stepError, `Failed to ${direction} room history.`));
+      } finally {
+        setHistoryBusy(false);
+      }
+    },
+    [historyBusy, jobs.hasPendingWork, uid, handleMutated],
+  );
+
+  const handleBacktrack = useCallback(() => {
+    void runHistoryStep("undo");
+  }, [runHistoryStep]);
+
+  const handleForward = useCallback(() => {
+    void runHistoryStep("redo");
+  }, [runHistoryStep]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+        return;
+      }
+      const mod = event.ctrlKey || event.metaKey;
+      if (!mod) {
+        return;
+      }
+      if (event.key === "z" || event.key === "Z") {
+        if (event.shiftKey) {
+          if (canRedo && !historyBusy && !jobs.hasPendingWork) {
+            event.preventDefault();
+            void runHistoryStep("redo");
+          }
+        } else if (canUndo && !historyBusy && !jobs.hasPendingWork) {
+          event.preventDefault();
+          void runHistoryStep("undo");
+        }
+      } else if ((event.key === "y" || event.key === "Y") && canRedo && !historyBusy && !jobs.hasPendingWork) {
+        event.preventDefault();
+        void runHistoryStep("redo");
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [canRedo, canUndo, historyBusy, jobs.hasPendingWork, runHistoryStep]);
+
   return (
     <div className="workspace">
       <Toolbar
@@ -1089,6 +1182,11 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         onToggleSmartPaste={handleToggleSmartPaste}
         isDeleting={jobs.isDeleting}
         onDeleteObject={handleDeleteObject}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        historyBusy={historyBusy}
+        onBacktrack={handleBacktrack}
+        onForward={handleForward}
         status={status}
       />
 

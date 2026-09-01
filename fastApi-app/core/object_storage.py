@@ -133,6 +133,26 @@ def resolve_object_glb_path(glb_dir: Path, uid: str, object_id: int) -> Path:
     return numbered
 
 
+def background_history_path(base_dir: Path, uid: str, seq: int) -> Path:
+    """Return the path for one background-history snapshot at *seq*.
+
+    Snapshots are written as ``{uid}_bg_hist_{seq}.png``. Seq ``0`` is the
+    pre-first-inpaint original upload and is represented by the absence of
+    both a live ``{uid}_background.png`` and a ``hist_0`` file.
+    """
+
+    return base_dir / f"{uid}_bg_hist_{seq}.png"
+
+
+def delete_session_background_history(base_dir: Path, uid: str) -> int:
+    """Delete every ``{uid}_bg_hist_*.png`` file. Returns files removed."""
+
+    removed = 0
+    for path in base_dir.glob(f"{uid}_bg_hist_*.png"):
+        removed += remove_file(path)
+    return removed
+
+
 def current_background_path(base_dir: Path, uid: str) -> Path:
     """Return the path of the cumulative background canvas for a session.
 

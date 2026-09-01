@@ -51,6 +51,9 @@ class SessionRow(Base):
     )
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_changed: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    history_min: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    history_cursor: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    history_head: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now_utc, nullable=False)
 
     user: Mapped[User] = relationship(back_populates="sessions")
@@ -79,6 +82,7 @@ class ObjectRow(Base):
     offset_x: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     offset_y: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     display_scale: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
+    stage_seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     session: Mapped[SessionRow] = relationship(back_populates="objects")
 

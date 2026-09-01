@@ -216,6 +216,8 @@ The handler reads `request.model_fields_set` (which keys were actually present i
 | `has_background` | `bool` | Background PNG cached on disk. |
 | `has_cutout` | `bool` | Cutout PNG cached on disk. |
 | `has_3d` | `bool` | GLB model cached on disk. |
+| `can_undo` | `bool` | True when `history_cursor > history_min`. |
+| `can_redo` | `bool` | True when `history_cursor < history_head`. |
 | `cutout_bounds` | `CutoutBounds \| null` | Tight visible-object bounds from cached cutout. |
 
 ## Legacy

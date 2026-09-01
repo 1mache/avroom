@@ -20,7 +20,8 @@ from sqlalchemy import func, select
 
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.object_storage import resolve_object_cutout_path, resolve_object_glb_path
-from db.models import ObjectRow
+from core.session_history import get_history_cursor
+from db.models import ObjectRow, SessionRow
 from db.session import session_scope
 from schemas.common import CutoutBounds, DEFAULT_SOURCE_ELEVATION_DEG
 from schemas.objects import ObjectFields, ObjectMetadataResponse
@@ -100,6 +101,14 @@ class ObjectMetadata(ObjectFields):
             ),
         ),
     ]
+    stage_seq: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Background history stage when this object was created.",
+        ),
+    ]
 
 
 def _row_to_metadata(row: ObjectRow) -> ObjectMetadata:
@@ -118,6 +127,7 @@ def _row_to_metadata(row: ObjectRow) -> ObjectMetadata:
         offset_x=row.offset_x,
         offset_y=row.offset_y,
         display_scale=row.display_scale,
+        stage_seq=row.stage_seq,
     )
 
 
@@ -149,6 +159,7 @@ def save_object_metadata(metadata: ObjectMetadata) -> None:
                 offset_x=metadata.offset_x,
                 offset_y=metadata.offset_y,
                 display_scale=metadata.display_scale,
+                stage_seq=metadata.stage_seq,
             )
         )
     logger.info(
@@ -179,14 +190,19 @@ def get_object_by_uuid(object_uuid: str) -> ObjectMetadata | None:
         return _row_to_metadata(row) if row is not None else None
 
 
-def list_object_ids(session_id: str) -> list[int]:
-    """Return sorted list of object ids for *session_id*."""
+def list_object_ids(session_id: str, *, visible_only: bool = False) -> list[int]:
+    """Return sorted object ids for *session_id*.
+
+    When *visible_only* is true, only objects at or before the session's
+    current ``history_cursor`` are returned (redo-hidden objects are omitted).
+    """
     with session_scope() as db:
-        rows = db.execute(
-            select(ObjectRow.object_id)
-            .where(ObjectRow.session_id == session_id)
-            .order_by(ObjectRow.object_id)
-        ).scalars().all()
+        stmt = select(ObjectRow.object_id).where(ObjectRow.session_id == session_id)
+        if visible_only:
+            session_row = db.get(SessionRow, session_id)
+            if session_row is not None:
+                stmt = stmt.where(ObjectRow.stage_seq <= session_row.history_cursor)
+        rows = db.execute(stmt.order_by(ObjectRow.object_id)).scalars().all()
         return list(rows)
 
 
@@ -322,6 +338,7 @@ def create_object_metadata(
     offset_x: float = 0.0,
     offset_y: float = 0.0,
     display_scale: float = 1.0,
+    stage_seq: int = 0,
 ) -> ObjectMetadata:
     """Build a new metadata record with a fresh UUID and timestamp (not persisted)."""
     return ObjectMetadata(
@@ -339,6 +356,7 @@ def create_object_metadata(
         offset_x=offset_x,
         offset_y=offset_y,
         display_scale=display_scale,
+        stage_seq=stage_seq,
     )
 
 
@@ -470,6 +488,7 @@ def build_clone_metadata(
         offset_x=offset_x,
         offset_y=offset_y,
         display_scale=source.display_scale,
+        stage_seq=get_history_cursor(source.session_id),
     )
 
 

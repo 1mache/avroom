@@ -29,7 +29,8 @@ from core.mask_cache import delete_candidate
 from core.notifications import notify_pipeline_event
 from core.object_3d import ensure_object_glb
 from core.object_metadata import next_object_id, save_object_metadata
-from core.object_storage import current_background_path, object_cutout_path, resolve_object_cutout_path
+from core.object_storage import object_cutout_path, resolve_object_cutout_path
+from core.session_history import commit_background
 from core.repositories.job_repo import JobRecord, reserved_mask_ids
 from core.repositories.session_repo import touch_session
 from schemas.image import ImageProcessingOptions
@@ -119,9 +120,9 @@ def run_inpaint_job(job: JobRecord) -> None:
             object_id=object_id,
             base_dir=storage_dir,
         )
+        new_cursor = commit_background(job.session_id, background_bytes, storage_dir)
+        object_metadata = object_metadata.model_copy(update={"stage_seq": new_cursor})
         save_object_metadata(object_metadata)
-
-        current_background_path(storage_dir, job.session_id).write_bytes(background_bytes)
         object_cutout_path(storage_dir, job.session_id, object_id).write_bytes(cutout_bytes)
 
         delete_candidate(storage_dir, job.session_id, mask_id)
@@ -161,7 +162,7 @@ def run_erase_job(job: JobRecord) -> None:
             notify_pipeline_event(job.session_id, "Region erased", ok=False, detail=str(exc))
             raise
 
-        current_background_path(storage_dir, job.session_id).write_bytes(background_bytes)
+        commit_background(job.session_id, background_bytes, storage_dir)
         delete_candidate(storage_dir, job.session_id, mask_id)
         touch_session(job.session_id)
     finally:

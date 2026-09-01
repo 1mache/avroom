@@ -188,6 +188,24 @@ export async function getUidCacheStatus(uid: string): Promise<UidCacheStatusResp
   return handleJsonResponse<UidCacheStatusResponse>(response);
 }
 
+export async function undoSessionBackground(uid: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/images/${uid}/history/undo`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, await extractErrorDetail(response));
+  }
+}
+
+export async function redoSessionBackground(uid: string): Promise<void> {
+  const response = await fetch(`${API_BASE_URL}/images/${uid}/history/redo`, {
+    method: "POST",
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, await extractErrorDetail(response));
+  }
+}
+
 export async function warmSessionMaps(uid: string): Promise<WarmSessionMapsResponse> {
   const response = await fetch(`${API_BASE_URL}/images/${uid}/warm-maps`, {
     method: "POST",

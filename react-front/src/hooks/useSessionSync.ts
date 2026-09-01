@@ -21,6 +21,8 @@ interface UseSessionSyncOptions {
   applyServerJobs: (jobs: JobInfo[]) => void;
   /** Objects the user deleted client-side; the server still returns them. */
   isDeleted: (objectId: number) => boolean;
+  /** Called whenever reconcile fetches cache-status (background + history flags). */
+  applyHistoryFlags?: (flags: { canUndo: boolean; canRedo: boolean }) => void;
 }
 
 /**
@@ -38,6 +40,7 @@ export function useSessionSync(options: UseSessionSyncOptions) {
     setBackgroundSrc,
     applyServerJobs,
     isDeleted,
+    applyHistoryFlags,
   } = options;
 
   const [lastChanged, setLastChangedState] = useState<string | null>(null);
@@ -130,11 +133,15 @@ export function useSessionSync(options: UseSessionSyncOptions) {
             ? `${API_BASE_URL}/images/${uid}/background?t=${encodeURIComponent(freshTimestamp)}`
             : null,
         );
+        applyHistoryFlags?.({
+          canUndo: cache.can_undo,
+          canRedo: cache.can_redo,
+        });
       } catch {
         // Non-fatal — next poll/focus tick tries again.
       }
     },
-    [setObjects, setSelectedObjectId, setBackgroundSrc, isDeleted],
+    [setObjects, setSelectedObjectId, setBackgroundSrc, isDeleted, applyHistoryFlags],
   );
 
   const checkNow = useCallback(async () => {

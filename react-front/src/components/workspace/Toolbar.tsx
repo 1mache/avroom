@@ -4,9 +4,11 @@ import type { VerifyMode } from "../../types/api";
 import {
   AreaIcon,
   BackIcon,
+  BacktrackIcon,
   CheckIcon,
   CopyIcon,
   EraserIcon,
+  ForwardIcon,
   MultiPointIcon,
   RevertIcon,
   RotateIcon,
@@ -50,6 +52,11 @@ export interface ToolbarProps {
   onToggleSmartPaste: () => void;
   isDeleting: boolean;
   onDeleteObject: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  historyBusy: boolean;
+  onBacktrack: () => void;
+  onForward: () => void;
   /** Short readout of in-flight work, e.g. "removing 2". Null when idle. */
   status: string | null;
 }
@@ -90,9 +97,15 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onToggleSmartPaste,
   isDeleting,
   onDeleteObject,
+  canUndo,
+  canRedo,
+  historyBusy,
+  onBacktrack,
+  onForward,
   status,
 }) => {
   const objectToolsDisabled = !hasSelection;
+  const historyDisabled = historyBusy || Boolean(status);
 
   return (
     <header className="toolbar">
@@ -225,6 +238,28 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           Auto
         </button>
       </div>
+
+      <button
+        type="button"
+        className="tool-btn"
+        data-tip="Backtrack room"
+        aria-label="Backtrack room"
+        disabled={!canUndo || historyDisabled}
+        onClick={onBacktrack}
+      >
+        {historyBusy ? <span className="tool-spinner" /> : <BacktrackIcon />}
+      </button>
+
+      <button
+        type="button"
+        className="tool-btn"
+        data-tip="Forward room"
+        aria-label="Forward room"
+        disabled={!canRedo || historyDisabled}
+        onClick={onForward}
+      >
+        <ForwardIcon />
+      </button>
 
       <button
         type="button"

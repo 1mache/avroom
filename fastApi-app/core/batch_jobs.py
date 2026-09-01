@@ -26,7 +26,8 @@ from core.inference_pool.session_runtime import (
 )
 from core.mask_cache import delete_candidate, load_refined_mask, save_candidate
 from core.object_metadata import get_object_by_uuid, next_object_id, save_object_metadata
-from core.object_storage import current_background_path, object_cutout_path, object_glb_path
+from core.object_storage import object_cutout_path, object_glb_path
+from core.session_history import commit_background
 from core.repositories.session_repo import get_session_last_changed, touch_session
 from schemas.batch import (
     BatchBoxSource,
@@ -225,8 +226,9 @@ def _inpaint_one_job(image_id: str, mask_id: str, base_dir: Path) -> BatchObject
             object_id=object_id,
             base_dir=base_dir,
         )
+        new_cursor = commit_background(image_id, background_bytes, base_dir)
+        object_metadata = object_metadata.model_copy(update={"stage_seq": new_cursor})
         save_object_metadata(object_metadata)
-        current_background_path(base_dir, image_id).write_bytes(background_bytes)
         object_cutout_path(base_dir, image_id, object_id).write_bytes(cutout_bytes)
         delete_candidate(base_dir, image_id, mask_id)
         touch_session(image_id)

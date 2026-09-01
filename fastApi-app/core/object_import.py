@@ -22,6 +22,7 @@ from core.image_processing import load_canvas_bytes
 from core.object_metadata import ObjectMetadata, create_object_metadata, next_object_id, save_object_metadata
 from core.object_storage import object_cutout_path
 from core.repositories.session_repo import touch_session
+from core.session_history import get_history_cursor
 from schemas.common import DEFAULT_SOURCE_ELEVATION_DEG
 from settings import get_upload_max_bytes
 
@@ -186,6 +187,7 @@ def import_object_cutout(
         average_depth=_PLACEHOLDER_AVERAGE_DEPTH,
         content_hash=content_hash,
         source_elevation_deg=DEFAULT_SOURCE_ELEVATION_DEG,
+        stage_seq=get_history_cursor(session_id),
     )
     object_cutout_path(base_dir, session_id, object_id).write_bytes(cutout_bytes)
     save_object_metadata(metadata)

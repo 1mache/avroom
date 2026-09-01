@@ -161,6 +161,14 @@ Segment does **not** acquire the canvas writer. It may read a pre-commit canvas 
 | [`core/inference_lock.py`](../../fastApi-app/core/inference_lock.py) | Process-wide GPU lock (inline mode) |
 | [`settings.py`](../../fastApi-app/settings.py) | `INFERENCE_WORKERS`, `INFERENCE_JOB_TIMEOUT`, `INFERENCE_JOB_TIMEOUT_SEC` |
 
+## Background history
+
+Module: [`core/session_history.py`](../../fastApi-app/core/session_history.py)
+
+Each inpaint/erase/batch-peel/legacy-click commit calls `commit_background` **inside** the canvas-writer section instead of overwriting `{uid}_background.png` directly. Prior live bytes are copied to `{uid}_bg_hist_{seq}.png` first (when a live file exists). Up to four prior snapshots are retained; older snapshot files are deleted while their objects stay.
+
+`POST /images/{uid}/history/undo` and `.../redo` also acquire the canvas writer. They return **409** when segment/inpaint/erase jobs are `queued`/`running` for that session — a queued inpaint must not run against a canvas the user just restored. Objects created after the restored stage are hidden (`stage_seq > history_cursor`) until redo; a new background commit after undo dumps the forward branch (snapshot files + object rows/artifacts).
+
 ## Tests
 
 Job queue tests: [`fastApi-app/tests/test_jobs.py`](../../fastApi-app/tests/test_jobs.py) (claim/orphan-sweep/conflict-classification/pinning-regression).

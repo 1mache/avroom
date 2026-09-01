@@ -38,7 +38,8 @@ from core.object_storage import (
     session_preview_path,
 )
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
-from core.repositories.session_repo import is_session_registered, load_names
+from core.session_history import get_history_flags
+from core.repositories.session_repo import SessionNotFoundError, is_session_registered, load_names
 from settings import get_3d_storage_dir, get_image_storage_dir
 
 router = APIRouter(prefix="/images", tags=["images"])
@@ -76,7 +77,7 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
     storage_dir = get_image_storage_dir()
     # TODO: validate uid against the sessions table and return 404 for unknown sessions.
     # Currently returns 200 + empty list for unknown UIDs, consistent with /{uid}/cache.
-    obj_ids = list_object_ids(uid)
+    obj_ids = list_object_ids(uid, visible_only=True)
     three_d_dir = get_3d_storage_dir()
 
     # TODO: this loop performs blocking I/O per object synchronously on the async event loop.
@@ -137,7 +138,7 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     """Return which processed artifacts are cached on disk for the given UID."""
     logger.debug("Cache status requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
-    obj_ids = list_object_ids(uid)
+    obj_ids = list_object_ids(uid, visible_only=True)
 
     # Derive cutout bounds from the latest (highest-id) object.
     latest_object_id = max(obj_ids) if obj_ids else None
@@ -158,12 +159,18 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     )
 
     names = load_names()
+    try:
+        history_flags = get_history_flags(uid)
+    except SessionNotFoundError:
+        history_flags = None
     status = UidCacheStatusResponse(
         uid=uid,
         name=names.get(uid),
         has_background=current_background_path(storage_dir, uid).exists(),
         has_cutout=bool(obj_ids),
         has_3d=has_3d,
+        can_undo=history_flags.can_undo if history_flags is not None else False,
+        can_redo=history_flags.can_redo if history_flags is not None else False,
         cutout_bounds=cutout_bounds,
     )
     logger.debug(
@@ -198,7 +205,7 @@ async def get_cutout(uid: str) -> FileResponse:
     """
     logger.debug("Cutout requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
-    obj_ids = list_object_ids(uid)
+    obj_ids = list_object_ids(uid, visible_only=True)
     if not obj_ids:
         logger.warning("Cutout not found: uid=%s (no object ids)", uid)
         raise HTTPException(status_code=404, detail="Cutout not found")

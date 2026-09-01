@@ -143,6 +143,14 @@ class UidCacheStatusResponse(BaseModel):
     has_background: Annotated[bool, Field(description="Background PNG is cached.")]
     has_cutout: Annotated[bool, Field(description="Cutout PNG is cached.")]
     has_3d: Annotated[bool, Field(description="GLB 3D model is cached.")]
+    can_undo: Annotated[
+        bool,
+        Field(description="True when the session can backtrack to a prior background stage."),
+    ]
+    can_redo: Annotated[
+        bool,
+        Field(description="True when the session can move forward on the background history stack."),
+    ]
     cutout_bounds: Annotated[
         CutoutBounds | None,
         Field(default=None, description="Tight visible-object bounds for cached cutout PNG."),

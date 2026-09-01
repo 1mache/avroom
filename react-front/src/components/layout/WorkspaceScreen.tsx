@@ -1131,23 +1131,44 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
     setIsSavingSnapshot(true);
     try {
-      const layers = await Promise.all(
-        visibleObjects.map(async (obj) => {
-          const showOriginal = isShowingOriginal(obj);
-          let src = effectiveCutoutSrc(obj, showOriginal);
+      const selectedId = jobs.selectedObjectId;
+      const withoutSelected =
+        selectedId !== null
+          ? visibleObjects.filter((obj) => obj.objectId !== selectedId)
+          : visibleObjects;
+      const selected =
+        selectedId !== null ? visibleObjects.find((obj) => obj.objectId === selectedId) : undefined;
+      const paintOrder = selected ? [...withoutSelected, selected] : withoutSelected;
 
-          if (rotation.rotateMode && obj.objectId === jobs.selectedObjectId) {
+      const layers = await Promise.all(
+        paintOrder.map(async (obj) => {
+          const showOriginal = isShowingOriginal(obj);
+          const isRotatePickerTarget =
+            rotation.rotateMode && obj.objectId === selectedId;
+
+          if (isRotatePickerTarget) {
             const capture = rotation.model3DFrameRef.current?.capture();
-            if (capture) {
-              const bounds = obj.cutoutAlphaBounds
-                ? inflateBounds(obj.cutoutAlphaBounds, MODEL_3D_FRAME_PADDING)
-                : null;
-              src = await compositePreviewOntoCanvas(capture.snapshotDataUrl, bounds, naturalSize);
+            if (!capture) {
+              return null;
             }
+            const bounds = obj.cutoutAlphaBounds
+              ? inflateBounds(obj.cutoutAlphaBounds, MODEL_3D_FRAME_PADDING)
+              : null;
+            const src = await compositePreviewOntoCanvas(
+              capture.snapshotDataUrl,
+              bounds,
+              naturalSize,
+            );
+            return {
+              src,
+              offset: obj.offset,
+              displayScale: obj.displayScale,
+              bounds: effectiveCutoutBounds(obj, showOriginal),
+            };
           }
 
           return {
-            src,
+            src: effectiveCutoutSrc(obj, showOriginal),
             offset: obj.offset,
             displayScale: obj.displayScale,
             bounds: effectiveCutoutBounds(obj, showOriginal),
@@ -1155,7 +1176,11 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         }),
       );
 
-      const blob = await composeStageSnapshot(backgroundSrc, layers, naturalSize);
+      const blob = await composeStageSnapshot(
+        backgroundSrc,
+        layers.filter((layer): layer is NonNullable<typeof layer> => layer !== null),
+        naturalSize,
+      );
       if (!blob) {
         setError("Could not build a snapshot of the room.");
         return;

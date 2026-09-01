@@ -77,12 +77,12 @@ const drawLayer = (
   const displayScale = layer.displayScale ?? 1;
 
   if (displayScale !== 1 && layer.bounds) {
-    const centerX = ((layer.bounds.left + layer.bounds.right) / 2) * scale;
-    const centerY = ((layer.bounds.top + layer.bounds.bottom) / 2) * scale;
+    const pivotX = offsetX + ((layer.bounds.left + layer.bounds.right) / 2) * scale;
+    const pivotY = offsetY + ((layer.bounds.top + layer.bounds.bottom) / 2) * scale;
     ctx.save();
-    ctx.translate(offsetX + centerX, offsetY + centerY);
+    ctx.translate(pivotX, pivotY);
     ctx.scale(displayScale, displayScale);
-    ctx.translate(-centerX, -centerY);
+    ctx.translate(-pivotX, -pivotY);
     ctx.drawImage(image, offsetX, offsetY, canvasWidth, canvasHeight);
     ctx.restore();
     return;

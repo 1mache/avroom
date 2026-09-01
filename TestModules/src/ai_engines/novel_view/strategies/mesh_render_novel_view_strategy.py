@@ -474,7 +474,7 @@ class MeshRenderNovelViewStrategy(NovelViewStrategy):
                 viewport_width=self._render_size,
                 viewport_height=self._render_size,
             )
-            color, _depth = renderer.render(
+            color, depth = renderer.render(
                 scene,
                 flags=pyrender.RenderFlags.RGBA,
             )
@@ -488,12 +488,26 @@ class MeshRenderNovelViewStrategy(NovelViewStrategy):
             if renderer is not None:
                 renderer.delete()
 
-        if color.ndim != 3 or color.shape[2] < 4:
+        if color.ndim != 3 or color.shape[2] not in (3, 4):
             raise MeshRenderNovelViewError(
                 f"Unexpected pyrender output shape: {getattr(color, 'shape', None)}"
             )
 
-        rgba = color[:, :, :4].astype(np.uint8)
+        if color.shape[2] == 4:
+            rgba = color[:, :, :4].astype(np.uint8)
+        else:
+            # OSMesa's default framebuffer carries no alpha bit, so pyrender
+            # reads back RGB even with RenderFlags.RGBA requested (a known
+            # Mesa/OSMesa limitation, not a config we control). pyrender's
+            # depth buffer is 0 wherever nothing was rendered, so it doubles
+            # as the alpha mask we need for a transparent cutout.
+            logger.warning(
+                "pyrender returned RGB (no alpha) from this OSMesa context; "
+                "deriving alpha from the depth buffer instead."
+            )
+            alpha = np.where(depth > 0, 255, 0).astype(np.uint8)
+            rgba = np.dstack([color.astype(np.uint8), alpha])
+
         return Image.fromarray(rgba, mode="RGBA")
 
     @staticmethod

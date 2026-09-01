@@ -94,6 +94,15 @@ export const TrashIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
+/** Save / download to device. */
+export const DownloadIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <path d="M12 4.2v9.8" />
+    <path d="M8.2 12.4L12 16.2l3.8-3.8" />
+    <path d="M5.2 19.8h13.6" />
+  </Svg>
+);
+
 /** Vertical three-dot overflow menu trigger. */
 export const MoreIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>

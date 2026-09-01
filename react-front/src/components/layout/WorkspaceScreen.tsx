@@ -34,15 +34,22 @@ import {
   ALPHA_HIT_THRESHOLD,
   batchBoxStageStyle,
   buildHitTestOrder,
+  compositePreviewOntoCanvas,
   getBoundsStageRect,
   getContainedImageRect,
   inflateAroundCenter,
+  inflateBounds,
   mapPointThroughInverseScale,
   toNaturalPoint,
   type Rect,
   type ResizeHandle,
   type Size,
 } from "../../utils/stageGeometry";
+import {
+  composeStageSnapshot,
+  snapshotDownloadFilename,
+  triggerBlobDownload,
+} from "../../utils/preview";
 import { rasterizeEraseMask } from "../../utils/lassoMask";
 import { ConfirmDialog } from "../widgets/ConfirmDialog";
 import { MaskPickerModal } from "../widgets/MaskPickerModal";
@@ -134,6 +141,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [historyBusy, setHistoryBusy] = useState(false);
+  const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Object id awaiting delete confirmation. Deletion is permanent (the
   // background keeps its inpainted hole), so the trash button arms this
@@ -1115,6 +1123,64 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     void runHistoryStep("redo");
   }, [runHistoryStep]);
 
+  const handleDownloadSnapshot = useCallback(async () => {
+    const backgroundSrc = jobs.backgroundSrc ?? originalSrc;
+    if (!naturalSize || !backgroundSrc || isSavingSnapshot) {
+      return;
+    }
+
+    setIsSavingSnapshot(true);
+    try {
+      const layers = await Promise.all(
+        visibleObjects.map(async (obj) => {
+          const showOriginal = isShowingOriginal(obj);
+          let src = effectiveCutoutSrc(obj, showOriginal);
+
+          if (rotation.rotateMode && obj.objectId === jobs.selectedObjectId) {
+            const capture = rotation.model3DFrameRef.current?.capture();
+            if (capture) {
+              const bounds = obj.cutoutAlphaBounds
+                ? inflateBounds(obj.cutoutAlphaBounds, MODEL_3D_FRAME_PADDING)
+                : null;
+              src = await compositePreviewOntoCanvas(capture.snapshotDataUrl, bounds, naturalSize);
+            }
+          }
+
+          return {
+            src,
+            offset: obj.offset,
+            displayScale: obj.displayScale,
+            bounds: effectiveCutoutBounds(obj, showOriginal),
+          };
+        }),
+      );
+
+      const blob = await composeStageSnapshot(backgroundSrc, layers, naturalSize);
+      if (!blob) {
+        setError("Could not build a snapshot of the room.");
+        return;
+      }
+
+      triggerBlobDownload(blob, snapshotDownloadFilename(sessionName, uid));
+    } catch (saveError) {
+      setError(errorMessage(saveError, "Could not save the room snapshot."));
+    } finally {
+      setIsSavingSnapshot(false);
+    }
+  }, [
+    isSavingSnapshot,
+    isShowingOriginal,
+    jobs.backgroundSrc,
+    jobs.selectedObjectId,
+    naturalSize,
+    originalSrc,
+    rotation.model3DFrameRef,
+    rotation.rotateMode,
+    sessionName,
+    uid,
+    visibleObjects,
+  ]);
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -1187,6 +1253,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         historyBusy={historyBusy}
         onBacktrack={handleBacktrack}
         onForward={handleForward}
+        hasSnapshot={Boolean(naturalSize && (jobs.backgroundSrc ?? originalSrc))}
+        isSavingSnapshot={isSavingSnapshot}
+        onDownloadSnapshot={() => void handleDownloadSnapshot()}
         status={status}
       />
 

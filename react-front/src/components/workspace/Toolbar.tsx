@@ -7,6 +7,7 @@ import {
   BacktrackIcon,
   CheckIcon,
   CopyIcon,
+  DownloadIcon,
   EraserIcon,
   ForwardIcon,
   MultiPointIcon,
@@ -57,6 +58,9 @@ export interface ToolbarProps {
   historyBusy: boolean;
   onBacktrack: () => void;
   onForward: () => void;
+  hasSnapshot: boolean;
+  isSavingSnapshot: boolean;
+  onDownloadSnapshot: () => void;
   /** Short readout of in-flight work, e.g. "removing 2". Null when idle. */
   status: string | null;
 }
@@ -102,6 +106,9 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   historyBusy,
   onBacktrack,
   onForward,
+  hasSnapshot,
+  isSavingSnapshot,
+  onDownloadSnapshot,
   status,
 }) => {
   const objectToolsDisabled = !hasSelection;
@@ -259,6 +266,17 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         onClick={onForward}
       >
         <ForwardIcon />
+      </button>
+
+      <button
+        type="button"
+        className="tool-btn"
+        data-tip="Save room snapshot"
+        aria-label="Save room snapshot"
+        disabled={!hasSnapshot || isSavingSnapshot || historyDisabled}
+        onClick={onDownloadSnapshot}
+      >
+        {isSavingSnapshot ? <span className="tool-spinner" /> : <DownloadIcon />}
       </button>
 
       <button

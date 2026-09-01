@@ -18,7 +18,7 @@ import os
 
 from PIL import Image, UnidentifiedImageError
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 
 from core.image_codec import to_base64_ascii
@@ -183,16 +183,31 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     return status
 
 
+def _attachment_filename(raw: str) -> str:
+    """Sanitize a client-supplied download label for Content-Disposition."""
+
+    cleaned = "".join(ch if ch not in '<>:"/\\|?*' else "_" for ch in raw.strip())
+    base = cleaned[:80] or "background"
+    return base if base.lower().endswith(".png") else f"{base}.png"
+
+
 @router.get("/{uid}/background")
-async def get_background(uid: str) -> FileResponse:
+async def get_background(
+    uid: str,
+    download: bool = Query(False, description="When true, set Content-Disposition: attachment."),
+    filename: str | None = Query(None, description="Suggested download filename (sanitized)."),
+) -> FileResponse:
     """Serve the cached background PNG for the given UID."""
-    logger.debug("Background requested: uid=%s", uid)
+    logger.debug("Background requested: uid=%s download=%s", uid, download)
     path = current_background_path(get_image_storage_dir(), uid)
     if not path.exists():
         logger.warning("Background not found: uid=%s path=%s", uid, path)
         raise HTTPException(status_code=404, detail="Background not found")
+    headers: dict[str, str] = {}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="{_attachment_filename(filename or uid)}"'
     logger.debug("Background served: uid=%s path=%s", uid, path)
-    return FileResponse(path, media_type="image/png")
+    return FileResponse(path, media_type="image/png", headers=headers)
 
 
 @router.get("/{uid}/cutout")

@@ -62,7 +62,10 @@ ENV PYTHONUNBUFFERED=1 \
 #                     has `torchmcubes @ git+...`
 #   build-essential - torchmcubes compiles a C++ extension at install time
 #   libgl1, libglib2.0-0 - opencv-python
-#   libosmesa6      - pyrender/PyOpenGL offscreen rendering (see PYOPENGL_PLATFORM)
+#   libosmesa6-dev  - pyrender/PyOpenGL offscreen rendering (see PYOPENGL_PLATFORM).
+#                     The -dev package specifically: it ships the unversioned
+#                     libOSMesa.so symlink ctypes needs, the plain libosmesa6
+#                     runtime package only has the versioned .so.8.
 #   libpq5          - psycopg[binary] runtime
 #   curl            - container healthcheck
 #   xvfb            - pyrender imports pyglet unconditionally (pyrender/__init__.py
@@ -80,7 +83,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         libgl1 \
         libglib2.0-0 \
-        libosmesa6 \
+        libosmesa6-dev \
         libpq5 \
         curl \
         xvfb \

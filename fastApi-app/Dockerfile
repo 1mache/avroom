@@ -74,6 +74,8 @@ ENV PYTHONUNBUFFERED=1 \
 #                     "'NoneType' object has no attribute 'XRenderFindVisualFormat'".
 #                     A virtual framebuffer satisfies the probe; OSMesa still does
 #                     the real off-screen rendering.
+#   xauth           - xvfb-run shells out to it to set up X authority; missing
+#                     it is a hard "xauth command not found" at container start.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         build-essential \
@@ -83,6 +85,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
         curl \
         xvfb \
+        xauth \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

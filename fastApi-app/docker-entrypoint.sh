@@ -12,4 +12,10 @@ alembic upgrade head
 echo "[entrypoint] Starting uvicorn on 0.0.0.0:8000..."
 # --host 0.0.0.0 (not the 127.0.0.1 default) so the port is reachable from
 # outside the container. No --reload: that is a dev-only file watcher.
-exec uvicorn main:app --host 0.0.0.0 --port 8000
+#
+# xvfb-run wraps uvicorn in a virtual X display: pyrender imports pyglet
+# unconditionally, and pyglet's Xlib backend probes for a real X server at
+# *import* time regardless of PYOPENGL_PLATFORM=osmesa (which only governs
+# the actual off-screen render, done later). A truly display-less host makes
+# that probe crash outright. -a picks a free display number.
+exec xvfb-run -a uvicorn main:app --host 0.0.0.0 --port 8000

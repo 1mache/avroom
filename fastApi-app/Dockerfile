@@ -65,6 +65,15 @@ ENV PYTHONUNBUFFERED=1 \
 #   libosmesa6      - pyrender/PyOpenGL offscreen rendering (see PYOPENGL_PLATFORM)
 #   libpq5          - psycopg[binary] runtime
 #   curl            - container healthcheck
+#   xvfb            - pyrender imports pyglet unconditionally (pyrender/__init__.py
+#                     pulls in its Viewer class), and pyglet's Xlib backend probes
+#                     for a real X display at *import* time, before OSMesa/EGL is
+#                     ever chosen for the actual render. A host with literally no
+#                     X server (any headless Linux box, unlike a dev machine with
+#                     a real display) makes that probe crash with
+#                     "'NoneType' object has no attribute 'XRenderFindVisualFormat'".
+#                     A virtual framebuffer satisfies the probe; OSMesa still does
+#                     the real off-screen rendering.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         git \
         build-essential \
@@ -73,6 +82,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libosmesa6 \
         libpq5 \
         curl \
+        xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

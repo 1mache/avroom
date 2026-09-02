@@ -190,9 +190,20 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   }, [uid, applyHistoryFlags]);
   const handleMutated = useCallback(() => {
     // A mutation (inpaint, most commonly) can change the canvas the depth/
-    // normal maps were warmed for — forget the "already warm" mark so the
-    // next reentry re-warms instead of skipping a now-stale cache.
+    // normal maps were warmed for — forget the "already warm" mark and
+    // re-warm right away in the background. Deferring the re-warm to the
+    // next session entry (the old behavior) meant the recompute instead blocked
+    // that later entry behind the full-screen "Preparing depth maps" overlay,
+    // which read as "regenerating for no reason" since the edit that actually
+    // invalidated the cache had happened a session ago.
     warmedSessionIds.delete(uid);
+    void warmSessionMaps(uid)
+      .then(() => {
+        warmedSessionIds.add(uid);
+      })
+      .catch((err: unknown) => {
+        console.warn("Background session map re-warm failed (non-fatal).", err);
+      });
     recordLocalMutationRef.current();
     capturePreviewRef.current();
     void refreshHistoryFlags();
@@ -512,7 +523,11 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         x: Math.round(seed.x),
         y: Math.round(seed.y),
       }));
-      setPendingSeeds(seeds);
+      // Clear seeds now that the job is submitted — leaving them set kept the
+      // checkmark armed and Enter/checkmark live, letting either resubmit the
+      // same seeds as a second job, and left the numbered marker on screen
+      // (visible even for a single-point click, which fires through here too).
+      setPendingSeeds([]);
       setCutMode(false);
       jobs.runSegment(rounded[0].x, rounded[0].y, verifyMode, rounded);
     },
@@ -879,10 +894,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         event.preventDefault();
         const collectMode = multiPoint || event.shiftKey;
 
-        if (pendingSeeds.length > 0 && !collectMode) {
-          return;
-        }
-
         if (collectMode) {
           if (pendingSeeds.length >= MAX_SEGMENT_SEEDS) {
             return;
@@ -891,7 +902,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           return;
         }
 
-        fireSegmentFromSeeds([natural]);
+        // Single-point mode: stage the seed instead of firing immediately —
+        // shows where the click landed and lets a re-click move it before
+        // the checkmark/Enter actually submits.
+        setPendingSeeds([natural]);
         return;
       }
 
@@ -1351,7 +1365,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                     }}
                   >
                     <span className="stage-pick-marker-ring" />
-                    <span className="stage-pick-marker-label">{index + 1}</span>
+                    {pendingSeeds.length > 1 ? (
+                      <span className="stage-pick-marker-label">{index + 1}</span>
+                    ) : null}
                   </span>
                 ))}
               </div>

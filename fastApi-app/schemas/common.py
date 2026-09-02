@@ -19,12 +19,18 @@ from pydantic import BaseModel, Field
 
 
 class CutoutBounds(BaseModel):
-    """Tight visible-object bounds inside the cutout image."""
+    """Object bounds in natural-image pixels.
 
-    left: Annotated[int, Field(ge=0, description="Left-most visible pixel, inclusive.")]
-    top: Annotated[int, Field(ge=0, description="Top-most visible pixel, inclusive.")]
-    right: Annotated[int, Field(ge=0, description="Right-most visible bound, exclusive.")]
-    bottom: Annotated[int, Field(ge=0, description="Bottom-most visible bound, exclusive.")]
+    Usually the tight alpha box inside a cutout/rotation PNG (edges inside the
+    frame). Placement responses may also return *logical* bounds after
+    ``display_scale`` growth, which can extend past the canvas (negative
+    left/top or right/bottom beyond natural size) so clients see overflow.
+    """
+
+    left: Annotated[int, Field(description="Left-most visible edge, inclusive (may be < 0 when scaled).")]
+    top: Annotated[int, Field(description="Top-most visible edge, inclusive (may be < 0 when scaled).")]
+    right: Annotated[int, Field(description="Right-most visible edge, exclusive (may exceed natural_width).")]
+    bottom: Annotated[int, Field(description="Bottom-most visible edge, exclusive (may exceed natural_height).")]
     natural_width: Annotated[int, Field(gt=0, description="Full cutout image width in pixels.")]
     natural_height: Annotated[int, Field(gt=0, description="Full cutout image height in pixels.")]
 

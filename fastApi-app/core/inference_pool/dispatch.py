@@ -35,11 +35,13 @@ def _execute_impl(job: JobRequest) -> JobResult:
 
         assert job.image_id is not None and job.x is not None and job.y is not None
         options = ImageProcessingOptions.model_validate(job.options) if job.options else None
+        segment_points = job.points if job.points else ((job.x, job.y),)
         candidates = segment_candidates_on_image(
             image_id=job.image_id,
             base_dir=base_dir,
             x=job.x,
             y=job.y,
+            points=segment_points,
             options=options,
             exclude_mask_ids=frozenset(job.exclude_mask_ids or ()),
             verify=job.verify,
@@ -61,6 +63,22 @@ def _execute_impl(job: JobRequest) -> JobResult:
             background_bytes=background_bytes,
             cutout_bytes=cutout_bytes,
             image_format=image_format,
+        )
+
+    if job.kind == JobKind.ERASE:
+        from core.image_processing import erase_mask_on_image
+
+        assert job.image_id is not None and job.mask_id is not None
+        background_bytes = erase_mask_on_image(
+            image_id=job.image_id,
+            mask_id=job.mask_id,
+            base_dir=base_dir,
+        )
+        return JobResult(
+            job_id=job.job_id,
+            ok=True,
+            background_bytes=background_bytes,
+            image_format="png",
         )
 
     if job.kind == JobKind.CLICK:
@@ -110,7 +128,7 @@ def _execute_impl(job: JobRequest) -> JobResult:
         from core.image_processing import run_smart_paste
 
         assert job.object_uuid is not None and job.x is not None and job.y is not None
-        result = run_smart_paste(
+        paste_result = run_smart_paste(
             base_dir=base_dir,
             object_uuid=job.object_uuid,
             x=job.x,
@@ -119,13 +137,15 @@ def _execute_impl(job: JobRequest) -> JobResult:
         return JobResult(
             job_id=job.job_id,
             ok=True,
-            object_uuid=result.object_uuid,
-            session_id=result.session_id,
-            object_id=result.object_id,
-            source_average_depth=result.source_average_depth,
-            target_depth=result.target_depth,
-            scale_factor=result.scale_factor,
-            display_scale=result.display_scale,
+            object_uuid=paste_result.object_uuid,
+            session_id=paste_result.session_id,
+            object_id=paste_result.object_id,
+            source_average_depth=paste_result.source_average_depth,
+            target_depth=paste_result.target_depth,
+            scale_factor=paste_result.scale_factor,
+            display_scale=paste_result.display_scale,
+            azimuth_deg=paste_result.azimuth_deg,
+            relative_elevation_deg=paste_result.relative_elevation_deg,
         )
 
     if job.kind == JobKind.GENERATE_3D:

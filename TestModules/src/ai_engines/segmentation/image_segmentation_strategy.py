@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import Sequence
 
 import numpy as np
 
@@ -22,6 +23,7 @@ class ImageSegmentationStrategy(ABC):
         *,
         expand_pixels: int = 0,
         use_broad_mask: bool = False,
+        extra_points: Sequence[tuple[int, int]] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Predict an object mask containing pixel ``(x, y)``.
 
@@ -56,6 +58,7 @@ class ImageSegmentationStrategy(ABC):
         *,
         expand_pixels: int = 0,
         use_broad_mask: bool = False,
+        extra_points: Sequence[tuple[int, int]] | None = None,
     ) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
         """Predict masks for every candidate the model produces at ``(x, y)``.
 

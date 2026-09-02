@@ -38,10 +38,27 @@ export const ScissorsIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
+/** Two foreground seeds — multi-point cutout mode. */
+export const MultiPointIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <circle cx="8" cy="8" r="2.2" />
+    <circle cx="16" cy="16" r="2.2" />
+    <path d="M9.8 9.8l4.4 4.4" />
+  </Svg>
+);
+
 export const AreaIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>
     <rect x="5" y="5" width="14" height="14" />
     <path d="M5 10h14" />
+  </Svg>
+);
+
+/** Freehand erase — lasso loop with a gap at the tip. */
+export const EraserIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <path d="M6 18l8-8 4 4-8 8H6v-4z" />
+    <path d="M13 7l3-3 2 2-3 3" />
   </Svg>
 );
 
@@ -77,6 +94,24 @@ export const TrashIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
+/** Save / download to device. */
+export const DownloadIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <path d="M12 4.2v9.8" />
+    <path d="M8.2 12.4L12 16.2l3.8-3.8" />
+    <path d="M5.2 19.8h13.6" />
+  </Svg>
+);
+
+/** Vertical three-dot overflow menu trigger. */
+export const MoreIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <circle cx="12" cy="6" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="18" r="1.2" fill="currentColor" stroke="none" />
+  </Svg>
+);
+
 export const CheckIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>
     <path d="M4.5 12.6l4.8 4.7L19.5 6.9" />
@@ -104,6 +139,22 @@ export const RevertIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>
     <path d="M4.4 10.2A8 8 0 1112 20" />
     <path d="M4.2 5.6v4.8h4.8" />
+  </Svg>
+);
+
+/** Backtrack one background history stage. */
+export const BacktrackIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <path d="M9 5.5L4.5 10l4.5 4.5" />
+    <path d="M4.5 10H16a5.5 5.5 0 010 11H14" />
+  </Svg>
+);
+
+/** Move forward one background history stage. */
+export const ForwardIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <path d="M15 5.5l4.5 4.5-4.5 4.5" />
+    <path d="M19.5 10H8a5.5 5.5 0 000 11h2" />
   </Svg>
 );
 

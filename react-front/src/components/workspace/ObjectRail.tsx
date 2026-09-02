@@ -1,17 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import type { JobInfo } from "../../types/api";
-import { effectiveCutoutSrc, type ObjectRotation } from "../../types/session";
-import { EyeIcon, EyeOffIcon, RevertIcon } from "../icons";
+import { effectiveCutoutSrc, hasUndoableObjectChanges, type ObjectRotation } from "../../types/session";
+import { CheckIcon, EyeIcon, EyeOffIcon, MoreIcon, PlusIcon, RevertIcon, TrashIcon } from "../icons";
 
 const JOB_KIND_LABEL: Record<JobInfo["kind"], string> = {
   segment: "Segmenting",
   inpaint: "Removing",
+  erase: "Erasing",
   generate_3d: "Building 3D",
 };
 
-// Grace period before the rail retracts, so clipping the edge of the panel on
-// the way somewhere else doesn't snap it shut mid-reach.
 const CLOSE_DELAY_MS = 220;
 
 interface ObjectEntry {
@@ -21,19 +20,20 @@ interface ObjectEntry {
   cutoutSrc: string;
   rotation: ObjectRotation | null;
   hidden: boolean;
+  has3d: boolean;
+  cloneRootUuid: string | null;
+  offset: { x: number; y: number };
+  displayScale: number;
 }
 
 export interface ObjectRailProps {
   objects: ObjectEntry[];
-  /** This session's job backlog — queued/running render as spinner rows,
-   * failed/conflict render as dismissible error rows. Done segment jobs
-   * (driving the mask picker) and done/deleted inpaint/3D jobs render
-   * nothing here. */
   jobs: JobInfo[];
   selectedObjectId: number | null;
-  /** Objects currently showing their pre-rotation cutout instead of the result. */
   showOriginalIds: ReadonlySet<number>;
   disabled: boolean;
+  isDuplicating: boolean;
+  isDeleting: boolean;
   onSelectObject: (objectId: number) => void;
   batchUuids: ReadonlySet<string>;
   onToggleBatchUuid: (uuid: string, on: boolean) => void;
@@ -42,6 +42,12 @@ export interface ObjectRailProps {
   onToggleHidden: (objectId: number) => void;
   onToggleShowOriginal: (objectId: number) => void;
   onRenameObject: (objectId: number, uuid: string, name: string | null) => void;
+  onDuplicateObject: (objectId: number) => void;
+  onDeleteObject: (objectId: number) => void;
+  onClearObject3d: (objectId: number) => void;
+  onResetObjectChanges: (objectId: number) => void;
+  onImportObject: (file: File) => void;
+  importDisabled: boolean;
   onDismissJob: (jobId: string) => void;
 }
 
@@ -58,6 +64,8 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
   selectedObjectId,
   showOriginalIds,
   disabled,
+  isDuplicating,
+  isDeleting,
   onSelectObject,
   batchUuids,
   onToggleBatchUuid,
@@ -66,6 +74,12 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
   onToggleHidden,
   onToggleShowOriginal,
   onRenameObject,
+  onDuplicateObject,
+  onDeleteObject,
+  onClearObject3d,
+  onResetObjectChanges,
+  onImportObject,
+  importDisabled,
   onDismissJob,
 }) => {
   const pending = jobs.filter((job) => job.status === "queued" || job.status === "running");
@@ -73,8 +87,12 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
 
   const [open, setOpen] = useState(false);
   const [editingObjectId, setEditingObjectId] = useState<number | null>(null);
+  const [menuObjectId, setMenuObjectId] = useState<number | null>(null);
+  const [hoveredObjectId, setHoveredObjectId] = useState<number | null>(null);
   const [draftName, setDraftName] = useState("");
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const cancelClose = useCallback(() => {
     if (closeTimerRef.current) {
@@ -90,13 +108,13 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
 
   useEffect(() => cancelClose, [cancelClose]);
 
-  // A rename in progress owns the keyboard; retracting the rail out from under
-  // the input would blur it and commit a half-typed name.
+  const railPinned = editingObjectId !== null || menuObjectId !== null;
+
   const handlePointerLeave = useCallback(() => {
-    if (editingObjectId === null) {
+    if (!railPinned) {
       scheduleClose();
     }
-  }, [editingObjectId, scheduleClose]);
+  }, [railPinned, scheduleClose]);
 
   const handleOpen = useCallback(() => {
     cancelClose();
@@ -112,22 +130,43 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
     [disabled, onSelectObject],
   );
 
-  // Escape blurs the input without saving; the blur handler reads this to know
-  // it must not commit the draft.
+  const closeMenu = useCallback(() => {
+    setMenuObjectId(null);
+  }, []);
+
+  useEffect(() => {
+    if (menuObjectId === null) {
+      return;
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        closeMenu();
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeMenu();
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [closeMenu, menuObjectId]);
+
   const cancelledEditRef = useRef(false);
 
-  const startEditing = useCallback(
-    (event: React.MouseEvent, obj: ObjectEntry) => {
-      event.stopPropagation();
-      if (disabled || !obj.uuid) {
-        return;
-      }
-      cancelledEditRef.current = false;
-      setEditingObjectId(obj.objectId);
-      setDraftName(obj.name ?? "");
-    },
-    [disabled],
-  );
+  const startEditing = useCallback((obj: ObjectEntry) => {
+    if (disabled || !obj.uuid) {
+      return;
+    }
+    closeMenu();
+    cancelledEditRef.current = false;
+    setEditingObjectId(obj.objectId);
+    setDraftName(obj.name ?? "");
+  }, [closeMenu, disabled]);
 
   const commitEditing = useCallback(
     (obj: ObjectEntry) => {
@@ -144,14 +183,29 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
     [draftName, onRenameObject],
   );
 
-  const handleNameKeyDown = useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === "Enter") {
-      event.currentTarget.blur();
-    } else if (event.key === "Escape") {
-      cancelledEditRef.current = true;
-      event.currentTarget.blur();
-    }
-  }, []);
+  const handleNameKeyDown = useCallback(
+    (event: React.KeyboardEvent<HTMLInputElement>, obj: ObjectEntry) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitEditing(obj);
+      } else if (event.key === "Escape") {
+        cancelledEditRef.current = true;
+        setEditingObjectId(null);
+      }
+    },
+    [commitEditing],
+  );
+
+  const handleImportInputChange = useCallback(
+    (event: React.ChangeEvent<HTMLInputElement>) => {
+      const picked = event.target.files?.[0];
+      event.target.value = "";
+      if (picked) {
+        onImportObject(picked);
+      }
+    },
+    [onImportObject],
+  );
 
   const total = objects.length + pending.length + failed.length;
 
@@ -188,14 +242,35 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
         <div className="rail-head">
           <span className="rail-title">Objects</span>
           <span className="rail-count">{String(total).padStart(2, "0")}</span>
-          <button
-            type="button"
-            className="rail-3d"
-            onClick={onGenerate3D}
-            disabled={generate3DDisabled || objects.every((o) => !o.uuid)}
-          >
-            3D
-          </button>
+          <div className="rail-head-actions">
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="image/png"
+              className="rail-import-input"
+              onChange={handleImportInputChange}
+              aria-hidden="true"
+              tabIndex={-1}
+            />
+            <button
+              type="button"
+              className="rail-add"
+              data-tip="Add object from PNG"
+              aria-label="Add object from PNG"
+              disabled={importDisabled || disabled}
+              onClick={() => importInputRef.current?.click()}
+            >
+              <PlusIcon size={12} />
+            </button>
+            <button
+              type="button"
+              className="rail-3d"
+              onClick={onGenerate3D}
+              disabled={generate3DDisabled || objects.every((o) => !o.uuid)}
+            >
+              3D
+            </button>
+          </div>
         </div>
 
         <div className="rail-list">
@@ -203,56 +278,124 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
             const isSelected = obj.objectId === selectedObjectId;
             const showsOriginal = showOriginalIds.has(obj.objectId);
             const canRevert = obj.rotation?.status === "ready";
+            const showThumbChrome =
+              hoveredObjectId === obj.objectId || menuObjectId === obj.objectId;
+            const menuOpen = menuObjectId === obj.objectId;
+            const showRemove3d = obj.has3d;
+            const showUndoChanges =
+              hasUndoableObjectChanges(obj) && obj.rotation?.status !== "pending";
+            const rowBusy = isDuplicating || isDeleting;
 
             return (
               <div
                 key={obj.objectId}
-                className={`rail-row${isSelected ? " is-selected" : ""}${obj.hidden ? " is-hidden" : ""}${obj.uuid && batchUuids.has(obj.uuid) ? " is-batch" : ""}`}
+                className={[
+                  "rail-row",
+                  isSelected ? "is-selected" : "",
+                  obj.hidden ? "is-hidden" : "",
+                  obj.uuid && batchUuids.has(obj.uuid) ? "is-batch" : "",
+                  menuOpen ? "is-menu-open" : "",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                ref={menuOpen ? menuRef : undefined}
               >
-                <button
-                  type="button"
-                  className="rail-thumb"
-                  onClick={(event) => {
-                    if (event.ctrlKey || event.metaKey) {
-                      if (obj.uuid) {
-                        onToggleBatchUuid(obj.uuid, !(obj.uuid && batchUuids.has(obj.uuid)));
-                      }
-                      return;
-                    }
-                    handleSelect(obj.objectId);
-                  }}
-                  disabled={disabled || obj.hidden}
-                  aria-label={`Select ${obj.name ?? `object ${obj.objectId}`}`}
+                <div
+                  className="rail-thumb-wrap"
+                  onPointerEnter={() => setHoveredObjectId(obj.objectId)}
+                  onPointerLeave={() =>
+                    setHoveredObjectId((current) => (current === obj.objectId ? null : current))
+                  }
                 >
-                  <img
-                    src={effectiveCutoutSrc(obj, showsOriginal)}
-                    alt=""
-                    className="rail-thumb-img"
-                    draggable={false}
-                  />
-                  {obj.rotation?.status === "pending" ? (
-                    <span className="rail-thumb-badge">
-                      <span className="tool-spinner" />
-                    </span>
+                  <button
+                    type="button"
+                    className="rail-thumb"
+                    onClick={(event) => {
+                      if (event.ctrlKey || event.metaKey) {
+                        if (obj.uuid) {
+                          onToggleBatchUuid(obj.uuid, !(obj.uuid && batchUuids.has(obj.uuid)));
+                        }
+                        return;
+                      }
+                      handleSelect(obj.objectId);
+                    }}
+                    disabled={disabled || obj.hidden}
+                    aria-label={`Select ${obj.name ?? `object ${obj.objectId}`}`}
+                  >
+                    <img
+                      src={effectiveCutoutSrc(obj, showsOriginal)}
+                      alt=""
+                      className="rail-thumb-img"
+                      draggable={false}
+                    />
+                    {obj.rotation?.status === "pending" ? (
+                      <span className="rail-thumb-badge">
+                        <span className="tool-spinner" />
+                      </span>
+                    ) : null}
+                  </button>
+
+                  {showThumbChrome && obj.uuid ? (
+                    <div className="rail-thumb-overlay" aria-hidden={false}>
+                      <div className="rail-thumb-overlay-actions">
+                        <button
+                          type="button"
+                          className="rail-thumb-action"
+                          data-tip="More actions"
+                          aria-label={`More actions for ${obj.name ?? `object ${obj.objectId}`}`}
+                          aria-expanded={menuOpen}
+                          disabled={rowBusy}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setMenuObjectId(menuOpen ? null : obj.objectId);
+                          }}
+                        >
+                          <MoreIcon size={15} />
+                        </button>
+                        <button
+                          type="button"
+                          className="rail-thumb-action is-danger"
+                          data-tip="Delete object"
+                          aria-label={`Delete ${obj.name ?? `object ${obj.objectId}`}`}
+                          disabled={rowBusy}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            closeMenu();
+                            onDeleteObject(obj.objectId);
+                          }}
+                        >
+                          <TrashIcon size={15} />
+                        </button>
+                      </div>
+                    </div>
                   ) : null}
-                </button>
+                </div>
 
                 <div className="rail-row-body">
                   {editingObjectId === obj.objectId ? (
-                    <input
-                      type="text"
-                      className="rail-name-input"
-                      autoFocus
-                      value={draftName}
-                      onChange={(event) => setDraftName(event.target.value)}
-                      onBlur={() => commitEditing(obj)}
-                      onKeyDown={handleNameKeyDown}
-                      aria-label={`Rename object ${obj.objectId}`}
-                    />
+                    <div className="rail-rename-row">
+                      <input
+                        type="text"
+                        className="rail-name-input"
+                        autoFocus
+                        value={draftName}
+                        onChange={(event) => setDraftName(event.target.value)}
+                        onKeyDown={(event) => handleNameKeyDown(event, obj)}
+                        aria-label={`Rename object ${obj.objectId}`}
+                      />
+                      <button
+                        type="button"
+                        className="rail-rename-submit"
+                        aria-label="Save name"
+                        onClick={() => commitEditing(obj)}
+                      >
+                        <CheckIcon size={14} />
+                      </button>
+                    </div>
                   ) : (
                     <span
                       className={`rail-name${obj.uuid ? " is-editable" : ""}`}
-                      onDoubleClick={(event) => startEditing(event, obj)}
+                      onDoubleClick={() => startEditing(obj)}
                       title={obj.uuid ? "Double-click to rename" : undefined}
                     >
                       {obj.name ?? `Object ${obj.objectId}`}
@@ -286,11 +429,76 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
                     ) : null}
                   </div>
                 </div>
+
+                {menuOpen ? (
+                  <div className="rail-menu" role="menu">
+                    <button
+                      type="button"
+                      className="rail-menu-item"
+                      role="menuitem"
+                      disabled={rowBusy}
+                      onClick={() => startEditing(obj)}
+                    >
+                      Rename
+                    </button>
+                    <button
+                      type="button"
+                      className="rail-menu-item"
+                      role="menuitem"
+                      disabled={rowBusy || isDuplicating}
+                      onClick={() => {
+                        closeMenu();
+                        onDuplicateObject(obj.objectId);
+                      }}
+                    >
+                      Duplicate
+                    </button>
+                    {showUndoChanges ? (
+                      <button
+                        type="button"
+                        className="rail-menu-item"
+                        role="menuitem"
+                        disabled={rowBusy}
+                        onClick={() => {
+                          closeMenu();
+                          onResetObjectChanges(obj.objectId);
+                        }}
+                      >
+                        Undo all changes
+                      </button>
+                    ) : null}
+                    {showRemove3d ? (
+                      <button
+                        type="button"
+                        className="rail-menu-item"
+                        role="menuitem"
+                        disabled={rowBusy}
+                        onClick={() => {
+                          closeMenu();
+                          onClearObject3d(obj.objectId);
+                        }}
+                      >
+                        Remove 3D render
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="rail-menu-item is-danger"
+                      role="menuitem"
+                      disabled={rowBusy || isDeleting}
+                      onClick={() => {
+                        closeMenu();
+                        onDeleteObject(obj.objectId);
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                ) : null}
               </div>
             );
           })}
 
-          {/* In-flight jobs stand in for objects/results that don't exist yet. */}
           {pending.map((job) => (
             <div key={job.job_id} className="rail-row is-pending">
               <div className="rail-thumb rail-thumb-empty" aria-busy="true">
@@ -305,8 +513,6 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
             </div>
           ))}
 
-          {/* A job that failed keeps its error on the row until explicitly
-              dismissed -- see core/repositories/job_repo.py's module docstring. */}
           {failed.map((job) => (
             <div key={job.job_id} className="rail-row is-failed">
               <div className="rail-thumb rail-thumb-empty" aria-hidden="true" />

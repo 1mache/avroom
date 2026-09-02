@@ -62,6 +62,13 @@ class ObjectMetadataResponse(ObjectFields):
         bool,
         Field(default=False, description="Whether a GLB 3D model has been generated for this object."),
     ]
+    clone_root_uuid: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="UUID of the clone root when this object was duplicated from another.",
+        ),
+    ]
     cutout_bounds: Annotated[
         CutoutBounds | None,
         Field(default=None, description="Tight visible-object bounds inside the cutout PNG."),
@@ -103,6 +110,13 @@ class ObjectInfo(ObjectFields):
         bool,
         Field(description="Whether a GLB 3D model has been generated for this object."),
     ]
+    clone_root_uuid: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="UUID of the clone root when this object was duplicated from another.",
+        ),
+    ]
 
 
 class ObjectListResponse(BaseModel):
@@ -129,6 +143,14 @@ class UidCacheStatusResponse(BaseModel):
     has_background: Annotated[bool, Field(description="Background PNG is cached.")]
     has_cutout: Annotated[bool, Field(description="Cutout PNG is cached.")]
     has_3d: Annotated[bool, Field(description="GLB 3D model is cached.")]
+    can_undo: Annotated[
+        bool,
+        Field(description="True when the session can backtrack to a prior background stage."),
+    ]
+    can_redo: Annotated[
+        bool,
+        Field(description="True when the session can move forward on the background history stack."),
+    ]
     cutout_bounds: Annotated[
         CutoutBounds | None,
         Field(default=None, description="Tight visible-object bounds for cached cutout PNG."),
@@ -136,15 +158,15 @@ class UidCacheStatusResponse(BaseModel):
 
 
 class UpdateObjectRequest(BaseModel):
-    """Partial update for one object by UUID: name and/or drag offset.
+    """Partial update for one object by UUID: name, drag offset, and/or display scale.
 
-    Each field is independently optional so a caller can send just a rename
-    or just a position update. ``name``'s ``None`` means "clear the name"
-    (existing behavior). ``offset_x``/``offset_y``'s ``None`` means "not
-    included in this request" -- the handler distinguishes an omitted field
-    from an explicit ``null`` via ``model_fields_set``, so a drag-persist
-    call (which never mentions ``name``) can never accidentally clear it,
-    and vice versa.
+    Each field is independently optional so a caller can send just a rename,
+    just a position update, or just a manual resize. ``name``'s ``None`` means
+    "clear the name" (existing behavior). ``offset_x``/``offset_y``'s ``None``
+    means "not included in this request" -- the handler distinguishes an omitted
+    field from an explicit ``null`` via ``model_fields_set``, so a drag-persist
+    call (which never mentions ``name``) can never accidentally clear it, and
+    vice versa.
     """
 
     name: Annotated[
@@ -159,6 +181,14 @@ class UpdateObjectRequest(BaseModel):
         float | None,
         Field(default=None, description="New drag offset Y, natural-image pixels. Omit to leave unchanged."),
     ]
+    display_scale: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            description="UI display scale vs original cutout size. Omit to leave unchanged.",
+        ),
+    ]
 
 
 class DuplicateObjectResponse(BaseModel):
@@ -167,6 +197,15 @@ class DuplicateObjectResponse(BaseModel):
     object_uuid: Annotated[
         str,
         Field(description="Server-generated UUID of the newly cloned object."),
+    ]
+
+
+class ImportObjectResponse(BaseModel):
+    """Result of importing a user-supplied PNG cutout into a session."""
+
+    object_uuid: Annotated[
+        str,
+        Field(description="Server-generated UUID of the newly imported object."),
     ]
 
 
@@ -213,4 +252,18 @@ class PlacementResponse(BaseModel):
     cutout_bounds: Annotated[
         CutoutBounds | None,
         Field(default=None, description="Logical display bounds (base alpha bbox scaled by display_scale)."),
+    ]
+    azimuth_deg: Annotated[
+        float | None,
+        Field(
+            default=None,
+            description="Inferred mesh-orbit azimuth for smart-paste auto-rotate; null when skipped.",
+        ),
+    ]
+    relative_elevation_deg: Annotated[
+        float | None,
+        Field(
+            default=None,
+            description="Inferred mesh-orbit elevation delta for smart-paste auto-rotate; null when skipped.",
+        ),
     ]

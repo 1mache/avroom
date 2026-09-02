@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Sequence
 
 import numpy as np
 
@@ -34,6 +35,7 @@ class ImageSegmentationFacade:
         y: int,
         expand_pixels: int = 0,
         use_broad_mask: bool = False,
+        extra_points: Sequence[tuple[int, int]] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Predict a mask at ``(x, y)`` via the active segmentation strategy.
 
@@ -49,6 +51,7 @@ class ImageSegmentationFacade:
             y,
             expand_pixels=expand_pixels,
             use_broad_mask=use_broad_mask,
+            extra_points=extra_points,
         )
 
     def get_all_masks_for_position(
@@ -58,6 +61,7 @@ class ImageSegmentationFacade:
         y: int,
         expand_pixels: int = 0,
         use_broad_mask: bool = False,
+        extra_points: Sequence[tuple[int, int]] | None = None,
     ) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
         """Return every candidate mask the strategy produces at ``(x, y)``.
 
@@ -72,6 +76,7 @@ class ImageSegmentationFacade:
             y,
             expand_pixels=expand_pixels,
             use_broad_mask=use_broad_mask,
+            extra_points=extra_points,
         )
 
     def get_all_masks_for_image(

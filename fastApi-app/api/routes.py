@@ -32,19 +32,23 @@ from core.inference_pool.session_runtime import (
 from core.camera_calib_cache import save_camera_calib
 from core.session_preview import write_upload_preview
 from core.normal_cache import warm_normals_for_session
+from core.object_import import ImportValidationError, import_object_cutout
 from core.object_metadata import (
     ObjectMetadata,
     build_clone_metadata,
     get_object_by_uuid,
     next_object_id,
     remove_object_index_entry,
+    reset_object_transform,
     save_object_metadata,
     set_object_name,
     set_object_offset,
+    set_object_rescale_state,
     to_object_metadata_response,
 )
 from schemas.objects import (
     DuplicateObjectResponse,
+    ImportObjectResponse,
     ObjectMetadataResponse,
     PlacementRequest,
     PlacementResponse,
@@ -55,6 +59,7 @@ from core.object_storage import (
     copy_object_artifacts,
     delete_legacy_object_artifacts,
     delete_object_artifact_files,
+    delete_object_glb_files,
     resolve_object_cutout_path,
 )
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes, scale_cutout_bounds
@@ -235,7 +240,7 @@ def warm_session_maps_endpoint(uid: str) -> WarmSessionMapsResponse:
 
 @router.patch("/objects/{object_uuid}", response_model=ObjectMetadataResponse)
 async def update_object(object_uuid: str, request: UpdateObjectRequest) -> ObjectMetadataResponse:
-    """Partially update one object identified by UUID: name and/or drag offset.
+    """Partially update one object identified by UUID: name, offset, and/or scale.
 
     Only fields actually present in the request body are touched --
     ``request.model_fields_set`` distinguishes an omitted field from an
@@ -262,11 +267,124 @@ async def update_object(object_uuid: str, request: UpdateObjectRequest) -> Objec
         next_offset_x = request.offset_x if request.offset_x is not None else metadata.offset_x
         next_offset_y = request.offset_y if request.offset_y is not None else metadata.offset_y
         metadata = set_object_offset(object_uuid, next_offset_x, next_offset_y)
+    if "display_scale" in fields:
+        assert request.display_scale is not None
+        metadata = set_object_rescale_state(object_uuid, display_scale=request.display_scale)
 
     touch_session(metadata.session_id)
     response = to_object_metadata_response(metadata, storage_dir, get_3d_storage_dir())
     logger.info("Object updated: uuid=%s fields=%s", object_uuid, sorted(fields))
     return response
+
+
+@router.post("/objects/{object_uuid}/reset-transform", response_model=ObjectMetadataResponse)
+def reset_object_transform_route(object_uuid: str) -> ObjectMetadataResponse:
+    """Reset drag offset and display scale to creation defaults; cutout PNG unchanged."""
+    logger.info("Object transform reset requested: uuid=%s", object_uuid)
+    storage_dir = get_image_storage_dir()
+
+    metadata = get_object_by_uuid(object_uuid)
+    if metadata is None:
+        logger.warning("Object transform reset failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
+
+    metadata = reset_object_transform(object_uuid)
+    touch_session(metadata.session_id)
+    response = to_object_metadata_response(metadata, storage_dir, get_3d_storage_dir())
+    logger.info(
+        "Object transform reset: uuid=%s session_id=%s object_id=%d",
+        object_uuid,
+        metadata.session_id,
+        metadata.object_id,
+    )
+    return response
+
+
+@router.post("/{uid}/objects/import", response_model=ImportObjectResponse, status_code=201)
+async def import_object(
+    uid: str,
+    file: Annotated[UploadFile, File(..., description="PNG cutout to add to the session.")],
+) -> ImportObjectResponse:
+    """Import a user-supplied PNG cutout as a new overlay object.
+
+    Does not modify the session background. Content/AI validation is not wired
+    yet — see ``core.object_import.validate_import_cutout`` for the future seam.
+    """
+    logger.info(
+        "Object import requested: session_id=%s filename=%s content_type=%s",
+        uid,
+        file.filename,
+        file.content_type,
+    )
+    if not is_session_registered(uid):
+        logger.warning("Object import failed — session not found: session_id=%s", uid)
+        raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'")
+
+    try:
+        file_bytes = await file.read()
+    except Exception as exc:
+        logger.error("Object import failed — could not read upload: session_id=%s", uid)
+        raise HTTPException(status_code=422, detail=f"Failed to read upload: {exc}") from exc
+
+    storage_dir = get_image_storage_dir()
+    three_d_dir = get_3d_storage_dir()
+    imported: ObjectMetadata | None = None
+    allocated_object_id: int | None = None
+
+    def rollback_import() -> None:
+        if allocated_object_id is None:
+            return
+        delete_object_artifact_files(
+            base_dir=storage_dir,
+            glb_dir=three_d_dir,
+            uid=uid,
+            object_id=allocated_object_id,
+        )
+        if imported is not None:
+            remove_object_index_entry(imported.uuid)
+
+    try:
+        try:
+            acquire_canvas_writer(uid)
+        except SessionConflictError as exc:
+            logger.warning(
+                "Object import rejected due to canvas writer timeout: session_id=%s",
+                uid,
+            )
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        try:
+            imported = import_object_cutout(
+                session_id=uid,
+                base_dir=storage_dir,
+                file_bytes=file_bytes,
+                filename=file.filename,
+                content_type=file.content_type,
+            )
+            allocated_object_id = imported.object_id
+        finally:
+            release_canvas_writer(uid)
+    except ImportValidationError as exc:
+        logger.warning("Object import rejected: session_id=%s reason=%s", uid, exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except FileNotFoundError as exc:
+        logger.warning("Object import failed — missing session canvas: session_id=%s", uid)
+        rollback_import()
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Object import failed: session_id=%s", uid)
+        rollback_import()
+        raise HTTPException(status_code=500, detail=f"Object import failed: {exc}") from exc
+
+    logger.info(
+        "Object import succeeded: session_id=%s object_id=%d object_uuid=%s",
+        uid,
+        imported.object_id,
+        imported.uuid,
+    )
+    return ImportObjectResponse(object_uuid=imported.uuid)
 
 
 @router.post("/objects/{object_uuid}/duplicate", response_model=DuplicateObjectResponse)
@@ -449,6 +567,45 @@ def delete_object(object_uuid: str) -> Response:
     return Response(status_code=204)
 
 
+@router.delete("/objects/{object_uuid}/3d", status_code=204)
+def delete_object_3d(object_uuid: str) -> Response:
+    """Remove this object's cached GLB only; cutout and metadata stay intact."""
+    logger.info("Object 3D delete requested: uuid=%s", object_uuid)
+    three_d_dir = get_3d_storage_dir()
+
+    target = get_object_by_uuid(object_uuid)
+    if target is None:
+        logger.warning("Object 3D delete failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(
+            status_code=404,
+            detail=f"Object not found for uuid='{object_uuid}'",
+        )
+
+    removed = delete_object_glb_files(
+        glb_dir=three_d_dir,
+        uid=target.session_id,
+        object_id=target.object_id,
+    )
+    if removed == 0:
+        logger.warning(
+            "Object 3D delete failed — no GLB on disk: uuid=%s session_id=%s object_id=%d",
+            object_uuid,
+            target.session_id,
+            target.object_id,
+        )
+        raise HTTPException(status_code=404, detail="No 3D model cached for this object.")
+
+    touch_session(target.session_id)
+    logger.info(
+        "Object 3D deleted: uuid=%s session_id=%s object_id=%d files_removed=%d",
+        object_uuid,
+        target.session_id,
+        target.object_id,
+        removed,
+    )
+    return Response(status_code=204)
+
+
 @router.post("/objects/{object_uuid}/rescale-by-depth", response_model=PlacementResponse)
 def rescale_object_by_depth(
     object_uuid: str,
@@ -535,11 +692,14 @@ def smart_paste_object(
         scale_cutout_bounds(base_bounds, result.display_scale) if base_bounds is not None else None
     )
     logger.info(
-        "Smart paste complete: uuid=%s scale_factor=%.4f display_scale=%.4f target_depth=%.2f",
+        "Smart paste complete: uuid=%s scale_factor=%.4f display_scale=%.4f target_depth=%.2f "
+        "azimuth=%s rel_elevation=%s",
         object_uuid,
         result.scale_factor,
         result.display_scale,
         result.target_depth,
+        result.azimuth_deg,
+        result.relative_elevation_deg,
     )
     return PlacementResponse(
         object_uuid=result.object_uuid,
@@ -550,4 +710,6 @@ def smart_paste_object(
         scale_factor=result.scale_factor,
         display_scale=result.display_scale,
         cutout_bounds=cutout_bounds,
+        azimuth_deg=result.azimuth_deg,
+        relative_elevation_deg=result.relative_elevation_deg,
     )

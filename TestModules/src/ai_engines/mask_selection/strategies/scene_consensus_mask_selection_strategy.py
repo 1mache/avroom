@@ -53,6 +53,7 @@ class SceneConsensusMaskSelectionStrategy(MaskSelectionStrategy):
                 depth_map=ctx.depth_map,
                 mask_bool=mask_bool,
                 click_xy=ctx.click_xy,
+                click_xys=ctx.click_xys or (ctx.click_xy,),
             )
 
         cluster_areas = [areas[index] for index in cluster]

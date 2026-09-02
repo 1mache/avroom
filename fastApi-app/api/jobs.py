@@ -9,6 +9,7 @@ from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.image_codec import to_base64_ascii
 from core.mask_cache import delete_candidate, load_cutout_bytes
 from core.repositories.job_repo import JobRecord, delete_job, get_job, list_active_jobs
+from core.repositories.session_repo import touch_session
 from schemas.jobs import JobDetailResponse, JobInfo, SegmentMaskResult
 from settings import get_image_storage_dir
 
@@ -93,4 +94,5 @@ async def dismiss_job(job_id: str, user_id: str = Depends(current_user_id)) -> N
             delete_candidate(storage_dir, record.session_id, mask_id)
 
     delete_job(job_id)
+    touch_session(record.session_id)
     logger.info("Job dismissed: job_id=%s user_id=%s", job_id, user_id)

@@ -17,11 +17,17 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pathlib import Path
 
 from core.image_codec import to_base64_ascii
-from core.image_processing import debug_click_image_path
+from core.image_processing import (
+    canvas_shape_from_bytes,
+    debug_click_image_path,
+    decode_erase_mask_png,
+    load_canvas_bytes,
+    split_mask_components,
+)
 from core.auth.identity import current_user_id
 from core.inference_pool.client import get_inference_client
-from core.inference_pool.session_runtime import SessionConflictError
-from core.mask_cache import delete_candidates
+from core.inference_pool.session_runtime import SessionConflictError, acquire_canvas_writer, release_canvas_writer
+from core.mask_cache import delete_candidates, save_refined_mask_only
 from core.repositories.job_repo import create_job, delete_job, get_job, list_session_jobs
 from core.depth_cache import delete_session_depth_maps
 from core.normal_cache import delete_session_normal_maps
@@ -29,7 +35,7 @@ from core.camera_calib_cache import delete_session_camera_calib
 from core.object_metadata import list_object_ids
 from schemas.batch import BatchRequest, BatchResponse
 from schemas.image import ClickRequest, ClickResultResponse, SegmentRequest
-from schemas.jobs import JobSubmitResponse, SubmitInpaintRequest
+from schemas.jobs import JobSubmitResponse, SubmitEraseRequest, SubmitInpaintRequest
 from schemas.sessions import (
     SessionInfo,
     SessionSyncCheckRequest,
@@ -38,6 +44,7 @@ from schemas.sessions import (
 )
 from core.object_storage import (
     current_background_path,
+    delete_session_background_history,
     legacy_object_cutout_path,
     legacy_object_glb_path,
     object_cutout_path,
@@ -54,6 +61,13 @@ from core.repositories.session_repo import (
     list_sessions_with_names,
     set_session_name,
     touch_session,
+)
+from core.session_history import (
+    HistoryBoundaryError,
+    HistoryConflictError,
+    commit_background,
+    redo_background,
+    undo_background,
 )
 from settings import get_3d_storage_dir, get_image_storage_dir
 
@@ -111,7 +125,7 @@ def handle_click(request: ClickRequest) -> ClickResultResponse:
 
     # Legacy endpoint: writes the pre-numbering artifact names, which
     # resolve_object_cutout_path still reads back as object id 0.
-    current_background_path(storage_dir, request.image_id).write_bytes(background_bytes)
+    commit_background(request.image_id, background_bytes, storage_dir)
     legacy_object_cutout_path(storage_dir, request.image_id).write_bytes(cutout_bytes)
     touch_session(request.image_id)
 
@@ -151,19 +165,22 @@ async def segment_image(
     the result.
     """
     logger.info(
-        "Segmentation queued: image_id=%s x=%d y=%d verify=%s user_id=%s",
+        "Segmentation queued: image_id=%s x=%d y=%d points=%d verify=%s user_id=%s",
         request.image_id,
         request.x,
         request.y,
+        len(request.points) if request.points else 1,
         request.verify.value,
         user_id,
     )
-    payload = {
+    payload: dict[str, object] = {
         "x": request.x,
         "y": request.y,
         "options": request.options.model_dump() if request.options else None,
         "verify": request.verify.value,
     }
+    if request.points is not None:
+        payload["points"] = [{"x": point.x, "y": point.y} for point in request.points]
     job = create_job(user_id, request.image_id, "segment", payload)
     return JobSubmitResponse(job_id=job.id)
 
@@ -194,6 +211,45 @@ async def inpaint_mask(
             delete_job(request.from_job_id)
 
     return JobSubmitResponse(job_id=job.id)
+
+
+@router.post("/erase", response_model=JobSubmitResponse, status_code=202)
+async def erase_region(
+    request: SubmitEraseRequest, user_id: str = Depends(current_user_id)
+) -> JobSubmitResponse:
+    """Queue erasure of client-drawn mask region(s) and return immediately.
+
+    The submitted mask may contain several disconnected blobs (e.g. chair +
+    table lassoed with Shift). Each blob becomes its own durable erase job so
+    later jobs inpaint against the canvas the earlier ones already wrote.
+    """
+    if not is_session_registered(request.image_id):
+        raise HTTPException(status_code=404, detail=f"Unknown session uid={request.image_id}")
+
+    storage_dir = get_image_storage_dir()
+    try:
+        canvas_bytes = load_canvas_bytes(image_id=request.image_id, base_dir=storage_dir)
+        expected_shape = canvas_shape_from_bytes(canvas_bytes)
+        mask = decode_erase_mask_png(request.mask_b64, expected_shape)
+        components = split_mask_components(mask)
+    except ValueError as exc:
+        logger.warning("Erase rejected: image_id=%s reason=%s", request.image_id, exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    job_ids: list[str] = []
+    for component in components:
+        job = create_job(user_id, request.image_id, "erase", {})
+        save_refined_mask_only(storage_dir, request.image_id, job.id, component)
+        job_ids.append(job.id)
+
+    logger.info(
+        "Erase queued: image_id=%s blobs=%d first_job_id=%s user_id=%s",
+        request.image_id,
+        len(job_ids),
+        job_ids[0],
+        user_id,
+    )
+    return JobSubmitResponse(job_id=job_ids[0])
 
 
 @router.post("/{uid}/batch", response_model=BatchResponse)
@@ -268,6 +324,7 @@ async def delete_session(uid: str) -> Response:
         removed += delete_session_depth_maps(storage_dir, uid)
         removed += delete_session_normal_maps(storage_dir, uid)
         removed += delete_session_camera_calib(storage_dir, uid)
+        removed += delete_session_background_history(storage_dir, uid)
 
     except Exception as exc:
         logger.error("Session delete failed: uid=%s error=%s", uid, exc)
@@ -294,6 +351,60 @@ async def set_name(uid: str, request: SetNameRequest) -> SessionInfo:
     last_changed = touch_session(uid)
     logger.info("Name set: uid=%s name=%r", uid, request.name)
     return SessionInfo(uid=uid, name=request.name, last_changed=last_changed)
+
+
+def _run_history_step(uid: str, *, undo: bool) -> Response:
+    """Shared body for undo/redo: canvas-writer lock, history step, touch."""
+
+    storage_dir = get_image_storage_dir()
+    action = "undo" if undo else "redo"
+    logger.info("Background %s requested: uid=%s", action, uid)
+    try:
+        try:
+            acquire_canvas_writer(uid)
+        except SessionConflictError as exc:
+            logger.warning("Background %s rejected — canvas writer timeout: uid=%s", action, uid)
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+        try:
+            if undo:
+                undo_background(uid, storage_dir)
+            else:
+                redo_background(uid, storage_dir)
+            touch_session(uid)
+        finally:
+            release_canvas_writer(uid)
+    except SessionNotFoundError:
+        logger.warning("Background %s failed — unknown uid: %s", action, uid)
+        raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'") from None
+    except HistoryConflictError as exc:
+        logger.warning("Background %s rejected — active jobs: uid=%s", action, uid)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except HistoryBoundaryError as exc:
+        logger.warning("Background %s rejected — boundary: uid=%s", action, uid)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Background %s failed: uid=%s", action, uid)
+        raise HTTPException(status_code=500, detail=f"Background {action} failed: {exc}") from exc
+
+    logger.info("Background %s complete: uid=%s", action, uid)
+    return Response(status_code=204)
+
+
+@router.post("/{uid}/history/undo", status_code=204)
+def undo_session_background(uid: str) -> Response:
+    """Restore the previous background stage (and hide later objects)."""
+
+    return _run_history_step(uid, undo=True)
+
+
+@router.post("/{uid}/history/redo", status_code=204)
+def redo_session_background(uid: str) -> Response:
+    """Move one stage forward on the background history stack."""
+
+    return _run_history_step(uid, undo=False)
 
 
 @router.post("/{uid}/sync-check", response_model=SessionSyncCheckResponse)

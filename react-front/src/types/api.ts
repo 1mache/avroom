@@ -11,7 +11,7 @@ export interface ImageUploadResponse {
   last_changed: string;
 }
 
-export type JobKind = "segment" | "inpaint" | "generate_3d";
+export type JobKind = "segment" | "inpaint" | "erase" | "generate_3d";
 export type JobStatus = "queued" | "running" | "done" | "failed" | "conflict";
 
 // One durable queued-work row, as returned by GET /jobs/active and embedded
@@ -51,6 +51,11 @@ export interface SubmitInpaintRequest {
   from_job_id?: string | null;
 }
 
+export interface SubmitEraseRequest {
+  image_id: string;
+  mask_b64: string;
+}
+
 export interface Generate3DJobRequest {
   uid: string;
   object_id: number;
@@ -85,7 +90,13 @@ export interface ClickRequest {
   options?: ClickRequestOptions;
 }
 
+export interface SegmentPoint {
+  x: number;
+  y: number;
+}
+
 export interface SegmentRequest extends ClickRequest {
+  points?: SegmentPoint[];
   verify?: VerifyMode;
 }
 
@@ -112,6 +123,7 @@ export interface ObjectMetadataResponse {
   offset_x: number;
   offset_y: number;
   display_scale: number;
+  clone_root_uuid?: string | null;
 }
 
 // Every field optional: a caller sends only what it's actually changing
@@ -121,9 +133,14 @@ export interface UpdateObjectRequest {
   name?: string | null;
   offset_x?: number;
   offset_y?: number;
+  display_scale?: number;
 }
 
 export interface DuplicateObjectResponse {
+  object_uuid: string;
+}
+
+export interface ImportObjectResponse {
   object_uuid: string;
 }
 
@@ -133,6 +150,8 @@ export interface UidCacheStatusResponse {
   has_background: boolean;
   has_cutout: boolean;
   has_3d: boolean;
+  can_undo: boolean;
+  can_redo: boolean;
   cutout_bounds?: CutoutBounds | null;
 }
 
@@ -172,6 +191,8 @@ export interface SmartPasteResponse {
   scale_factor: number;
   display_scale: number;
   cutout_bounds?: CutoutBounds | null;
+  azimuth_deg?: number | null;
+  relative_elevation_deg?: number | null;
 }
 
 export interface ObjectInfo {
@@ -187,6 +208,7 @@ export interface ObjectInfo {
   offset_x: number;
   offset_y: number;
   display_scale?: number;
+  clone_root_uuid?: string | null;
 }
 
 export interface ObjectListResponse {

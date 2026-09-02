@@ -4,8 +4,14 @@ import type { VerifyMode } from "../../types/api";
 import {
   AreaIcon,
   BackIcon,
+  BacktrackIcon,
   CheckIcon,
   CopyIcon,
+  DownloadIcon,
+  EraserIcon,
+  ForwardIcon,
+  MultiPointIcon,
+  RevertIcon,
   RotateIcon,
   ScissorsIcon,
   SmartPasteIcon,
@@ -21,9 +27,19 @@ export interface ToolbarProps {
   /** Scissors is armed: the next click on the photo starts a cutout. */
   cutMode: boolean;
   onCut: () => void;
+  multiPoint: boolean;
+  onToggleMultiPoint: () => void;
+  hasPendingSegmentSeeds: boolean;
+  onUndoLastSeed: () => void;
   areaMode: boolean;
   onArea: () => void;
+  eraserMode: boolean;
+  onEraser: () => void;
+  hasPendingEraseRegions: boolean;
   batchBusy: boolean;
+  /** A box batch or multi-point seeds are staged and waiting for submit. */
+  hasPendingBatch: boolean;
+  onSubmitBatch: () => void;
   /** CLIP vs picker for the next cutout. */
   verifyMode: VerifyMode;
   onVerifyModeChange: (mode: VerifyMode) => void;
@@ -37,6 +53,14 @@ export interface ToolbarProps {
   onToggleSmartPaste: () => void;
   isDeleting: boolean;
   onDeleteObject: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  historyBusy: boolean;
+  onBacktrack: () => void;
+  onForward: () => void;
+  hasSnapshot: boolean;
+  isSavingSnapshot: boolean;
+  onDownloadSnapshot: () => void;
   /** Short readout of in-flight work, e.g. "removing 2". Null when idle. */
   status: string | null;
 }
@@ -54,9 +78,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   hasSelection,
   cutMode,
   onCut,
+  multiPoint,
+  onToggleMultiPoint,
+  hasPendingSegmentSeeds,
+  onUndoLastSeed,
   areaMode,
   onArea,
+  eraserMode,
+  onEraser,
+  hasPendingEraseRegions,
   batchBusy,
+  hasPendingBatch,
+  onSubmitBatch,
   verifyMode,
   onVerifyModeChange,
   rotateMode,
@@ -68,9 +101,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onToggleSmartPaste,
   isDeleting,
   onDeleteObject,
+  canUndo,
+  canRedo,
+  historyBusy,
+  onBacktrack,
+  onForward,
+  hasSnapshot,
+  isSavingSnapshot,
+  onDownloadSnapshot,
   status,
 }) => {
   const objectToolsDisabled = !hasSelection;
+  const historyDisabled = historyBusy || Boolean(status);
 
   return (
     <header className="toolbar">
@@ -112,6 +154,32 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
       <button
         type="button"
+        role="switch"
+        aria-checked={multiPoint}
+        className={`tool-switch${multiPoint ? " is-on" : ""}`}
+        data-tip="Multi-point cutout"
+        aria-label="Multi-point cutout"
+        onClick={onToggleMultiPoint}
+      >
+        <MultiPointIcon />
+        <span className="tool-switch-track">
+          <span className="tool-switch-nub" />
+        </span>
+      </button>
+
+      <button
+        type="button"
+        className="tool-btn"
+        data-tip="Remove last seed"
+        aria-label="Remove last seed"
+        disabled={!hasPendingSegmentSeeds}
+        onClick={onUndoLastSeed}
+      >
+        <RevertIcon size={15} />
+      </button>
+
+      <button
+        type="button"
         className={`tool-btn${areaMode ? " is-armed" : ""}`}
         data-tip={areaMode ? "Drag a box on the photo" : "Cut everything in a box"}
         aria-label="Cut objects in area"
@@ -120,6 +188,36 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         onClick={onArea}
       >
         <AreaIcon />
+      </button>
+
+      <button
+        type="button"
+        className={`tool-btn${hasPendingBatch ? " is-armed" : ""}`}
+        data-tip={
+          hasPendingEraseRegions
+            ? "Run staged erase regions"
+            : hasPendingSegmentSeeds
+              ? "Run multi-point cut"
+              : hasPendingBatch
+                ? "Run batch cut in the box"
+                : "Stage seeds, a box, or erase regions first"
+        }
+        aria-label="Submit pending work"
+        disabled={!hasPendingBatch || batchBusy}
+        onClick={onSubmitBatch}
+      >
+        {batchBusy ? <span className="tool-spinner" /> : <CheckIcon />}
+      </button>
+
+      <button
+        type="button"
+        className={`tool-btn${eraserMode ? " is-armed" : ""}`}
+        data-tip={eraserMode ? "Drag a loop on the photo" : "Erase area"}
+        aria-label="Erase area"
+        aria-pressed={eraserMode}
+        onClick={onEraser}
+      >
+        <EraserIcon />
       </button>
 
       <div
@@ -147,6 +245,39 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           Auto
         </button>
       </div>
+
+      <button
+        type="button"
+        className="tool-btn"
+        data-tip="Backtrack room"
+        aria-label="Backtrack room"
+        disabled={!canUndo || historyDisabled}
+        onClick={onBacktrack}
+      >
+        {historyBusy ? <span className="tool-spinner" /> : <BacktrackIcon />}
+      </button>
+
+      <button
+        type="button"
+        className="tool-btn"
+        data-tip="Forward room"
+        aria-label="Forward room"
+        disabled={!canRedo || historyDisabled}
+        onClick={onForward}
+      >
+        <ForwardIcon />
+      </button>
+
+      <button
+        type="button"
+        className="tool-btn"
+        data-tip="Save room snapshot"
+        aria-label="Save room snapshot"
+        disabled={!hasSnapshot || isSavingSnapshot || historyDisabled}
+        onClick={onDownloadSnapshot}
+      >
+        {isSavingSnapshot ? <span className="tool-spinner" /> : <DownloadIcon />}
+      </button>
 
       <button
         type="button"

@@ -278,3 +278,166 @@ def test_inpaint_job_success_deletes_row_and_creates_object(
     cutout_out_path = storage_sandbox / "sess-1_0_cutout.png"
     assert background_path.read_bytes() == b"fake-bg"
     assert cutout_out_path.read_bytes() == b"fake-cutout"
+
+
+def test_run_segment_job_leases_every_seed(storage_sandbox: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import MagicMock, patch
+
+    from core.jobs.handlers import run_segment_job
+
+    user_id = _make_user_and_session("sess-multi-seed")
+    job = create_job(
+        user_id,
+        "sess-multi-seed",
+        "segment",
+        {
+            "x": 10,
+            "y": 10,
+            "points": [{"x": 10, "y": 10}, {"x": 30, "y": 30}],
+            "verify": "manual",
+        },
+    )
+
+    lease_calls: list[tuple[int, int]] = []
+
+    def _record_lease(_image_id: str, x: int, y: int) -> None:
+        lease_calls.append((x, y))
+
+    fake_client = MagicMock(run_segment=MagicMock(return_value=[("0", b"png")]))
+    monkeypatch.setattr("core.jobs.handlers.get_inference_client", lambda: fake_client)
+    with patch("core.jobs.handlers.assert_segment_click_allowed", side_effect=_record_lease):
+        result = run_segment_job(job)
+
+    assert result == {"mask_ids": ["0"]}
+    assert lease_calls == [(10, 10), (30, 30)]
+
+
+def _seed_upload_canvas(base_dir: Path, uid: str, width: int = 64, height: int = 48) -> None:
+    import cv2
+
+    bgr = np.full((height, width, 3), 120, dtype=np.uint8)
+    ok, encoded = cv2.imencode(".png", bgr)
+    assert ok and encoded is not None
+    (base_dir / f"{uid}.png").write_bytes(encoded.tobytes())
+
+
+def _mask_png_b64(width: int, height: int, blobs: list[tuple[int, int, int, int]]) -> str:
+    import base64
+    import io
+
+    from PIL import Image
+
+    image = Image.new("L", (width, height), 0)
+    pixels = image.load()
+    assert pixels is not None
+    for x0, y0, x1, y1 in blobs:
+        for y in range(y0, y1):
+            for x in range(x0, x1):
+                pixels[x, y] = 255
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+def test_split_mask_components_splits_disconnected_blobs() -> None:
+    from core.image_processing import split_mask_components
+
+    mask = np.zeros((20, 30), dtype=np.uint8)
+    mask[2:10, 2:10] = 255
+    mask[2:10, 20:28] = 255
+
+    components = split_mask_components(mask)
+    assert len(components) == 2
+    assert int(np.count_nonzero(components[0])) == 64
+    assert int(np.count_nonzero(components[1])) == 64
+
+
+def test_decode_erase_mask_rejects_wrong_shape() -> None:
+    from core.image_processing import decode_erase_mask_png
+
+    mask_b64 = _mask_png_b64(10, 10, [(2, 2, 8, 8)])
+    with pytest.raises(ValueError, match="does not match canvas"):
+        decode_erase_mask_png(mask_b64, (20, 20))
+
+
+def test_erase_submit_creates_one_job_per_blob(storage_sandbox: Path) -> None:
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from api.sessions import router
+
+    user_id = _make_user_and_session()
+    _seed_upload_canvas(storage_sandbox, "sess-1", 64, 48)
+    mask_b64 = _mask_png_b64(64, 48, [(4, 4, 12, 12), (40, 30, 50, 40)])
+
+    app = FastAPI()
+    app.include_router(router)
+    response = TestClient(app).post(
+        "/images/erase",
+        json={"image_id": "sess-1", "mask_b64": mask_b64},
+    )
+    assert response.status_code == 202
+
+    erase_jobs = [job for job in list_session_jobs(user_id, "sess-1") if job.kind == "erase"]
+    assert len(erase_jobs) == 2
+    assert all(refined_mask_path(storage_sandbox, "sess-1", job.job_id).exists() for job in erase_jobs)
+
+
+def test_erase_job_success_writes_background_without_object(
+    storage_sandbox: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core.jobs.handlers import run_erase_job
+    from core.mask_cache import save_refined_mask_only
+    from core.object_metadata import list_object_ids
+    from core.repositories.job_repo import delete_job
+
+    user_id = _make_user_and_session()
+    _seed_upload_canvas(storage_sandbox, "sess-1", 64, 48)
+
+    class _FakeClient:
+        def run_erase(self, *, image_id: str, mask_id: str, base_dir: Path) -> bytes:
+            return b"fake-bg"
+
+    monkeypatch.setattr("core.jobs.handlers.get_inference_client", lambda: _FakeClient())
+    monkeypatch.setattr("core.jobs.handlers.notify_pipeline_event", lambda *args, **kwargs: None)
+
+    job = create_job(user_id, "sess-1", "erase", {})
+    mask = np.zeros((48, 64), dtype=np.uint8)
+    mask[10:20, 10:20] = 255
+    save_refined_mask_only(storage_sandbox, "sess-1", job.id, mask)
+
+    claimed = claim_next_job()
+    assert claimed is not None and claimed.id == job.id
+
+    run_erase_job(claimed)
+    delete_job(job.id)
+
+    assert list_object_ids("sess-1") == []
+    assert (storage_sandbox / "sess-1_background.png").read_bytes() == b"fake-bg"
+    assert not refined_mask_path(storage_sandbox, "sess-1", job.id).exists()
+
+
+def test_dispatch_erase_conflict(storage_sandbox: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.jobs.handlers import run_erase_job
+    from core.mask_cache import save_refined_mask_only
+
+    user_id = _make_user_and_session()
+    _seed_upload_canvas(storage_sandbox, "sess-1", 64, 48)
+
+    def _boom(_job: Any) -> None:
+        raise SessionConflictError("overlap")
+
+    monkeypatch.setattr("core.jobs.dispatcher.run_erase_job", _boom)
+
+    job = create_job(user_id, "sess-1", "erase", {})
+    mask = np.zeros((48, 64), dtype=np.uint8)
+    mask[10:20, 10:20] = 255
+    save_refined_mask_only(storage_sandbox, "sess-1", job.id, mask)
+
+    claimed = claim_next_job()
+    assert claimed is not None
+    _dispatch_one(claimed)
+
+    result = get_job(user_id, job.id)
+    assert result is not None
+    assert result.status == "conflict"

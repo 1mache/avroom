@@ -58,6 +58,40 @@ export interface CutoutObject {
   displayScale: number;
   // Server-estimated Zero123 source elevation (degrees); used for novel-view.
   sourceElevationDeg: number;
+  /** Whether a GLB exists on disk for this object. */
+  has3d: boolean;
+  /** UUID of the clone root when this object was duplicated from another. */
+  cloneRootUuid: string | null;
+}
+
+/** True when *obj* has a non-default canvas transform or a rotation result. */
+export function hasUndoableObjectChanges(
+  obj: Pick<CutoutObject, "offset" | "displayScale" | "rotation">,
+): boolean {
+  if (obj.rotation !== null) {
+    return true;
+  }
+  if (obj.displayScale !== 1) {
+    return true;
+  }
+  return obj.offset.x !== 0 || obj.offset.y !== 0;
+}
+
+/** True when *obj* shares a clone lineage with at least one other object. */
+export function hasCloneSiblings(
+  obj: Pick<CutoutObject, "uuid" | "cloneRootUuid">,
+  objects: ReadonlyArray<Pick<CutoutObject, "uuid" | "cloneRootUuid">>,
+): boolean {
+  if (!obj.uuid) {
+    return false;
+  }
+  const root = obj.cloneRootUuid ?? obj.uuid;
+  return objects.some(
+    (other) =>
+      other.uuid &&
+      other.uuid !== obj.uuid &&
+      (other.cloneRootUuid ?? other.uuid) === root,
+  );
 }
 
 // Which image should currently represent an object on the stage: its rotated

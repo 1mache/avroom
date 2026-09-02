@@ -147,26 +147,30 @@ class GeminiCutoutTiebreakStrategy(MaskSelectionTiebreakStrategy):
         )
 
     def _build_parts(self, request: TiebreakRequest) -> list[dict[str, Any]]:
-        click_x, click_y = request.click_xy
+        click_points = request.click_xys or (request.click_xy,)
         scene = request.scene_bgr
         scene_marked = scene.copy()
-        cv2.circle(scene_marked, (click_x, click_y), 8, (0, 0, 255), 2)
+        for click_x, click_y in click_points:
+            cv2.circle(scene_marked, (click_x, click_y), 8, (0, 0, 255), 2)
 
         click_mask = np.zeros(scene.shape[:2], dtype=np.uint8)
-        click_mask[click_y, click_x] = 255
+        for click_x, click_y in click_points:
+            if 0 <= click_y < scene.shape[0] and 0 <= click_x < scene.shape[1]:
+                click_mask[click_y, click_x] = 255
         window = mask_crop_window(click_mask, pad_ratio=GEMINI_CROP_PAD_RATIO)
         scene_crop = scene_marked[window.y0 : window.y1, window.x0 : window.x1]
 
         indices_text = ", ".join(str(index) for index in request.finalist_indices)
+        click_text = ", ".join(f"({x}, {y})" for x, y in click_points)
         parts: list[dict[str, Any]] = [
             {"text": _SYSTEM_PROMPT},
             {
                 "text": (
                     f"Valid candidate_index values: [{indices_text}]. "
-                    f"Click at ({click_x}, {click_y})."
+                    f"Clicks at {click_text}."
                 ),
             },
-            {"text": "Scene crop with click marker (red circle)."},
+            {"text": "Scene crop with click markers (red circles)."},
             {"inline_data": {"mime_type": "image/png", "data": encode_png_b64(scene_crop)}},
         ]
 

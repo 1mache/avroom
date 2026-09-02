@@ -59,6 +59,7 @@ class InferenceClient:
         base_dir: Path,
         x: int,
         y: int,
+        points: tuple[tuple[int, int], ...] | None = None,
         options: ImageProcessingOptions | None = None,
         exclude_mask_ids: frozenset[str] | None = None,
         verify: str | None = None,
@@ -70,6 +71,7 @@ class InferenceClient:
             image_id=image_id,
             x=x,
             y=y,
+            points=points,
             options=options.model_dump() if options is not None else None,
             exclude_mask_ids=tuple(sorted(exclude_mask_ids or frozenset())),
             verify=verify,
@@ -99,6 +101,25 @@ class InferenceClient:
         assert result.cutout_bytes is not None
         assert result.image_format is not None
         return result.background_bytes, result.cutout_bytes, result.image_format
+
+    def run_erase(
+        self,
+        *,
+        image_id: str,
+        mask_id: str,
+        base_dir: Path,
+    ) -> bytes:
+        job = JobRequest(
+            job_id=_new_job_id(),
+            kind=JobKind.ERASE,
+            storage_dir=str(base_dir.resolve()),
+            image_id=image_id,
+            mask_id=mask_id,
+        )
+        result = self._run(job)
+        self._raise_if_failed(result)
+        assert result.background_bytes is not None
+        return result.background_bytes
 
     def run_click(
         self,
@@ -197,6 +218,8 @@ class InferenceClient:
             target_depth=result.target_depth,
             scale_factor=result.scale_factor,
             display_scale=result.display_scale,
+            azimuth_deg=result.azimuth_deg,
+            relative_elevation_deg=result.relative_elevation_deg,
         )
 
     def run_generate_3d(self, *, cutout_path: Path) -> bytes:

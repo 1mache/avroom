@@ -6,41 +6,72 @@ import {
   deleteJob,
   getSessionObjects,
   getUidCacheStatus,
+  redoSessionBackground,
   setSessionName as saveSessionName,
+  undoSessionBackground,
   warmSessionMaps,
 } from "../../api/images";
-import { useAreaSelect } from "../../hooks/useAreaSelect";
+import { boxBoundsFromDraft, useAreaSelect } from "../../hooks/useAreaSelect";
+import { useLassoSelect, type LassoDraft } from "../../hooks/useLassoSelect";
 import { useConflictNotices, type ConflictContext } from "../../hooks/useConflictNotices";
 import { useDashboardPreview } from "../../hooks/useDashboardPreview";
 import { useHitTesting } from "../../hooks/useHitTesting";
 import { useObjectDrag } from "../../hooks/useObjectDrag";
+import { useObjectResize } from "../../hooks/useObjectResize";
 import { useRotationController } from "../../hooks/useRotationController";
 import { useSessionJobs, type JobErrorContext } from "../../hooks/useSessionJobs";
 import { useSessionSync } from "../../hooks/useSessionSync";
-import type { VerifyMode } from "../../types/api";
+import type { BatchSource, VerifyMode } from "../../types/api";
 import {
   effectiveCutoutBounds,
   effectiveCutoutSrc,
   effectiveDisplayBounds,
+  hasCloneSiblings,
   type ClickPosition,
   type CutoutObject,
 } from "../../types/session";
 import {
   ALPHA_HIT_THRESHOLD,
+  batchBoxStageStyle,
   buildHitTestOrder,
+  compositePreviewOntoCanvas,
   getBoundsStageRect,
   getContainedImageRect,
   inflateAroundCenter,
+  inflateBounds,
   mapPointThroughInverseScale,
   toNaturalPoint,
   type Rect,
+  type ResizeHandle,
   type Size,
 } from "../../utils/stageGeometry";
+import {
+  composeStageSnapshot,
+  snapshotDownloadFilename,
+  triggerBlobDownload,
+} from "../../utils/preview";
+import { rasterizeEraseMask } from "../../utils/lassoMask";
 import { ConfirmDialog } from "../widgets/ConfirmDialog";
 import { MaskPickerModal } from "../widgets/MaskPickerModal";
 import { MODEL_3D_FRAME_PADDING, Model3DFrame } from "../widgets/Model3DFrame";
 import { ObjectRail } from "../workspace/ObjectRail";
 import { Toolbar } from "../workspace/Toolbar";
+
+const MAX_SEGMENT_SEEDS = 8;
+
+function lassoPolygonStagePoints(
+  polygon: ClickPosition[],
+  renderedRect: Rect,
+  naturalSize: Size,
+): string {
+  return polygon
+    .map((point) => {
+      const x = renderedRect.x + (point.x / naturalSize.width) * renderedRect.width;
+      const y = renderedRect.y + (point.y / naturalSize.height) * renderedRect.height;
+      return `${x},${y}`;
+    })
+    .join(" ");
+}
 
 const errorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback;
@@ -86,27 +117,37 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const [stageSize, setStageSize] = useState<Size | null>(null);
 
   // cutMode: scissors is armed and the next click on the photo starts a cutout.
-  // pickPoint: that click, in natural-image pixels, kept on screen while the
-  // mask picker is open so the user can see what they aimed at.
+  // pendingSeeds: foreground clicks in natural-image pixels — shown while
+  // collecting multi-point seeds and kept on screen until the mask picker closes.
   const [cutMode, setCutMode] = useState(false);
+  const [eraserMode, setEraserMode] = useState(false);
   const [areaMode, setAreaMode] = useState(false);
   const [areaDraft, setAreaDraft] = useState<{
     start: ClickPosition;
     current: ClickPosition;
   } | null>(null);
+  const [pendingBatchSource, setPendingBatchSource] = useState<BatchSource | null>(null);
   const [batchUuids, setBatchUuids] = useState<Set<string>>(new Set());
-  const [pickPoint, setPickPoint] = useState<ClickPosition | null>(null);
+  const [pendingSeeds, setPendingSeeds] = useState<ClickPosition[]>([]);
+  const [lassoDraft, setLassoDraft] = useState<LassoDraft | null>(null);
+  const [pendingEraseRegions, setPendingEraseRegions] = useState<ClickPosition[][]>([]);
+  const [multiPoint, setMultiPoint] = useState(false);
   const [verifyMode, setVerifyMode] = useState<VerifyMode>("manual");
 
   // Per-object: show the pristine cutout instead of the rotated result.
   const [showOriginalIds, setShowOriginalIds] = useState<ReadonlySet<number>>(new Set());
 
   const [smartPaste, setSmartPaste] = useState(false);
+  const [canUndo, setCanUndo] = useState(false);
+  const [canRedo, setCanRedo] = useState(false);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Object id awaiting delete confirmation. Deletion is permanent (the
   // background keeps its inpainted hole), so the trash button arms this
   // instead of deleting directly.
   const [pendingDeleteObjectId, setPendingDeleteObjectId] = useState<number | null>(null);
+  const stageInputRef = useRef<HTMLDivElement | null>(null);
 
   const conflictNotices = useConflictNotices();
 
@@ -133,6 +174,18 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // Same trick for the dashboard thumbnail: capturing it needs state declared
   // further down, but onMutated has to be passed into useSessionJobs up here.
   const capturePreviewRef = useRef<() => void>(() => {});
+  const applyHistoryFlags = useCallback((flags: { canUndo: boolean; canRedo: boolean }) => {
+    setCanUndo(flags.canUndo);
+    setCanRedo(flags.canRedo);
+  }, []);
+  const refreshHistoryFlags = useCallback(async () => {
+    try {
+      const status = await getUidCacheStatus(uid);
+      applyHistoryFlags({ canUndo: status.can_undo, canRedo: status.can_redo });
+    } catch {
+      // Non-fatal — toolbar buttons stay at their last known state.
+    }
+  }, [uid, applyHistoryFlags]);
   const handleMutated = useCallback(() => {
     // A mutation (inpaint, most commonly) can change the canvas the depth/
     // normal maps were warmed for — forget the "already warm" mark so the
@@ -140,7 +193,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     warmedSessionIds.delete(uid);
     recordLocalMutationRef.current();
     capturePreviewRef.current();
-  }, [uid]);
+    void refreshHistoryFlags();
+  }, [uid, refreshHistoryFlags]);
 
   // A queued segment/inpaint job resolving to "conflict" (its mask/click
   // overlapped an in-flight removal) reuses the same inline notice a
@@ -172,13 +226,26 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     selectedObjectId: jobs.selectedObjectId,
     setSelectedObjectId: jobs.setSelectedObjectId,
     setBackgroundSrc: jobs.setBackgroundSrc,
-    setJobs: jobs.setJobs,
+    applyServerJobs: jobs.applyServerJobs,
     isDeleted: jobs.isObjectDeleted,
+    applyHistoryFlags,
   });
 
   useEffect(() => {
     recordLocalMutationRef.current = sync.recordLocalMutation;
   }, [sync.recordLocalMutation]);
+
+  // Polling stops when hasPendingWork flips false — often the same tick the
+  // erase/inpaint job lands. Reconcile may have already run, but if polling
+  // ended before needs_refresh was seen, refresh history flags once here.
+  const hadPendingWorkRef = useRef(jobs.hasPendingWork);
+  useEffect(() => {
+    if (hadPendingWorkRef.current && !jobs.hasPendingWork) {
+      void refreshHistoryFlags();
+      recordLocalMutationRef.current();
+    }
+    hadPendingWorkRef.current = jobs.hasPendingWork;
+  }, [jobs.hasPendingWork, refreshHistoryFlags]);
 
   const selectedObject = jobs.objects.find((o) => o.objectId === jobs.selectedObjectId) ?? null;
 
@@ -245,6 +312,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           return;
         }
         setSessionName(status.name ?? uid);
+        setCanUndo(status.can_undo);
+        setCanRedo(status.can_redo);
 
         if (status.has_background) {
           jobs.setBackgroundSrc(`${API_BASE_URL}/images/${uid}/background`);
@@ -371,20 +440,33 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     onSettled: capturePreview,
   });
 
-  // --- drag-a-box batch select -----------------------------------------------
+  const clientToNatural = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!naturalSize || !renderedRect || !stageInputRef.current) {
+        return null;
+      }
+      const stageRect = stageInputRef.current.getBoundingClientRect();
+      return toNaturalPoint(
+        clientX - stageRect.left,
+        clientY - stageRect.top,
+        renderedRect,
+        naturalSize,
+      );
+    },
+    [naturalSize, renderedRect],
+  );
 
-  useAreaSelect({
-    areaDraft,
-    setAreaDraft,
-    setAreaMode,
+  const objectResize = useObjectResize({
+    objects: jobs.objects,
+    showOriginalIds,
+    clientToNatural,
     naturalSize,
-    renderedRect,
-    stageRef,
-    isBatching: jobs.isBatching,
-    runBatch: jobs.runBatch,
+    updateDisplayScale: jobs.updateDisplayScale,
+    onError: (err) => setError(errorMessage(err, "Failed to save object size.")),
+    onSettled: capturePreview,
   });
 
-  // --- selection & tools --------------------------------------------------
+  // --- drag-a-box batch select (hook wired after handlers below) -----------
 
   const selectObject = useCallback(
     (objectId: number) => {
@@ -393,7 +475,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       // closes the angle picker.
       rotation.setRotateMode(false);
       setCutMode(false);
-      setPickPoint(null);
+      setPendingSeeds([]);
     },
     [jobs.setSelectedObjectId, rotation.setRotateMode],
   );
@@ -419,42 +501,171 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     });
   }, []);
 
+  const fireSegmentFromSeeds = useCallback(
+    (seeds: ClickPosition[]) => {
+      if (seeds.length === 0) {
+        return;
+      }
+      const rounded = seeds.map((seed) => ({
+        x: Math.round(seed.x),
+        y: Math.round(seed.y),
+      }));
+      setPendingSeeds(seeds);
+      setCutMode(false);
+      jobs.runSegment(rounded[0].x, rounded[0].y, verifyMode, rounded);
+    },
+    [jobs.runSegment, verifyMode],
+  );
+
   const handleCut = useCallback(() => {
     rotation.setRotateMode(false);
     setAreaMode(false);
-    setPickPoint(null);
+    setEraserMode(false);
+    setLassoDraft(null);
+    setPendingEraseRegions([]);
+    setPendingBatchSource(null);
+    setPendingSeeds([]);
     setCutMode((armed) => !armed);
+  }, [rotation.setRotateMode]);
+
+  const handleEraser = useCallback(() => {
+    rotation.setRotateMode(false);
+    setCutMode(false);
+    setAreaMode(false);
+    setPendingBatchSource(null);
+    setPendingSeeds([]);
+    setEraserMode((armed) => {
+      if (armed) {
+        setLassoDraft(null);
+        setPendingEraseRegions([]);
+      }
+      return !armed;
+    });
   }, [rotation.setRotateMode]);
 
   const handleArea = useCallback(() => {
     rotation.setRotateMode(false);
     setCutMode(false);
-    setPickPoint(null);
+    setEraserMode(false);
+    setLassoDraft(null);
+    setPendingEraseRegions([]);
+    setPendingSeeds([]);
     setAreaMode((armed) => !armed);
   }, [rotation.setRotateMode]);
+
+  const handleToggleMultiPoint = useCallback(() => {
+    setMultiPoint((on) => !on);
+  }, []);
+
+  const handleUndoLastSeed = useCallback(() => {
+    setPendingSeeds((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
+  }, []);
+
+  const handleBoxReady = useCallback((source: BatchSource) => {
+    setPendingBatchSource(source);
+  }, []);
+
+  const submitEraseRegions = useCallback(
+    (regions: ClickPosition[][]) => {
+      if (!naturalSize || regions.length === 0) {
+        return;
+      }
+      const maskB64 = rasterizeEraseMask(naturalSize.width, naturalSize.height, regions);
+      if (!maskB64) {
+        return;
+      }
+      setPendingEraseRegions([]);
+      setEraserMode(false);
+      jobs.runErase(maskB64);
+    },
+    [jobs.runErase, naturalSize],
+  );
+
+  const handleLassoComplete = useCallback(
+    (polygon: ClickPosition[], shiftKey: boolean) => {
+      if (shiftKey) {
+        setPendingEraseRegions((prev) => [...prev, polygon]);
+        return;
+      }
+      const regions =
+        pendingEraseRegions.length > 0 ? [...pendingEraseRegions, polygon] : [polygon];
+      submitEraseRegions(regions);
+    },
+    [pendingEraseRegions, submitEraseRegions],
+  );
+
+  const handleSubmitPendingBatch = useCallback(() => {
+    if (pendingEraseRegions.length > 0) {
+      submitEraseRegions(pendingEraseRegions);
+      return;
+    }
+    if (pendingSeeds.length > 0) {
+      fireSegmentFromSeeds(pendingSeeds);
+      return;
+    }
+    if (!pendingBatchSource || jobs.isBatching) {
+      return;
+    }
+    const source = pendingBatchSource;
+    setPendingBatchSource(null);
+    void jobs.runBatch(source);
+  }, [
+    fireSegmentFromSeeds,
+    jobs.isBatching,
+    jobs.runBatch,
+    pendingBatchSource,
+    pendingEraseRegions,
+    pendingSeeds.length,
+    submitEraseRegions,
+  ]);
+
+  useLassoSelect({
+    lassoDraft,
+    setLassoDraft,
+    naturalSize,
+    renderedRect,
+    stageRef,
+    onLassoComplete: handleLassoComplete,
+  });
+
+  useAreaSelect({
+    areaDraft,
+    setAreaDraft,
+    setAreaMode,
+    naturalSize,
+    renderedRect,
+    stageRef,
+    onBoxReady: handleBoxReady,
+  });
 
   const handleMaskSelected = useCallback(
     (maskId: string) => {
       if (jobs.currentSegmentJobId) {
         jobs.selectMask(jobs.currentSegmentJobId, maskId);
       }
-      setPickPoint(null);
+      setPendingSeeds([]);
     },
     [jobs.selectMask, jobs.currentSegmentJobId],
   );
 
-  const handleMaskPickerClosed = useCallback(() => {
-    jobs.closeMaskPicker();
-    setPickPoint(null);
-  }, [jobs.closeMaskPicker]);
+  const handleMaskPickerDeferred = useCallback(() => {
+    jobs.deferMaskPicker();
+    setPendingSeeds([]);
+  }, [jobs.deferMaskPicker]);
+
+  const handleMaskPickerDiscarded = useCallback(() => {
+    const jobId = jobs.currentSegmentJobId;
+    if (!jobId) {
+      return;
+    }
+    void jobs.discardMaskPicker(jobId);
+    setPendingSeeds([]);
+  }, [jobs.currentSegmentJobId, jobs.discardMaskPicker]);
 
   const handleCopy = useCallback(() => {
     if (jobs.selectedObjectId === null) {
       return;
     }
-    // Objects segmented before server-side UUID tracking was added have no
-    // uuid, and duplication is keyed on it — surface that instead of a silent
-    // no-op (see useSessionJobs.duplicateObject).
     if (!selectedObject?.uuid) {
       setError("This object is from an older session and can't be duplicated.");
       return;
@@ -462,20 +673,57 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     void jobs.duplicateObject(jobs.selectedObjectId);
   }, [jobs.duplicateObject, jobs.selectedObjectId, selectedObject]);
 
-  // Arms the confirm dialog; the actual DELETE fires from
-  // handleConfirmDeleteObject once the user confirms.
+  const requestDeleteObject = useCallback(
+    (objectId: number) => {
+      const target = jobs.objects.find((o) => o.objectId === objectId);
+      if (!target?.uuid) {
+        setError("This object is from an older session and can't be deleted.");
+        return;
+      }
+      rotation.setRotateMode(false);
+      if (hasCloneSiblings(target, jobs.objects)) {
+        void jobs.deleteObject(objectId);
+        return;
+      }
+      setPendingDeleteObjectId(objectId);
+    },
+    [jobs.deleteObject, jobs.objects, rotation.setRotateMode],
+  );
+
   const handleDeleteObject = useCallback(() => {
     if (jobs.selectedObjectId === null) {
       return;
     }
-    // Same uuid precondition as duplicate — deletion is keyed on it too.
-    if (!selectedObject?.uuid) {
-      setError("This object is from an older session and can't be deleted.");
-      return;
-    }
-    rotation.setRotateMode(false);
-    setPendingDeleteObjectId(jobs.selectedObjectId);
-  }, [jobs.selectedObjectId, selectedObject, rotation.setRotateMode]);
+    requestDeleteObject(jobs.selectedObjectId);
+  }, [jobs.selectedObjectId, requestDeleteObject]);
+
+  const handleClearObject3d = useCallback(
+    (objectId: number) => {
+      if (jobs.selectedObjectId === objectId) {
+        rotation.setRotateMode(false);
+      }
+      void jobs.clearObject3d(objectId);
+    },
+    [jobs.clearObject3d, jobs.selectedObjectId, rotation.setRotateMode],
+  );
+
+  const handleResetObjectChanges = useCallback(
+    (objectId: number) => {
+      if (jobs.selectedObjectId === objectId) {
+        rotation.setRotateMode(false);
+      }
+      setShowOriginalIds((prev) => {
+        if (!prev.has(objectId)) {
+          return prev;
+        }
+        const next = new Set(prev);
+        next.delete(objectId);
+        return next;
+      });
+      void jobs.resetObjectChanges(objectId);
+    },
+    [jobs.resetObjectChanges, jobs.selectedObjectId, rotation.setRotateMode],
+  );
 
   const pendingDeleteObject =
     jobs.objects.find((o) => o.objectId === pendingDeleteObjectId) ?? null;
@@ -522,7 +770,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // Enter commits the rotation (same as pressing rotate again); Escape backs
   // out of whichever mode is armed. Both bail while a text field owns focus.
   useEffect(() => {
-    if (!rotation.rotateMode && !cutMode && !areaMode) {
+    if (
+      !jobs.isChoosingMask &&
+      !rotation.rotateMode &&
+      !cutMode &&
+      !areaMode &&
+      !eraserMode &&
+      pendingSeeds.length === 0 &&
+      pendingEraseRegions.length === 0
+    ) {
       return;
     }
 
@@ -534,26 +790,53 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
       if (event.key === "Escape") {
         event.preventDefault();
+        if (jobs.isChoosingMask) {
+          handleMaskPickerDeferred();
+          return;
+        }
         rotation.setRotateMode(false);
         setCutMode(false);
         setAreaMode(false);
+        setEraserMode(false);
         setAreaDraft(null);
-        setPickPoint(null);
+        setLassoDraft(null);
+        setPendingBatchSource(null);
+        setPendingSeeds([]);
+        setPendingEraseRegions([]);
       } else if (event.key === "Enter" && rotation.rotateMode) {
         event.preventDefault();
         void rotation.commitCurrentRotation();
+      } else if (event.key === "Enter" && pendingEraseRegions.length > 0) {
+        event.preventDefault();
+        submitEraseRegions(pendingEraseRegions);
+      } else if (event.key === "Enter" && pendingSeeds.length > 0) {
+        event.preventDefault();
+        fireSegmentFromSeeds(pendingSeeds);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [rotation.rotateMode, cutMode, areaMode, rotation.commitCurrentRotation, rotation.setRotateMode]);
+  }, [
+    jobs.isChoosingMask,
+    handleMaskPickerDeferred,
+    rotation.rotateMode,
+    cutMode,
+    areaMode,
+    eraserMode,
+    pendingSeeds,
+    pendingEraseRegions,
+    fireSegmentFromSeeds,
+    submitEraseRegions,
+    rotation.commitCurrentRotation,
+    rotation.setRotateMode,
+  ]);
 
   // --- pointer interaction on the photo -----------------------------------
 
   const handleStagePointerDown: React.PointerEventHandler<HTMLDivElement> = useCallback(
     (event) => {
-      if (!naturalSize || !renderedRect) {
+      if (!naturalSize || !renderedRect || objectResize.isResizing) {
         return;
       }
 
@@ -565,6 +848,13 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         return;
       }
 
+      // Eraser armed: pointer-down starts a freehand lasso, not a selection.
+      if (eraserMode) {
+        event.preventDefault();
+        setLassoDraft({ points: [natural] });
+        return;
+      }
+
       // Scissors armed: this click is the segmentation seed, not a selection.
       if (areaMode) {
         event.preventDefault();
@@ -572,16 +862,34 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         return;
       }
 
+      // Shift+click arms scissors and drops a seed — no need to press scissors first.
+      if (event.shiftKey && !cutMode && !rotation.rotateMode && !eraserMode) {
+        event.preventDefault();
+        setCutMode(true);
+        if (pendingSeeds.length >= MAX_SEGMENT_SEEDS) {
+          return;
+        }
+        setPendingSeeds((prev) => [...prev, natural]);
+        return;
+      }
+
       if (cutMode) {
         event.preventDefault();
-        setPickPoint(natural);
-        setCutMode(false);
-        void jobs.runSegment(
-          Math.round(natural.x),
-          Math.round(natural.y),
-          verifyMode,
-          { x: natural.x / naturalSize.width, y: natural.y / naturalSize.height },
-        );
+        const collectMode = multiPoint || event.shiftKey;
+
+        if (pendingSeeds.length > 0 && !collectMode) {
+          return;
+        }
+
+        if (collectMode) {
+          if (pendingSeeds.length >= MAX_SEGMENT_SEEDS) {
+            return;
+          }
+          setPendingSeeds((prev) => [...prev, natural]);
+          return;
+        }
+
+        fireSegmentFromSeeds([natural]);
         return;
       }
 
@@ -634,15 +942,18 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       naturalSize,
       renderedRect,
       cutMode,
+      eraserMode,
       areaMode,
-      verifyMode,
-      jobs.runSegment,
+      multiPoint,
+      pendingSeeds.length,
+      fireSegmentFromSeeds,
       jobs.objects,
       jobs.selectedObjectId,
       rotation.rotateMode,
       isShowingOriginal,
       sampleObjectAlpha,
       objectDrag,
+      objectResize.isResizing,
       selectObject,
     ],
   );
@@ -718,11 +1029,44 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       }
     : undefined;
 
+  const canResize =
+    Boolean(selectedObject?.uuid) &&
+    !rotation.rotateMode &&
+    !cutMode &&
+    !objectDrag.isDragging &&
+    !objectResize.isResizing;
+
+  const handleResizePointerDown = useCallback(
+    (handle: ResizeHandle) => (event: React.PointerEvent<HTMLElement>) => {
+      event.stopPropagation();
+      event.preventDefault();
+      if (!canResize || jobs.selectedObjectId === null) {
+        return;
+      }
+      const natural = clientToNatural(event.clientX, event.clientY);
+      if (!natural) {
+        return;
+      }
+      event.currentTarget.setPointerCapture(event.pointerId);
+      objectResize.beginResize(jobs.selectedObjectId, handle, event.pointerId, natural);
+    },
+    [canResize, clientToNatural, jobs.selectedObjectId, objectResize],
+  );
+
   const photoSrc = jobs.backgroundSrc ?? originalSrc;
+
+  const displayedBatchBox = areaDraft
+    ? boxBoundsFromDraft(areaDraft)
+    : pendingBatchSource?.kind === "box"
+      ? pendingBatchSource
+      : null;
+  const batchBoxIsPending = displayedBatchBox !== null && pendingBatchSource !== null && !areaDraft;
 
   const activeJobs = jobs.jobs.filter((job) => job.status === "queued" || job.status === "running");
   const segmentingCount = activeJobs.filter((job) => job.kind === "segment").length;
   const removingCount = activeJobs.filter((job) => job.kind === "inpaint").length;
+  const erasingCount = activeJobs.filter((job) => job.kind === "erase").length;
+  const canvasWorkCount = removingCount + erasingCount;
 
   const status = jobs.isBatching
     ? "batch cutting"
@@ -730,8 +1074,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       ? "smart pasting"
       : segmentingCount > 0
         ? `finding masks${segmentingCount > 1 ? ` (${segmentingCount})` : ""}`
-        : removingCount > 0
-          ? `removing ${removingCount}`
+        : canvasWorkCount > 0
+          ? `removing ${canvasWorkCount}`
       : jobs.objects.some((o) => o.rotation?.status === "pending")
         ? "rotating"
         : jobs.isDuplicating
@@ -749,6 +1093,149 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     });
   }, [jobs.setJobs]);
 
+  const runHistoryStep = useCallback(
+    async (direction: "undo" | "redo") => {
+      if (historyBusy || jobs.hasPendingWork) {
+        return;
+      }
+      setHistoryBusy(true);
+      try {
+        if (direction === "undo") {
+          await undoSessionBackground(uid);
+        } else {
+          await redoSessionBackground(uid);
+        }
+        handleMutated();
+      } catch (stepError) {
+        setError(errorMessage(stepError, `Failed to ${direction} room history.`));
+      } finally {
+        setHistoryBusy(false);
+      }
+    },
+    [historyBusy, jobs.hasPendingWork, uid, handleMutated],
+  );
+
+  const handleBacktrack = useCallback(() => {
+    void runHistoryStep("undo");
+  }, [runHistoryStep]);
+
+  const handleForward = useCallback(() => {
+    void runHistoryStep("redo");
+  }, [runHistoryStep]);
+
+  const handleDownloadSnapshot = useCallback(async () => {
+    const backgroundSrc = jobs.backgroundSrc ?? originalSrc;
+    if (!naturalSize || !backgroundSrc || isSavingSnapshot) {
+      return;
+    }
+
+    setIsSavingSnapshot(true);
+    try {
+      const selectedId = jobs.selectedObjectId;
+      const withoutSelected =
+        selectedId !== null
+          ? visibleObjects.filter((obj) => obj.objectId !== selectedId)
+          : visibleObjects;
+      const selected =
+        selectedId !== null ? visibleObjects.find((obj) => obj.objectId === selectedId) : undefined;
+      const paintOrder = selected ? [...withoutSelected, selected] : withoutSelected;
+
+      const layers = await Promise.all(
+        paintOrder.map(async (obj) => {
+          const showOriginal = isShowingOriginal(obj);
+          const isRotatePickerTarget =
+            rotation.rotateMode && obj.objectId === selectedId;
+
+          if (isRotatePickerTarget) {
+            const capture = rotation.model3DFrameRef.current?.capture();
+            if (!capture) {
+              return null;
+            }
+            const bounds = obj.cutoutAlphaBounds
+              ? inflateBounds(obj.cutoutAlphaBounds, MODEL_3D_FRAME_PADDING)
+              : null;
+            const src = await compositePreviewOntoCanvas(
+              capture.snapshotDataUrl,
+              bounds,
+              naturalSize,
+            );
+            return {
+              src,
+              offset: obj.offset,
+              displayScale: obj.displayScale,
+              bounds: effectiveCutoutBounds(obj, showOriginal),
+            };
+          }
+
+          return {
+            src: effectiveCutoutSrc(obj, showOriginal),
+            offset: obj.offset,
+            displayScale: obj.displayScale,
+            bounds: effectiveCutoutBounds(obj, showOriginal),
+          };
+        }),
+      );
+
+      const blob = await composeStageSnapshot(
+        backgroundSrc,
+        layers.filter((layer): layer is NonNullable<typeof layer> => layer !== null),
+        naturalSize,
+      );
+      if (!blob) {
+        setError("Could not build a snapshot of the room.");
+        return;
+      }
+
+      triggerBlobDownload(blob, snapshotDownloadFilename(sessionName, uid));
+    } catch (saveError) {
+      setError(errorMessage(saveError, "Could not save the room snapshot."));
+    } finally {
+      setIsSavingSnapshot(false);
+    }
+  }, [
+    isSavingSnapshot,
+    isShowingOriginal,
+    jobs.backgroundSrc,
+    jobs.selectedObjectId,
+    naturalSize,
+    originalSrc,
+    rotation.model3DFrameRef,
+    rotation.rotateMode,
+    sessionName,
+    uid,
+    visibleObjects,
+  ]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+        return;
+      }
+      const mod = event.ctrlKey || event.metaKey;
+      if (!mod) {
+        return;
+      }
+      if (event.key === "z" || event.key === "Z") {
+        if (event.shiftKey) {
+          if (canRedo && !historyBusy && !jobs.hasPendingWork) {
+            event.preventDefault();
+            void runHistoryStep("redo");
+          }
+        } else if (canUndo && !historyBusy && !jobs.hasPendingWork) {
+          event.preventDefault();
+          void runHistoryStep("undo");
+        }
+      } else if ((event.key === "y" || event.key === "Y") && canRedo && !historyBusy && !jobs.hasPendingWork) {
+        event.preventDefault();
+        void runHistoryStep("redo");
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [canRedo, canUndo, historyBusy, jobs.hasPendingWork, runHistoryStep]);
+
   return (
     <div className="workspace">
       <Toolbar
@@ -759,9 +1246,22 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         hasSelection={jobs.selectedObjectId !== null}
         cutMode={cutMode}
         onCut={handleCut}
+        multiPoint={multiPoint}
+        onToggleMultiPoint={handleToggleMultiPoint}
+        hasPendingSegmentSeeds={pendingSeeds.length > 0}
+        onUndoLastSeed={handleUndoLastSeed}
         areaMode={areaMode}
         onArea={handleArea}
+        eraserMode={eraserMode}
+        onEraser={handleEraser}
+        hasPendingEraseRegions={pendingEraseRegions.length > 0}
         batchBusy={jobs.isBatching}
+        hasPendingBatch={
+          pendingBatchSource !== null ||
+          pendingSeeds.length > 0 ||
+          pendingEraseRegions.length > 0
+        }
+        onSubmitBatch={handleSubmitPendingBatch}
         verifyMode={verifyMode}
         onVerifyModeChange={setVerifyMode}
         rotateMode={rotation.rotateMode}
@@ -773,12 +1273,20 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         onToggleSmartPaste={handleToggleSmartPaste}
         isDeleting={jobs.isDeleting}
         onDeleteObject={handleDeleteObject}
+        canUndo={canUndo}
+        canRedo={canRedo}
+        historyBusy={historyBusy}
+        onBacktrack={handleBacktrack}
+        onForward={handleForward}
+        hasSnapshot={Boolean(naturalSize && (jobs.backgroundSrc ?? originalSrc))}
+        isSavingSnapshot={isSavingSnapshot}
+        onDownloadSnapshot={() => void handleDownloadSnapshot()}
         status={status}
       />
 
       <main
         ref={stageRef}
-        className={`stage${cutMode || areaMode ? " is-picking" : ""}${objectDrag.isDragging ? " is-dragging" : ""}`}
+        className={`stage${cutMode || areaMode || eraserMode ? " is-picking" : ""}${objectDrag.isDragging ? " is-dragging" : ""}`}
       >
         {photoSrc ? (
           <>
@@ -816,40 +1324,113 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             {/* Cutouts are full-size transparent PNGs, so a topmost overlay
                 would swallow every click; this transparent layer owns pointer
                 input and hit-tests against real alpha instead. */}
-            <div className="stage-input" onPointerDown={handleStagePointerDown} />
+            <div
+              ref={stageInputRef}
+              className="stage-input"
+              onPointerDown={handleStagePointerDown}
+            />
 
-            {areaDraft && renderedRect && naturalSize ? (
+            {displayedBatchBox && renderedRect && naturalSize ? (
               <div
-                className="stage-area-box"
-                style={{
-                  left: `${renderedRect.x + (Math.min(areaDraft.start.x, areaDraft.current.x) / naturalSize.width) * renderedRect.width}px`,
-                  top: `${renderedRect.y + (Math.min(areaDraft.start.y, areaDraft.current.y) / naturalSize.height) * renderedRect.height}px`,
-                  width: `${(Math.abs(areaDraft.current.x - areaDraft.start.x) / naturalSize.width) * renderedRect.width}px`,
-                  height: `${(Math.abs(areaDraft.current.y - areaDraft.start.y) / naturalSize.height) * renderedRect.height}px`,
-                }}
+                className={`stage-area-box${batchBoxIsPending ? " is-pending" : ""}`}
+                style={batchBoxStageStyle(displayedBatchBox, renderedRect, naturalSize)}
               />
             ) : null}
 
-            {pickPoint && renderedRect && naturalSize ? (
-              <span
-                className="stage-pick-marker"
-                style={{
-                  left: `${renderedRect.x + (pickPoint.x / naturalSize.width) * renderedRect.width}px`,
-                  top: `${renderedRect.y + (pickPoint.y / naturalSize.height) * renderedRect.height}px`,
-                }}
-              />
+            {pendingSeeds.length > 0 && renderedRect && naturalSize ? (
+              <div className="stage-seed-markers" aria-hidden="true">
+                {pendingSeeds.map((seed, index) => (
+                  <span
+                    key={`${seed.x}-${seed.y}-${index}`}
+                    className={`stage-pick-marker${cutMode ? " is-armed" : ""}`}
+                    style={{
+                      left: `${renderedRect.x + (seed.x / naturalSize.width) * renderedRect.width}px`,
+                      top: `${renderedRect.y + (seed.y / naturalSize.height) * renderedRect.height}px`,
+                    }}
+                  >
+                    <span className="stage-pick-marker-ring" />
+                    <span className="stage-pick-marker-label">{index + 1}</span>
+                  </span>
+                ))}
+              </div>
+            ) : null}
+
+            {renderedRect && naturalSize && (lassoDraft || pendingEraseRegions.length > 0) ? (
+              <svg className="stage-lasso-layer" aria-hidden="true">
+                {pendingEraseRegions.map((polygon, index) => (
+                  <polygon
+                    key={`pending-erase-${index}`}
+                    className="stage-lasso-path is-pending"
+                    points={lassoPolygonStagePoints(polygon, renderedRect, naturalSize)}
+                  />
+                ))}
+                {lassoDraft ? (
+                  <polyline
+                    className="stage-lasso-path"
+                    points={lassoPolygonStagePoints(lassoDraft.points, renderedRect, naturalSize)}
+                  />
+                ) : null}
+              </svg>
             ) : null}
 
             {rotation.rotateMode && rotation.glbData ? (
               <Model3DFrame ref={rotation.model3DFrameRef} glbData={rotation.glbData} style={model3DFrameStyle} />
             ) : null}
 
-            {selectedRect ? (
+            {selectedRect && !rotation.rotateMode ? (
               <div className="selection-frame" style={{ ...rectStyle(selectedRect), zIndex: 210 }}>
-                <span className="selection-corner tl" />
-                <span className="selection-corner tr" />
-                <span className="selection-corner bl" />
-                <span className="selection-corner br" />
+                {canResize ? (
+                  <>
+                    <button
+                      type="button"
+                      className="selection-handle selection-corner tl"
+                      aria-label="Resize top left"
+                      onPointerDown={handleResizePointerDown("tl")}
+                    />
+                    <button
+                      type="button"
+                      className="selection-handle selection-corner tr"
+                      aria-label="Resize top right"
+                      onPointerDown={handleResizePointerDown("tr")}
+                    />
+                    <button
+                      type="button"
+                      className="selection-handle selection-corner bl"
+                      aria-label="Resize bottom left"
+                      onPointerDown={handleResizePointerDown("bl")}
+                    />
+                    <button
+                      type="button"
+                      className="selection-handle selection-corner br"
+                      aria-label="Resize bottom right"
+                      onPointerDown={handleResizePointerDown("br")}
+                    />
+                    <button
+                      type="button"
+                      className="selection-handle selection-edge t"
+                      aria-label="Resize top"
+                      onPointerDown={handleResizePointerDown("t")}
+                    />
+                    <button
+                      type="button"
+                      className="selection-handle selection-edge r"
+                      aria-label="Resize right"
+                      onPointerDown={handleResizePointerDown("r")}
+                    />
+                    <button
+                      type="button"
+                      className="selection-handle selection-edge b"
+                      aria-label="Resize bottom"
+                      onPointerDown={handleResizePointerDown("b")}
+                    />
+                    <button
+                      type="button"
+                      className="selection-handle selection-edge l"
+                      aria-label="Resize left"
+                      onPointerDown={handleResizePointerDown("l")}
+                    />
+                  </>
+                ) : null}
               </div>
             ) : null}
           </>
@@ -874,10 +1455,27 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
         {rotation.rotateMode ? (
           <p className="stage-hint">Drag to orbit · Enter applies · Esc cancels</p>
+        ) : eraserMode ? (
+          <p className="stage-hint">
+            {pendingEraseRegions.length > 0
+              ? `${pendingEraseRegions.length} region${pendingEraseRegions.length === 1 ? "" : "s"} · Shift-drag adds · Enter or checkmark runs · Esc cancels`
+              : "Drag a loop to erase · Shift-drag stages · Esc cancels"}
+          </p>
         ) : areaMode ? (
           <p className="stage-hint">Drag a box around the furniture · Esc cancels</p>
+        ) : pendingBatchSource ? (
+          <p className="stage-hint">Submit batch cut (checkmark) · Esc clears box</p>
+        ) : pendingSeeds.length > 0 ? (
+          <p className="stage-hint">
+            {pendingSeeds.length} seed{pendingSeeds.length === 1 ? "" : "s"} placed · Shift+click adds · Enter or
+            checkmark runs · Esc clears
+          </p>
         ) : cutMode ? (
-          <p className="stage-hint">Click the object you want to cut out · Esc cancels</p>
+          <p className="stage-hint">
+            {multiPoint
+              ? "Click to add seeds · Enter or checkmark runs · Esc cancels"
+              : "Click the object · Shift+click adds seeds · Esc cancels"}
+          </p>
         ) : null}
 
         {conflictNotices.notices.length > 0 ? (
@@ -905,6 +1503,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             selectedObjectId={jobs.selectedObjectId}
             showOriginalIds={showOriginalIds}
             disabled={rotation.isPreparing3D}
+            isDuplicating={jobs.isDuplicating}
+            isDeleting={jobs.isDeleting}
             onSelectObject={selectObject}
             onToggleBatchUuid={(uuid, on) => {
               setBatchUuids((prev) => {
@@ -934,6 +1534,21 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             onToggleHidden={handleToggleHidden}
             onToggleShowOriginal={handleToggleShowOriginal}
             onRenameObject={handleRenameObject}
+            onDuplicateObject={(objectId) => {
+              const target = jobs.objects.find((o) => o.objectId === objectId);
+              if (!target?.uuid) {
+                setError("This object is from an older session and can't be duplicated.");
+                return;
+              }
+              void jobs.duplicateObject(objectId);
+            }}
+            onDeleteObject={requestDeleteObject}
+            onClearObject3d={handleClearObject3d}
+            onResetObjectChanges={handleResetObjectChanges}
+            onImportObject={(file) => {
+              void jobs.importObject(file);
+            }}
+            importDisabled={rotation.isPreparing3D || jobs.isImporting || jobs.isBatching}
             onDismissJob={handleDismissJob}
           />
         ) : null}
@@ -943,7 +1558,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         <MaskPickerModal
           masks={jobs.maskOptions}
           onSelect={handleMaskSelected}
-          onClose={handleMaskPickerClosed}
+          onDefer={handleMaskPickerDeferred}
+          onDiscard={handleMaskPickerDiscarded}
         />
       ) : null}
 

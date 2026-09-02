@@ -34,7 +34,7 @@ if defined INFERENCE_WORKERS (
   echo           Or set INFERENCE_WORKERS in fastApi-app\.env
 )
 
-start "AVRoom API" /D "%~dp0fastApi-app" cmd /k "call ..\.venv\Scripts\activate.bat && set INFERENCE_WORKERS=%INFERENCE_WORKERS% && uvicorn main:app --reload"
+start "AVRoom API" /D "%~dp0fastApi-app" cmd /k "call ..\.venv\Scripts\activate.bat && set INFERENCE_WORKERS=%INFERENCE_WORKERS% && uvicorn main:app --reload --reload-dir . --reload-dir ..\TestModules"
 start "AVRoom Front" /D "%~dp0react-front" cmd /k "npm run dev"
 
 start "" "http://localhost:8025"

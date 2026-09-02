@@ -76,3 +76,28 @@ def test_sanitize_then_expand_does_not_bridge_detached_speckles() -> None:
     assert expanded[50, 79] == 255
     assert mask[50, 80] == 255  # raw still has the speckle
     # Regression: dilate-then-sanitize would have kept x=80 after bridging.
+
+
+def test_multi_seed_unions_disconnected_blobs() -> None:
+    mask = _blank()
+    mask[10:30, 10:30] = 255
+    mask[60:80, 60:80] = 255
+    mask[5:8, 90:94] = 255
+
+    sanitized = _REFINER.keep_click_component(mask, 20, 20, extra_clicks=[(70, 70)])
+
+    assert sanitized[20, 20] == 255
+    assert sanitized[70, 70] == 255
+    assert sanitized[6, 91] == 0
+    assert int(np.count_nonzero(sanitized)) == 20 * 20 + 20 * 20
+
+
+def test_single_seed_still_drops_other_blob() -> None:
+    mask = _blank()
+    mask[10:30, 10:30] = 255
+    mask[60:80, 60:80] = 255
+
+    sanitized = _REFINER.keep_click_component(mask, 20, 20)
+
+    assert sanitized[20, 20] == 255
+    assert sanitized[70, 70] == 0

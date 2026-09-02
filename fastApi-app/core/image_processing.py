@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import functools
 import io
 import logging
@@ -24,10 +25,13 @@ from core.depth_cache import (
     get_or_compute_depth,
     memory_image_key,
 )
+from core.normal_cache import get_or_compute_normals
+from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.camera_calib_cache import load_camera_calib
 from core.camera_calibration import cache_dict_to_calibration_result
 from core.object_metadata import ObjectMetadata, create_object_metadata, get_object_by_uuid, set_object_rescale_state
 from core.inference_lock import inference_session
+from settings import get_normal_map_enabled
 
 
 logger = logging.getLogger(__name__)
@@ -318,6 +322,7 @@ def segment_candidates_on_image(
     base_dir: Path,
     x: int,
     y: int,
+    points: tuple[tuple[int, int], ...] | None = None,
     options: ImageProcessingOptions | None = None,
     exclude_mask_ids: frozenset[str] | None = None,
     verify: str | VerifyMode | None = None,
@@ -335,7 +340,10 @@ def segment_candidates_on_image(
     del options  # TODO: parameter not used. legacy click options. remove it or use
     pinned = exclude_mask_ids or frozenset()
     image_bytes = load_canvas_bytes(image_id=image_id, base_dir=base_dir)
-    _validate_click_coordinates(image_bytes, x, y, base_dir, image_id)
+    segment_points = points if points else ((x, y),)
+    for point_x, point_y in segment_points:
+        _validate_click_coordinates(image_bytes, point_x, point_y, base_dir, image_id)
+    extra_points = segment_points[1:] if len(segment_points) > 1 else None
 
     with inference_session():
         # New segmentation invalidates older unchosen candidates except pinned masks.
@@ -349,13 +357,20 @@ def segment_candidates_on_image(
             segmentor.depth.map_depth,
         )
         image_key = memory_image_key(image_bytes)
-        logger.info("Running ObjectSegmentor: image_key=%s click=(%d,%d)", image_key, x, y)
+        logger.info(
+            "Running ObjectSegmentor: image_key=%s click=(%d,%d) extra_points=%d",
+            image_key,
+            x,
+            y,
+            len(extra_points or ()),
+        )
         candidate_pairs = segmentor.get_mask_for_object_at_position(
             image_path=image_key,
             x=x,
             y=y,
             image_bytes=image_bytes,
             depth_map=depth_map,
+            extra_points=extra_points,
         )
         logger.info("ObjectSegmentor finished: image_id=%s candidates=%d", image_id, len(candidate_pairs))
 
@@ -377,6 +392,7 @@ def segment_candidates_on_image(
             selection = select_best_cutout(
                 cutouts_bgra,
                 click_xy=(x, y),
+                click_xys=segment_points,
                 refined_masks=refined_masks,
                 scene_bgr=source_bgr,
                 depth_map=depth_map,
@@ -414,6 +430,106 @@ def segment_candidates_on_image(
             return [results[selection.winner_index]]
 
     return results
+
+
+ERASE_MIN_COMPONENT_PIXELS = 64
+
+
+def canvas_shape_from_bytes(image_bytes: bytes) -> tuple[int, int]:
+    """Return (height, width) for stored canvas/upload bytes."""
+
+    with Image.open(io.BytesIO(image_bytes)) as source_image:
+        width, height = source_image.size
+    return height, width
+
+
+def decode_erase_mask_png(mask_b64: str, expected_shape: tuple[int, int]) -> np.ndarray:
+    """Decode a client-drawn erase mask PNG into uint8 HxW with values 0/255.
+
+    Args:
+        mask_b64: Base64-encoded PNG (grayscale or RGB — luminance is used).
+        expected_shape: ``(height, width)`` of the session canvas.
+
+    Raises:
+        ValueError: When decoding fails, shapes mismatch, or the mask is empty.
+    """
+
+    try:
+        raw = base64.b64decode(mask_b64, validate=True)
+    except Exception as exc:
+        raise ValueError("Erase mask is not valid base64.") from exc
+
+    try:
+        with Image.open(io.BytesIO(raw)) as img:
+            gray = img.convert("L")
+            if gray.size != (expected_shape[1], expected_shape[0]):
+                raise ValueError(
+                    f"Erase mask shape {gray.size[::-1]} does not match canvas {expected_shape}."
+                )
+            arr = np.array(gray, dtype=np.uint8)
+    except UnidentifiedImageError as exc:
+        raise ValueError("Erase mask is not a valid PNG image.") from exc
+
+    mask = np.where(arr >= 128, 255, 0).astype(np.uint8)
+    if not np.any(mask):
+        raise ValueError("Erase mask has no foreground pixels.")
+    return mask
+
+
+def split_mask_components(
+    mask: np.ndarray,
+    min_pixels: int = ERASE_MIN_COMPONENT_PIXELS,
+) -> list[np.ndarray]:
+    """Split a binary mask into disconnected 8-connected foreground blobs.
+
+    Drops blobs smaller than ``min_pixels`` (lasso speckle). Raises when
+    nothing usable remains.
+    """
+
+    _, labels = cv2.connectedComponents((mask > 0).astype(np.uint8), connectivity=8)
+    components: list[np.ndarray] = []
+    for label in range(1, int(labels.max()) + 1):
+        component = np.where(labels == label, 255, 0).astype(np.uint8)
+        if int(np.count_nonzero(component)) >= min_pixels:
+            components.append(component)
+    if not components:
+        raise ValueError("Erase mask has no foreground blobs large enough to erase.")
+    return components
+
+
+def erase_mask_on_image(
+    image_id: str,
+    mask_id: str,
+    base_dir: Path,
+) -> bytes:
+    """Run background inpainting for one client-provided erase mask (no cutout)."""
+
+    image_bytes = load_canvas_bytes(image_id=image_id, base_dir=base_dir)
+    source_bgr = _decode_original_bgr(image_bytes, image_id)
+    refined_mask = load_refined_mask(base_dir, image_id, mask_id)
+
+    with inference_session():
+        inpainter = load_avroom_attr("BackgroundInpainter")()
+        logger.info(
+            "Running erase inpaint: image_id=%s mask_id=%s image_shape=%s mask_shape=%s",
+            image_id,
+            mask_id,
+            source_bgr.shape,
+            refined_mask.shape,
+        )
+        background_bgr = inpainter.cut_mask_from_image(
+            original_image=source_bgr,
+            mask=refined_mask,
+            compose_mask=None,
+        )
+        logger.info(
+            "Erase inpaint finished: image_id=%s mask_id=%s bg_shape=%s",
+            image_id,
+            mask_id,
+            background_bgr.shape,
+        )
+
+    return encode_png(background_bgr, "background")
 
 
 def inpaint_selected_mask_on_image(
@@ -531,6 +647,17 @@ class SmartPasteBridgeResult:
     target_depth: float
     scale_factor: float
     display_scale: float
+    azimuth_deg: float | None = None
+    relative_elevation_deg: float | None = None
+
+
+_NORMAL_MAPPING_MODULE = "avroom_object_removal.ai_engines.normal_mapping"
+
+
+def _map_normals_bgr(image_bgr: np.ndarray) -> np.ndarray:
+    """Run Metric3D normal mapping on a decoded BGR canvas."""
+    facade = load_avroom_attr("NormalMappingFacade", _NORMAL_MAPPING_MODULE)()
+    return facade.map_normals(image_bgr)
 
 
 def _compute_depth_rescale(
@@ -667,6 +794,33 @@ def run_smart_paste(
     )
 
     metadata = _load_object_metadata_for_rescale(base_dir, object_uuid)
+    cutout_path = resolve_object_cutout_path(base_dir, metadata.session_id, metadata.object_id)
+    base_bounds = extract_cutout_bounds_from_png_bytes(cutout_path.read_bytes())
+
+    normal_map: np.ndarray | None = None
+    source_x: int | None = None
+    source_y: int | None = None
+    if get_normal_map_enabled() and base_bounds is not None:
+        source_x = int(round((base_bounds.left + base_bounds.right) / 2))
+        source_y = int(round((base_bounds.top + base_bounds.bottom) / 2))
+        image_bytes = load_canvas_bytes(image_id=metadata.session_id, base_dir=base_dir)
+        with inference_session():
+            normal_map, _content_hash = get_or_compute_normals(
+                base_dir,
+                metadata.session_id,
+                image_bytes,
+                _map_normals_bgr,
+            )
+        logger.info(
+            "Smart paste normal map ready: object_uuid=%s source=(%d,%d) shape=%s",
+            object_uuid,
+            source_x,
+            source_y,
+            normal_map.shape,
+        )
+    elif not get_normal_map_enabled():
+        logger.info("Smart paste auto-rotate skipped: NORMAL_MAP=false object_uuid=%s", object_uuid)
+
     depth_map = _compute_session_depth_map(base_dir, metadata.session_id)
 
     with inference_session():
@@ -676,17 +830,22 @@ def run_smart_paste(
             depth_map=depth_map,
             x=x,
             y=y,
+            normal_map=normal_map,
+            source_x=source_x,
+            source_y=source_y,
         )
 
     display_scale = paste_result.scale_factor
     logger.info(
         "Smart paste scale computed: object_uuid=%s source_depth=%.2f target_depth=%.2f "
-        "scale=%.4f display_scale=%.4f",
+        "scale=%.4f display_scale=%.4f azimuth=%s rel_elevation=%s",
         object_uuid,
         paste_result.source_average_depth,
         paste_result.target_depth,
         paste_result.scale_factor,
         display_scale,
+        paste_result.azimuth_deg,
+        paste_result.relative_elevation_deg,
     )
 
     _persist_rescale_metadata(object_uuid, display_scale=display_scale)
@@ -707,5 +866,7 @@ def run_smart_paste(
         target_depth=paste_result.target_depth,
         scale_factor=paste_result.scale_factor,
         display_scale=display_scale,
+        azimuth_deg=paste_result.azimuth_deg,
+        relative_elevation_deg=paste_result.relative_elevation_deg,
     )
 

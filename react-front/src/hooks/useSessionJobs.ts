@@ -3,15 +3,22 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteJob,
   deleteObject as deleteObjectRequest,
+  deleteObject3d as deleteObject3dRequest,
   duplicateObject as duplicateObjectRequest,
+  eraseMask,
+  fetchCached3DModel,
   getJob,
   getSessionObjects,
+  importObjectCutout,
   inpaintMask,
   runSessionBatch,
   segmentImage,
   setObjectName,
+  resetObjectTransform as resetObjectTransformRequest,
   smartPasteObject,
+  submitGenerate3D,
   synthesizeNovelView,
+  waitForJobDone,
 } from "../api/images";
 import type {
   BatchRequest,
@@ -103,9 +110,11 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   // local-only fields to preserve across updates (unlike `objects`).
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [isBatching, setIsBatching] = useState(false);
+  const batchingRef = useRef(false);
   const [segmentState, setSegmentState] = useState<SegmentPickerState>({ status: "idle" });
   const [backgroundSrc, setBackgroundSrc] = useState<string | null>(null);
   const [isDuplicating, setIsDuplicating] = useState(false);
+  const [isImporting, setIsImporting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
   const imageIdRef = useRef(imageId);
@@ -117,6 +126,22 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   useEffect(() => {
     objectsRef.current = objects;
   }, [objects]);
+
+  const jobsRef = useRef(jobs);
+  useEffect(() => {
+    jobsRef.current = jobs;
+  }, [jobs]);
+
+  useEffect(() => {
+    segmentChoosingJobIdRef.current =
+      segmentState.status === "choosing" ? segmentState.jobId : null;
+  }, [segmentState]);
+
+  const applyServerJobs = useCallback((serverJobs: JobInfo[]) => {
+    setJobs(
+      serverJobs.filter((job) => !purgedSegmentJobIdsRef.current.has(job.job_id)),
+    );
+  }, []);
 
   // Only ever moves forward. The canvas writer lock serializes commits
   // server-side so object_id is a valid commit order; this guards purely
@@ -136,6 +161,10 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   // is purely a "not right now" — resets on remount, meaning re-entering the
   // session offers the same result again.
   const dismissedSegmentJobIdsRef = useRef<Set<string>>(new Set());
+  // Segment jobs the user discarded via Close — hidden locally until DELETE
+  // settles so sync-check can't resurrect the row mid-flight.
+  const purgedSegmentJobIdsRef = useRef<Set<string>>(new Set());
+  const segmentChoosingJobIdRef = useRef<string | null>(null);
   // Guards the picker-chain effect against re-fetching the same head job
   // while its GET /jobs/{id} inflate call is still in flight.
   const inflatingJobIdRef = useRef<string | null>(null);
@@ -154,6 +183,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     highestCommittedObjectIdRef.current = -1;
     deletedObjectIdsRef.current = new Set();
     dismissedSegmentJobIdsRef.current = new Set();
+    purgedSegmentJobIdsRef.current = new Set();
+    segmentChoosingJobIdRef.current = null;
     notifiedConflictIdsRef.current = new Set();
   }, []);
 
@@ -196,6 +227,71 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [isDeleting, onError, onMutated],
   );
 
+  const clearObject3d = useCallback(
+    async (objectId: number) => {
+      const currentImageId = imageIdRef.current;
+      const target = objectsRef.current.find((o) => o.objectId === objectId);
+      if (!currentImageId || !target?.uuid) {
+        return;
+      }
+
+      try {
+        await deleteObject3dRequest(target.uuid);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+        setObjects((prev) =>
+          prev.map((o) =>
+            o.objectId === objectId
+              ? { ...o, glbData: null, has3d: false, rotation: null }
+              : o,
+          ),
+        );
+        onMutated?.();
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "generic");
+        }
+      }
+    },
+    [onError, onMutated],
+  );
+
+  const resetObjectChanges = useCallback(
+    async (objectId: number) => {
+      const currentImageId = imageIdRef.current;
+      const target = objectsRef.current.find((o) => o.objectId === objectId);
+      if (!currentImageId || !target?.uuid) {
+        return;
+      }
+
+      try {
+        await resetObjectTransformRequest(target.uuid);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+        setObjects((prev) =>
+          prev.map((o) =>
+            o.objectId === objectId
+              ? {
+                  ...o,
+                  offset: { x: 0, y: 0 },
+                  displayScale: 1,
+                  rotation: null,
+                }
+              : o,
+          ),
+        );
+        onMutated?.();
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "generic");
+        }
+      }
+    },
+    [onError, onMutated],
+  );
+
   const loadRestoredObjects = useCallback((restored: ObjectInfo[]) => {
     const loaded: CutoutObject[] = restored.map((info) => ({
       objectId: info.object_id,
@@ -210,6 +306,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
       sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
       displayScale: info.display_scale ?? 1,
+      has3d: info.has_3d ?? false,
+      cloneRootUuid: info.clone_root_uuid ?? null,
     }));
     setObjects(loaded);
     highestCommittedObjectIdRef.current = loaded.reduce(
@@ -221,9 +319,10 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   const runBatch = useCallback(
     async (source: BatchRequest["source"]) => {
       const currentImageId = imageIdRef.current;
-      if (!currentImageId || isBatching) {
+      if (!currentImageId || batchingRef.current) {
         return;
       }
+      batchingRef.current = true;
       setIsBatching(true);
       try {
         await runSessionBatch(currentImageId, { source, verify: "auto" });
@@ -236,11 +335,12 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         }
       } finally {
         if (imageIdRef.current === currentImageId) {
+          batchingRef.current = false;
           setIsBatching(false);
         }
       }
     },
-    [isBatching, onError, onMutated],
+    [onError, onMutated],
   );
 
   // Queues segmentation and returns immediately — no local loading state, and
@@ -252,20 +352,43 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       x: number,
       y: number,
       verify: VerifyMode = "manual",
-      _normalizedClickPos: ClickPosition | null = null,
+      points?: { x: number; y: number }[],
     ) => {
       const currentImageId = imageIdRef.current;
       if (!currentImageId) {
         return;
       }
-      segmentImage({ image_id: currentImageId, x, y, verify })
+      const payload: {
+        image_id: string;
+        x: number;
+        y: number;
+        verify: VerifyMode;
+        points?: { x: number; y: number }[];
+      } = { image_id: currentImageId, x, y, verify };
+      if (points && points.length > 1) {
+        payload.points = points;
+      }
+      segmentImage(payload)
         .then(() => onMutated?.())
         .catch((err) => onError(err, "segment"));
     },
     [onError, onMutated],
   );
 
-  const closeMaskPicker = useCallback(() => {
+  const runErase = useCallback(
+    (maskB64: string) => {
+      const currentImageId = imageIdRef.current;
+      if (!currentImageId) {
+        return;
+      }
+      eraseMask({ image_id: currentImageId, mask_b64: maskB64 })
+        .then(() => onMutated?.())
+        .catch((err) => onError(err, "inpaint"));
+    },
+    [onError, onMutated],
+  );
+
+  const deferMaskPicker = useCallback(() => {
     setSegmentState((prev) => {
       if (prev.status === "choosing") {
         dismissedSegmentJobIdsRef.current.add(prev.jobId);
@@ -273,6 +396,36 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       return { status: "idle" };
     });
   }, []);
+
+  const discardMaskPicker = useCallback(
+    async (jobId: string) => {
+      const currentImageId = imageIdRef.current;
+      if (!currentImageId) {
+        return;
+      }
+
+      purgedSegmentJobIdsRef.current.add(jobId);
+      dismissedSegmentJobIdsRef.current.add(jobId);
+      inflatingJobIdRef.current = null;
+      setSegmentState({ status: "idle" });
+      setJobs((prev) => prev.filter((job) => job.job_id !== jobId));
+
+      try {
+        await deleteJob(jobId);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+        onMutated?.();
+      } catch (err) {
+        purgedSegmentJobIdsRef.current.delete(jobId);
+        dismissedSegmentJobIdsRef.current.delete(jobId);
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "generic");
+        }
+      }
+    },
+    [onError, onMutated],
+  );
 
   // Consumes the segment job (from_job_id) atomically with the inpaint
   // submission and closes the picker. The created object isn't built here —
@@ -395,6 +548,10 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     setObjects((prev) => prev.map((o) => (o.objectId === objectId ? { ...o, offset } : o)));
   }, []);
 
+  const updateDisplayScale = useCallback((objectId: number, displayScale: number) => {
+    setObjects((prev) => prev.map((o) => (o.objectId === objectId ? { ...o, displayScale } : o)));
+  }, []);
+
   // Fires the novel-view request detached, same pattern as before: the
   // object's `rotation` field itself is the pending-state marker. Re-rotating
   // an object simply overwrites its rotation -- always starting over from the
@@ -470,6 +627,56 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [onError, onMutated],
   );
 
+  /** Ensure this object's GLB exists, then mesh-render at an inferred pose. */
+  const applyInferredRotation = useCallback(
+    async (objectId: number, pose: RotationPose) => {
+      const currentImageId = imageIdRef.current;
+      if (!currentImageId) {
+        return;
+      }
+
+      const target = objectsRef.current.find((o) => o.objectId === objectId);
+      if (!target) {
+        return;
+      }
+
+      try {
+        let buffer = target.glbData;
+        if (!buffer) {
+          const cached = await fetchCached3DModel(currentImageId, objectId);
+          buffer = cached;
+          if (!buffer) {
+            const existingJob = jobsRef.current.find(
+              (job) =>
+                job.kind === "generate_3d" &&
+                job.object_id === objectId &&
+                (job.status === "queued" || job.status === "running"),
+            );
+            const jobId = existingJob?.job_id ?? (await submitGenerate3D(currentImageId, objectId));
+            await waitForJobDone(jobId);
+            buffer = await fetchCached3DModel(currentImageId, objectId);
+            if (!buffer) {
+              throw new Error("3D generation finished but no model was found.");
+            }
+          }
+          if (imageIdRef.current !== currentImageId) {
+            return;
+          }
+          setObjects((prev) =>
+            prev.map((o) => (o.objectId === objectId ? { ...o, glbData: buffer! } : o)),
+          );
+        }
+
+        commitRotation(objectId, pose, target.cutoutSrc);
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "rotate");
+        }
+      }
+    },
+    [commitRotation, onError, setObjects],
+  );
+
   const renameObject = useCallback(
     async (objectId: number, uuid: string, name: string | null) => {
       try {
@@ -528,6 +735,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           displayScale: info.display_scale ?? source.displayScale ?? 1,
           sourceElevationDeg:
             info.source_elevation_deg ?? source.sourceElevationDeg ?? FALLBACK_SOURCE_ELEVATION_DEG,
+          has3d: info.has_3d ?? source.has3d,
+          cloneRootUuid: info.clone_root_uuid ?? source.uuid,
         };
 
         setObjects((prev) => upsertObject(prev, newObject));
@@ -547,6 +756,79 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       }
     },
     [isDuplicating, onError, onMutated],
+  );
+
+  const importObject = useCallback(
+    async (file: File) => {
+      const currentImageId = imageIdRef.current;
+      if (!currentImageId || isImporting) {
+        return;
+      }
+
+      if (file.size === 0) {
+        onError(new Error("PNG file is empty."), "generic");
+        return;
+      }
+
+      const isPng =
+        file.type === "image/png" || file.name.toLowerCase().endsWith(".png");
+      if (!isPng) {
+        onError(new Error("Only PNG cutouts can be imported."), "generic");
+        return;
+      }
+
+      setIsImporting(true);
+      try {
+        const { object_uuid: importedUuid } = await importObjectCutout(currentImageId, file);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+
+        const list = await getSessionObjects(currentImageId);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+
+        const info = list.objects.find((o) => o.uuid === importedUuid);
+        if (!info) {
+          onMutated?.();
+          return;
+        }
+
+        const newObject: CutoutObject = {
+          objectId: info.object_id,
+          uuid: info.uuid ?? importedUuid,
+          name: info.name ?? null,
+          cutoutSrc: `data:image/${info.format};base64,${info.cutout_b64}`,
+          cutoutAlphaBounds: toCutoutAlphaBounds(info.cutout_bounds),
+          normalizedClickPos: null,
+          glbData: null,
+          rotation: null,
+          hidden: false,
+          offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
+          displayScale: info.display_scale ?? 1,
+          sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
+          has3d: info.has_3d ?? false,
+          cloneRootUuid: info.clone_root_uuid ?? null,
+        };
+
+        setObjects((prev) => upsertObject(prev, newObject));
+        setSelectedObjectId(info.object_id);
+        if (info.object_id > highestCommittedObjectIdRef.current) {
+          highestCommittedObjectIdRef.current = info.object_id;
+        }
+        onMutated?.();
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "generic");
+        }
+      } finally {
+        if (imageIdRef.current === currentImageId) {
+          setIsImporting(false);
+        }
+      }
+    },
+    [isImporting, onError, onMutated],
   );
 
   const applySmartPasteResult = useCallback(
@@ -576,11 +858,17 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       }
 
       return smartPasteObject(target.uuid, x, y)
-        .then((result) => {
+        .then(async (result) => {
           if (imageIdRef.current !== currentImageId) {
             return false;
           }
           applySmartPasteResult(objectId, result);
+          if (result.azimuth_deg != null && result.relative_elevation_deg != null) {
+            await applyInferredRotation(objectId, {
+              azimuthDeg: result.azimuth_deg,
+              relativeElevationDeg: result.relative_elevation_deg,
+            });
+          }
           return true;
         })
         .catch((err) => {
@@ -590,7 +878,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           return false;
         });
     },
-    [applySmartPasteResult, onError],
+    [applyInferredRotation, applySmartPasteResult, onError],
   );
 
   return {
@@ -600,10 +888,12 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     setSelectedObjectId,
     jobs,
     setJobs,
+    applyServerJobs,
     hasPendingWork:
       jobs.some((job) => job.status === "queued" || job.status === "running") ||
       isBatching ||
       isDuplicating ||
+      isImporting ||
       isDeleting ||
       objects.some((o) => o.rotation?.status === "pending"),
     segmentState,
@@ -613,17 +903,25 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     backgroundSrc,
     setBackgroundSrc,
     isDuplicating,
+    isImporting,
     runSegment,
+    runErase,
     runBatch,
     isBatching,
-    closeMaskPicker,
+    closeMaskPicker: deferMaskPicker,
+    deferMaskPicker,
+    discardMaskPicker,
     selectMask,
     commitRotation,
     toggleHidden,
     updateOffset,
+    updateDisplayScale,
     renameObject,
     duplicateObject,
+    importObject,
     deleteObject,
+    clearObject3d,
+    resetObjectChanges,
     runSmartPasteAfterDrag,
     isDeleting,
     isObjectDeleted,

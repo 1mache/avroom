@@ -209,6 +209,67 @@ export const mapPointThroughInverseScale = (
   };
 };
 
+export type ResizeHandle = "tl" | "tr" | "bl" | "br" | "t" | "r" | "b" | "l";
+
+export const MIN_DISPLAY_SCALE = 0.05;
+export const MAX_DISPLAY_SCALE = 8.0;
+
+export const clampDisplayScale = (scale: number): number =>
+  Math.min(MAX_DISPLAY_SCALE, Math.max(MIN_DISPLAY_SCALE, scale));
+
+/** Natural-image center of an object's alpha bbox (CSS scale origin). */
+export const getObjectScaleCenter = (
+  bounds: CutoutAlphaBounds | null,
+  offset: ClickPosition,
+  imageSize: Size,
+): ClickPosition => {
+  const effectiveBounds = bounds ?? {
+    left: 0,
+    top: 0,
+    right: imageSize.width,
+    bottom: imageSize.height,
+    naturalWidth: imageSize.width,
+    naturalHeight: imageSize.height,
+  };
+
+  return {
+    x: offset.x + (effectiveBounds.left + effectiveBounds.right) / 2,
+    y: offset.y + (effectiveBounds.top + effectiveBounds.bottom) / 2,
+  };
+};
+
+/** Uniform scale factor from a handle drag relative to *center*. */
+export const scaleFromHandleDrag = (
+  handle: ResizeHandle,
+  startPointer: ClickPosition,
+  currentPointer: ClickPosition,
+  center: ClickPosition,
+  startScale: number,
+): number => {
+  const isCorner = handle === "tl" || handle === "tr" || handle === "bl" || handle === "br";
+
+  if (isCorner) {
+    const startDist = Math.hypot(startPointer.x - center.x, startPointer.y - center.y);
+    const currentDist = Math.hypot(currentPointer.x - center.x, currentPointer.y - center.y);
+    if (startDist <= 0) {
+      return startScale;
+    }
+    return startScale * (currentDist / startDist);
+  }
+
+  const isHorizontal = handle === "l" || handle === "r";
+  const startExtent = isHorizontal
+    ? Math.abs(startPointer.x - center.x)
+    : Math.abs(startPointer.y - center.y);
+  const currentExtent = isHorizontal
+    ? Math.abs(currentPointer.x - center.x)
+    : Math.abs(currentPointer.y - center.y);
+  if (startExtent <= 0) {
+    return startScale;
+  }
+  return startScale * (currentExtent / startExtent);
+};
+
 /** Minimum alpha (0-255) that counts as a hit rather than transparent padding. */
 export const ALPHA_HIT_THRESHOLD = 10;
 
@@ -261,3 +322,15 @@ export const toNaturalPoint = (
     y: (insideY / renderedRect.height) * naturalSize.height,
   };
 };
+
+/** Stage-local CSS box for a natural-pixel batch rectangle. */
+export const batchBoxStageStyle = (
+  box: { x0: number; y0: number; x1: number; y1: number },
+  renderedRect: Rect,
+  naturalSize: Size,
+): { left: string; top: string; width: string; height: string } => ({
+  left: `${renderedRect.x + (box.x0 / naturalSize.width) * renderedRect.width}px`,
+  top: `${renderedRect.y + (box.y0 / naturalSize.height) * renderedRect.height}px`,
+  width: `${((box.x1 - box.x0) / naturalSize.width) * renderedRect.width}px`,
+  height: `${((box.y1 - box.y0) / naturalSize.height) * renderedRect.height}px`,
+});

@@ -18,7 +18,7 @@ import os
 
 from PIL import Image, UnidentifiedImageError
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 
 from core.image_codec import to_base64_ascii
@@ -38,7 +38,8 @@ from core.object_storage import (
     session_preview_path,
 )
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
-from core.repositories.session_repo import is_session_registered, load_names
+from core.session_history import get_history_flags
+from core.repositories.session_repo import SessionNotFoundError, is_session_registered, load_names
 from settings import get_3d_storage_dir, get_image_storage_dir
 
 router = APIRouter(prefix="/images", tags=["images"])
@@ -48,14 +49,14 @@ logger = logging.getLogger(__name__)
 @router.get("/objects/{object_uuid}", response_model=ObjectMetadataResponse)
 async def get_object_by_uuid_endpoint(object_uuid: str) -> ObjectMetadataResponse:
     """Return metadata for one object searchable by its UUID."""
-    logger.info("Object metadata requested: uuid=%s", object_uuid)
+    logger.debug("Object metadata requested: uuid=%s", object_uuid)
     storage_dir = get_image_storage_dir()
     metadata = get_object_by_uuid(object_uuid)
     if metadata is None:
         logger.warning("Object metadata not found: uuid=%s", object_uuid)
         raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
     response = to_object_metadata_response(metadata, storage_dir, get_3d_storage_dir())
-    logger.info(
+    logger.debug(
         "Object metadata returned: uuid=%s session_id=%s object_id=%d",
         object_uuid,
         metadata.session_id,
@@ -72,11 +73,11 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
     returns them as base64 thumbnails alongside their tight alpha bounds and
     a flag indicating whether a GLB 3D model has been generated.
     """
-    logger.info("Objects list requested: uid=%s", uid)
+    logger.debug("Objects list requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
     # TODO: validate uid against the sessions table and return 404 for unknown sessions.
     # Currently returns 200 + empty list for unknown UIDs, consistent with /{uid}/cache.
-    obj_ids = list_object_ids(uid)
+    obj_ids = list_object_ids(uid, visible_only=True)
     three_d_dir = get_3d_storage_dir()
 
     # TODO: this loop performs blocking I/O per object synchronously on the async event loop.
@@ -117,6 +118,7 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
                     offset_x=meta.offset_x if meta is not None else 0.0,
                     offset_y=meta.offset_y if meta is not None else 0.0,
                     display_scale=meta.display_scale if meta is not None else 1.0,
+                    clone_root_uuid=meta.clone_root_uuid if meta is not None else None,
                 )
             )
         except FileNotFoundError as exc:
@@ -127,16 +129,16 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
                 exc,
             )
 
-    logger.info("Objects list returned: uid=%s count=%d", uid, len(objects_list))
+    logger.debug("Objects list returned: uid=%s count=%d", uid, len(objects_list))
     return ObjectListResponse(uid=uid, objects=objects_list)
 
 
 @router.get("/{uid}/cache", response_model=UidCacheStatusResponse)
 async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     """Return which processed artifacts are cached on disk for the given UID."""
-    logger.info("Cache status requested: uid=%s", uid)
+    logger.debug("Cache status requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
-    obj_ids = list_object_ids(uid)
+    obj_ids = list_object_ids(uid, visible_only=True)
 
     # Derive cutout bounds from the latest (highest-id) object.
     latest_object_id = max(obj_ids) if obj_ids else None
@@ -157,15 +159,21 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     )
 
     names = load_names()
+    try:
+        history_flags = get_history_flags(uid)
+    except SessionNotFoundError:
+        history_flags = None
     status = UidCacheStatusResponse(
         uid=uid,
         name=names.get(uid),
         has_background=current_background_path(storage_dir, uid).exists(),
         has_cutout=bool(obj_ids),
         has_3d=has_3d,
+        can_undo=history_flags.can_undo if history_flags is not None else False,
+        can_redo=history_flags.can_redo if history_flags is not None else False,
         cutout_bounds=cutout_bounds,
     )
-    logger.info(
+    logger.debug(
         "Cache status: uid=%s background=%s cutout=%s 3d=%s",
         uid,
         status.has_background,
@@ -175,16 +183,31 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     return status
 
 
+def _attachment_filename(raw: str) -> str:
+    """Sanitize a client-supplied download label for Content-Disposition."""
+
+    cleaned = "".join(ch if ch not in '<>:"/\\|?*' else "_" for ch in raw.strip())
+    base = cleaned[:80] or "background"
+    return base if base.lower().endswith(".png") else f"{base}.png"
+
+
 @router.get("/{uid}/background")
-async def get_background(uid: str) -> FileResponse:
+async def get_background(
+    uid: str,
+    download: bool = Query(False, description="When true, set Content-Disposition: attachment."),
+    filename: str | None = Query(None, description="Suggested download filename (sanitized)."),
+) -> FileResponse:
     """Serve the cached background PNG for the given UID."""
-    logger.info("Background requested: uid=%s", uid)
+    logger.debug("Background requested: uid=%s download=%s", uid, download)
     path = current_background_path(get_image_storage_dir(), uid)
     if not path.exists():
         logger.warning("Background not found: uid=%s path=%s", uid, path)
         raise HTTPException(status_code=404, detail="Background not found")
-    logger.info("Background served: uid=%s path=%s", uid, path)
-    return FileResponse(path, media_type="image/png")
+    headers: dict[str, str] = {}
+    if download:
+        headers["Content-Disposition"] = f'attachment; filename="{_attachment_filename(filename or uid)}"'
+    logger.debug("Background served: uid=%s path=%s", uid, path)
+    return FileResponse(path, media_type="image/png", headers=headers)
 
 
 @router.get("/{uid}/cutout")
@@ -195,9 +218,9 @@ async def get_cutout(uid: str) -> FileResponse:
     to the legacy ``{uid}_cutout.png`` file for sessions created before the
     numbered-object scheme was introduced.
     """
-    logger.info("Cutout requested: uid=%s", uid)
+    logger.debug("Cutout requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
-    obj_ids = list_object_ids(uid)
+    obj_ids = list_object_ids(uid, visible_only=True)
     if not obj_ids:
         logger.warning("Cutout not found: uid=%s (no object ids)", uid)
         raise HTTPException(status_code=404, detail="Cutout not found")
@@ -205,14 +228,14 @@ async def get_cutout(uid: str) -> FileResponse:
     if not path.exists():
         logger.warning("Cutout not found: uid=%s path=%s", uid, path)
         raise HTTPException(status_code=404, detail="Cutout not found")
-    logger.info("Cutout served: uid=%s path=%s", uid, path)
+    logger.debug("Cutout served: uid=%s path=%s", uid, path)
     return FileResponse(path, media_type="image/png")
 
 
 @router.get("/{uid}/original")
 async def get_original_image(uid: str) -> FileResponse:
     """Serve the original uploaded image for the given UID."""
-    logger.info("Original image requested: uid=%s", uid)
+    logger.debug("Original image requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
     try:
         path = get_image_path(uid, storage_dir)
@@ -221,7 +244,7 @@ async def get_original_image(uid: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="Original image not found")
     suffix = path.suffix.lower().lstrip(".")
     media_type = "image/jpeg" if suffix in ("jpg", "jpeg") else f"image/{suffix}"
-    logger.info("Original image served: uid=%s path=%s", uid, path)
+    logger.debug("Original image served: uid=%s path=%s", uid, path)
     return FileResponse(path, media_type=media_type)
 
 
@@ -235,12 +258,12 @@ async def get_session_preview(uid: str) -> FileResponse:
     (the dashboard card) fall back to a placeholder rather than treating this
     as an error.
     """
-    logger.info("Session preview requested: uid=%s", uid)
+    logger.debug("Session preview requested: uid=%s", uid)
     path = session_preview_path(get_image_storage_dir(), uid)
     if not path.exists():
         logger.warning("Session preview not found: uid=%s path=%s", uid, path)
         raise HTTPException(status_code=404, detail="Preview not found")
-    logger.info("Session preview served: uid=%s path=%s", uid, path)
+    logger.debug("Session preview served: uid=%s path=%s", uid, path)
     return FileResponse(path, media_type="image/jpeg")
 
 
@@ -256,7 +279,7 @@ async def save_session_preview(uid: str, request: SessionPreviewRequest) -> Resp
     here would spin an extra, pointless sync-check reconcile in the open
     workspace.
     """
-    logger.info("Session preview save requested: uid=%s", uid)
+    logger.debug("Session preview save requested: uid=%s", uid)
     if not is_session_registered(uid):
         logger.warning("Session preview save failed — unknown uid: %s", uid)
         raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'")
@@ -286,5 +309,5 @@ async def save_session_preview(uid: str, request: SessionPreviewRequest) -> Resp
         tmp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail=f"Preview save failed: {exc}") from exc
 
-    logger.info("Session preview saved: uid=%s path=%s size_bytes=%d", uid, path, len(image_bytes))
+    logger.debug("Session preview saved: uid=%s path=%s size_bytes=%d", uid, path, len(image_bytes))
     return Response(status_code=204)

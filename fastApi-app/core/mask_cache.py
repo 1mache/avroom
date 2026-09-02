@@ -32,6 +32,24 @@ def cutout_path(base_dir: Path, image_id: str, mask_id: str) -> Path:
     return base_dir / f"{image_id}_mask_{mask_id}_cutout.png"
 
 
+def save_refined_mask_only(
+    base_dir: Path,
+    image_id: str,
+    mask_id: str,
+    refined_mask: np.ndarray,
+) -> None:
+    """Persist one refined mask without a cutout preview (erase jobs)."""
+
+    base_dir.mkdir(parents=True, exist_ok=True)
+    np.save(refined_mask_path(base_dir, image_id, mask_id), refined_mask)
+    logger.debug(
+        "Cached refined mask: image_id=%s mask_id=%s mask_shape=%s",
+        image_id,
+        mask_id,
+        refined_mask.shape,
+    )
+
+
 def save_candidate(
     base_dir: Path,
     image_id: str,

@@ -17,6 +17,7 @@ class TiebreakRequest:
     cutout_crops_bgr: dict[int, np.ndarray]
     clip_averages: dict[int, float]
     refined_masks: dict[int, np.ndarray] | None = None
+    click_xys: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True)

@@ -12,6 +12,8 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `POST` | `/images/click` | `ClickRequest` | `ClickResultResponse` legacy one-step flow |
 | `POST` | `/images/{uid}/name` | `SetNameRequest` | `SessionInfo` |
 | `POST` | `/images/{uid}/sync-check` | `SessionSyncCheckRequest` | `SessionSyncCheckResponse` |
+| `POST` | `/images/{uid}/history/undo` | path `uid` | 204 No Content |
+| `POST` | `/images/{uid}/history/redo` | path `uid` | 204 No Content |
 | `POST` | `/images/{uid}/warm-maps` | path `uid` | `WarmSessionMapsResponse` |
 | `DELETE` | `/images/{uid}` | path `uid` | 204 No Content |
 | `GET` | `/images/{uid}/cache` | path `uid` | `UidCacheStatusResponse` |
@@ -92,7 +94,7 @@ Behavior:
 7. Compute depth on the current canvas and derive `average_depth` over the selected mask (`build_object_metadata_for_inpaint`).
 8. Allocate the next sequential `object_id` for this session (0, 1, 2 …).
 9. Persist object metadata JSON (`{uid}_{object_id}_meta.json`) and register UUID in `object_index.json`.
-10. Write updated canvas to `{uid}_background.png` (overwrites — becomes the new starting point for the next object).
+10. Write updated canvas via `commit_background` (snapshots the prior `{uid}_background.png` to `{uid}_bg_hist_{seq}.png` when present, then overwrites the live file). `touch_session`, delete the job row on success.
 11. Write cutout to `{uid}_{object_id}_cutout.png` (numbered — not overwritten by later inpaints).
 12. Delete **only** the selected candidate (`delete_candidate`, not all masks).
 13. Drop lease and release canvas writer.
@@ -100,6 +102,22 @@ Behavior:
 15. Return `InpaintMaskResponse` with `object_id`, `object_uuid`, plus background/cutout base64.
 
 If `mask_id` is unknown or candidate cache is gone, endpoint returns `404`. Overlap or canvas-busy conflicts return `409`. See [concurrency.md](concurrency.md).
+
+## `POST /images/erase`
+
+Queues erasure of one or more client-drawn mask regions and returns immediately (`202 {job_id}`). No segmentation, no cutout object — only the session background is inpainted.
+
+Request: `SubmitEraseRequest` — `{ image_id, mask_b64 }` where `mask_b64` is a PNG of the full canvas (uint8 H×W, 255 = erase). The frontend unions Shift-staged lasso regions into one PNG before submit.
+
+Behavior:
+
+1. Decode/threshold the PNG; **422** if shape ≠ current canvas or no usable foreground.
+2. Split disconnected 8-connected blobs (`cv2.connectedComponents`); drop specks under 64 px.
+3. For each blob: `create_job(kind="erase")`, persist `{uid}_mask_{job_id}_refined.npy`, return the first job id (siblings appear on the next sync-check).
+4. At claim time: same region lease + canvas writer sandwich as inpaint, but `BackgroundInpainter.cut_mask_from_image(..., compose_mask=None)` only — no `ObjectRow`, no cutout PNG.
+5. Write via `commit_background`, `touch_session`, delete the job row on success.
+
+Handler: [`fastApi-app/core/jobs/handlers.py::run_erase_job`](../../fastApi-app/core/jobs/handlers.py).
 
 ## `POST /images/{uid}/batch`
 
@@ -185,18 +203,19 @@ Not wired in the React frontend today (smart-paste uses the same math via the to
 
 Runs the smart-paste pipeline at a placement point. Body: `SmartPasteRequest` with natural-image `x`/`y` (same coordinate space as rescale-by-depth).
 
-Behavior today (rescale only; auto-rotate reserved for a later release):
+Behavior:
 
 1. Load object metadata by UUID (`average_depth` is the baseline depth; cutout must exist on disk).
 2. Load the session's current canvas and get/compute depth (`get_or_compute_depth`).
-3. Call `SmartPaster.smart_paste(...)` in TestModules — depth-proportional scale math only (no pixel mutation).
-4. Update metadata: `display_scale *= scale_factor`, `average_depth = target_depth`.
-5. Return `SmartPasteResponse` (same shape as `RescaleByDepthResponse`).
-6. Bump the parent session's `last_changed` timestamp.
+3. When `NORMAL_MAP=true` (default), load the cached Metric3D normal map and sample normals at the original cutout alpha center and the drop point.
+4. Call `SmartPaster.smart_paste(...)` — depth-proportional `display_scale` plus optional inferred `azimuth_deg` / `relative_elevation_deg` (null when the delta is below the deadzone or normals are unavailable).
+5. Update metadata: set `display_scale` absolutely from creation depth vs placement depth (cutout PNG unchanged).
+6. Return `SmartPasteResponse` with scale fields and optional pose fields for the frontend to mesh-render this object's GLB via `POST /images/novel-view`.
+7. Bump the parent session's `last_changed` timestamp.
 
 Returns `404` when object or cutout is missing; `400` when depth values are invalid.
 
-Wired in the React workspace: when the toolbar **Smart paste** switch is on, `WorkspaceScreen`'s drag-end handler fires this after persisting the object's offset.
+Wired in the React workspace: when the toolbar **Smart paste** switch is on, drag-end fires this after persisting offset; if a pose is returned, the client ensures the object's GLB and calls `POST /images/novel-view` (same mesh-render path as the Rotate button, no orbit picker).
 
 ## `POST /images/novel-view`
 
@@ -251,6 +270,21 @@ Behavior:
 4. Always return the current server `last_changed` so the client can correct its local copy.
 
 Returns `SessionSyncCheckResponse` with `last_changed` and `needs_refresh`.
+
+## `POST /images/{uid}/history/undo` and `POST /images/{uid}/history/redo`
+
+Restore the previous or next background stage for a session. Both are synchronous `def` handlers that acquire the canvas-writer lock (same as object duplicate/delete).
+
+Behavior:
+
+1. Return **404** when `uid` is absent.
+2. Return **409** when nothing to undo/redo, when segment/inpaint/erase work is `queued`/`running` for this session, or when the canvas-writer lock times out.
+3. **Undo**: copy the live `{uid}_background.png` to `{uid}_bg_hist_{cursor}` (so redo can recover it), decrement `history_cursor`, then restore from `{uid}_bg_hist_{cursor}` or delete the live file when returning to the original upload (stage 0).
+4. **Redo**: mirror undo — stash live at current cursor, increment cursor, restore from the forward snapshot.
+5. Objects with `stage_seq > history_cursor` are omitted from `GET /images/{uid}/objects` (hidden, not deleted). A new background commit after undo dumps forward stages (snapshot files + object rows/artifacts).
+6. `touch_session` on success so the next `sync-check` reconciles background URL and object list.
+
+`GET /images/{uid}/cache` exposes `can_undo` / `can_redo` from the session's `history_min` / `history_cursor` / `history_head` columns. Up to four prior stages are retained (`BACKGROUND_HISTORY_LIMIT = 4` in `core/session_history.py`).
 
 ## `POST /images/{uid}/warm-maps`
 

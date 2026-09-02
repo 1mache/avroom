@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Sequence
 
 import numpy as np
 
@@ -67,6 +68,7 @@ class ObjectSegmentor:
         y: int,
         image_bytes: bytes | None = None,
         depth_map: np.ndarray | None = None,
+        extra_points: Sequence[tuple[int, int]] | None = None,
     ) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
         """Segment all SAM candidates at ``(x, y)`` and return refined mask pairs.
 
@@ -96,7 +98,11 @@ class ObjectSegmentor:
             (BGRA, same spatial size as the input image).
         """
         logger.info(
-            f"Starting multi-mask segmentation — image: {image_path}, point: ({x}, {y})"
+            "Starting multi-mask segmentation — image: %s, point: (%d, %d), extra_points=%d",
+            image_path,
+            x,
+            y,
+            len(extra_points or ()),
         )
 
         image = load_image(image_path, image_bytes, log_context="segmentation pipeline")
@@ -120,6 +126,7 @@ class ObjectSegmentor:
             adapted_depth=adapted_for_sam,
             x=x,
             y=y,
+            extra_points=extra_points,
         )
 
         logger.info("Pass A (depth): requesting ALL candidate masks from SAM...")
@@ -129,9 +136,10 @@ class ObjectSegmentor:
             y,
             expand_pixels=run_context.get("expand_pixels", 14),
             use_broad_mask=run_context["use_broad_mask"],
+            extra_points=extra_points,
         )
         depth_pairs = self._process_candidates(
-            depth_candidate_pairs, image, x, y, label="depth_pass"
+            depth_candidate_pairs, image, x, y, label="depth_pass", extra_points=extra_points
         )
         logger.info(f"Pass A (depth): {len(depth_pairs)} candidate(s) produced")
 
@@ -142,9 +150,10 @@ class ObjectSegmentor:
             y,
             expand_pixels=14,
             use_broad_mask=False,
+            extra_points=extra_points,
         )
         image_pairs = self._process_candidates(
-            image_candidate_pairs, image, x, y, label="image_pass"
+            image_candidate_pairs, image, x, y, label="image_pass", extra_points=extra_points
         )
         logger.info(f"Pass B (image): {len(image_pairs)} candidate(s) produced")
 
@@ -162,6 +171,7 @@ class ObjectSegmentor:
         click_x: int,
         click_y: int,
         label: str,
+        extra_points: Sequence[tuple[int, int]] | None = None,
     ) -> list[tuple[np.ndarray, np.ndarray]]:
         """Process SAM candidate mask pairs into refined masks and BGRA cutouts.
 
@@ -203,10 +213,10 @@ class ObjectSegmentor:
             # Idempotent if the strategy already sanitized; still required for
             # any caller that passes pre-dilated dirty pairs.
             original_mask = self.mask_refiner.keep_click_component(
-                original_mask, click_x, click_y
+                original_mask, click_x, click_y, extra_clicks=extra_points
             )
             expanded_mask = self.mask_refiner.keep_click_component(
-                expanded_mask, click_x, click_y
+                expanded_mask, click_x, click_y, extra_clicks=extra_points
             )
             self.image_saver.save(f"{pfx}_sanitized_mask", original_mask)
 

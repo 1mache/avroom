@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Sequence
 
 import cv2
 import numpy as np
@@ -43,6 +43,7 @@ class CenterOfMassRoutingStrategy(SegmentationRoutingStrategy):
         adapted_depth: np.ndarray,
         x: int,
         y: int,
+        extra_points: Sequence[tuple[int, int]] | None = None,
     ) -> dict[str, Any]:
         h, w = raw_depth.shape[:2]
         pixel_depth = raw_depth[y, x, 0] if len(raw_depth.shape) == 3 else raw_depth[y, x]
@@ -52,7 +53,12 @@ class CenterOfMassRoutingStrategy(SegmentationRoutingStrategy):
             f"Router self-fetching PROBE mask at ({x}, {y}) for Center of Mass analysis..."
         )
         probe_mask, _ = self._segmentation.get_mask_at_point(
-            adapted_depth, x, y, expand_pixels=0, use_broad_mask=True
+            adapted_depth,
+            x,
+            y,
+            expand_pixels=0,
+            use_broad_mask=True,
+            extra_points=extra_points,
         )
         if probe_mask.shape[:2] != (h, w):
             probe_mask = cv2.resize(probe_mask, (w, h), interpolation=cv2.INTER_NEAREST)

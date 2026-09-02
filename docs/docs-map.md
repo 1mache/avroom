@@ -5,6 +5,7 @@ This page is a quick index to help you find information fast. If you change code
 ## System-level docs (this folder)
 
 - **What Avroom does today**: [`overview.md`](overview.md)
+- **Product language (Room, Cutout, Copy, …)**: [`CONTEXT.md`](../CONTEXT.md)
 - **How the tiers fit together**: [`architecture.md`](architecture.md)
 - **One end-to-end click, traced**: [`data-flow.md`](data-flow.md)
 - **Versions + models + install sources**: [`tech-stack.md`](tech-stack.md)

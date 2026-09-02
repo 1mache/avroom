@@ -1,43 +1,43 @@
 # Components
 
-## `DashboardScreen`
+## `DashboardScreen` (Room Selector)
 
 [`react-front/src/components/layout/DashboardScreen.tsx`](../../react-front/src/components/layout/DashboardScreen.tsx)
 
 Props: `{ onOpenSession: (uid: string) => void; onNewSession: () => void; onOpenDebug: () => void }`.
 
-The app's home screen. Owns `sessions: SessionInfo[]`, `loadState: "loading" | "ready" | "offline"`, `pendingDeleteUid: string | null`, `isDeleting`, `error`.
+The Room Selector. Owns `sessions: SessionInfo[]`, `loadState: "loading" | "ready" | "offline"`, `pendingDeleteUid: string | null`, `isDeleting`, `error`.
 
 - On mount, fetches `getSessions()` and sorts with `byMostRecentlyEdited` (`utils/time.ts`) — newest `last_changed` first, sessions with no timestamp sort last. A fetch failure sets `loadState = "offline"` and renders a retry state instead of the error modal.
 - Renders a "New session" CTA that calls `onNewSession`, a scrollable grid of `SessionCard`s (only the grid scrolls — the CTA stays reachable regardless of list length), a loading-skeleton state, and an empty state when there are no sessions.
 - Delete flow: a `SessionCard`'s trash button calls `onRequestDelete(uid)`, which sets `pendingDeleteUid`; a `ConfirmDialog` confirms; on confirm, `deleteSession(uid)` is awaited and the session is filtered out of local state on success, or `error` is set (generic error modal) on failure.
-- Clicking a `SessionCard` calls `onOpenSession(uid)`, which `App.tsx` routes into the workspace.
-- The header (`.dash-header`) carries a right-aligned (`.dash-header-end`, `margin-left: auto`) icon-only button (`FlaskIcon`, `data-tip="Pipeline debug"`) that calls `onOpenDebug`, routing to `DebugScreen`. Always visible regardless of whether the backend's `DEBUG_ENDPOINTS` is on — a disabled backend surfaces as a 404 inside each panel, not a hidden button (no extra dashboard-load request to probe first).
+- Clicking a `SessionCard` calls `onOpenSession(uid)`, which `App.tsx` routes into Room Workspace.
+- The header (`.dash-header`) carries a right-aligned (`.dash-header-end`, `margin-left: auto`) icon-only button (`FlaskIcon`, `data-tip="Pipeline debug"`) that calls `onOpenDebug`, routing to Debug Dashboard (`DebugScreen`). Always visible regardless of whether the backend's `DEBUG_ENDPOINTS` is on — a disabled backend surfaces as a 404 inside each panel, not a hidden button (no extra dashboard-load request to probe first).
 
-## `UploadScreen`
+## `UploadScreen` (Room Upload)
 
 [`react-front/src/components/layout/UploadScreen.tsx`](../../react-front/src/components/layout/UploadScreen.tsx)
 
 Props: `{ onCancel: () => void; onUploaded: (uid: string) => void }`.
 
-The file-intake step between dashboard and workspace. Constants `ACCEPTED_TYPES = ["image/jpeg","image/png","image/webp"]` and `MAX_BYTES = 25 * 1024 * 1024` mirror the backend's upload gate for instant client-side feedback before a round trip.
+The Room Upload step between Room Selector and Room Workspace. Constants `ACCEPTED_TYPES = ["image/jpeg","image/png","image/webp"]` and `MAX_BYTES = 25 * 1024 * 1024` mirror the backend's upload gate for instant client-side feedback before a round trip.
 
 - State: `file`, `previewUrl` (object URL, revoked on replace/unmount), `phase: "choosing" | "checking" | "rejected"`, `rejection`, `isDragOver`.
 - Accepts a file via drag-drop or the file picker; `acceptFile` runs the client-side type/size check and either sets a preview or moves to `phase: "rejected"` with a reason.
 - Starting the upload (`handleStart`) calls `uploadImage(file)`; on success it calls `onUploaded(response.image_id)`. On an `ApiError` with `status === 422` it shows the backend's validation-rejection detail text as a normal outcome (not a crash); any other failure shows a generic message.
 - The back button is disabled while `phase === "checking"`.
 
-## `WorkspaceScreen`
+## `WorkspaceScreen` (Room Workspace)
 
 [`react-front/src/components/layout/WorkspaceScreen.tsx`](../../react-front/src/components/layout/WorkspaceScreen.tsx)
 
 Props: `{ uid: string; onExit: () => void }`.
 
-The editor. The largest component in the tree — it owns most local UI state directly and composes the three session hooks ([state-and-types.md](state-and-types.md)) plus every workspace widget.
+The Room Workspace. The largest component in the tree — it owns most local UI state directly and composes the three session hooks ([state-and-types.md](state-and-types.md)) plus every workspace widget.
 
-### Session boot
+### Room boot
 
-On mount (`[uid]`-keyed effect; `App` remounts this component on `uid` change so it never needs to re-run for the same session):
+On mount (`[uid]`-keyed effect; `App` remounts this component on `uid` change so it never needs to re-run for the same room):
 
 1. Sets `originalSrc` to `${API_BASE_URL}/images/${uid}/original` immediately (cheap, always safe to show).
 2. Calls `getUidCacheStatus(uid)` → sets `sessionName`, sets `backgroundSrc` if `has_background`.
@@ -53,36 +53,36 @@ While `photoSrc` (`backgroundSrc ?? originalSrc`) hasn't resolved, the stage ren
 - Hit-testing is **alpha-precise, not DOM stacking**: cutout PNGs are full-image-sized with transparency outside the object, so a topmost DOM layer would swallow every click. `hitCanvasesRef` (a `Map<number, HitCanvasEntry>`) holds one offscreen `<canvas>` per object, invalidated whenever that object's *effective* cutout src changes (not just when the id first appears — rotation swaps the silhouette in place). `sampleObjectAlpha` reads a 1×1 pixel; a missing canvas is treated as fully opaque so a brand-new object is clickable before its canvas finishes building.
 - A single transparent `.stage-input` div owns all pointer-down handling. `handleStagePointerDown`: if `cutMode` is armed, the click becomes the segmentation seed (`jobs.runSegment(...)`) and disarms cut mode; otherwise it walks `buildHitTestOrder(objects, selectedObjectId)` (topmost-first, selected object tested first) and alpha-samples each candidate against `ALPHA_HIT_THRESHOLD`.
 
-### Selection, cut, rotate, duplicate, delete
+### Selection, cut, rotate, copy, delete
 
 - `selectObject` always forces `rotateMode = false` and `cutMode = false` and clears `pickPoint` — changing selection always exits whatever tool was active.
 - `handleCut` arms `cutMode` (and clears rotate / area / any pick point); the next stage click fires the segment request (`verifyMode` from the toolbar radio) and disarms itself. The area tool arms a box drag that POSTs `/images/{uid}/batch` with `verify=auto`. Escape cancels while `cutMode || rotateMode || areaMode` is true.
-- `handleRotate`: if the picker is already open, delegates to `commitCurrentRotation`. Otherwise it requires a selection; if the object's GLB is already cached (`glbData`) it opens the picker immediately, otherwise it sets `isPreparing3D`, tries `fetchCached3DModel` then falls back to `generate3DModel`, stores the buffer via `jobs.setObjects`, and only opens the picker if the selection hasn't moved on in the meantime.
+- `handleRotate`: if the picker is already open, delegates to `commitCurrentRotation`. Otherwise it requires a selection; if the object's 3D render is already cached (`glbData`) it opens the picker immediately, otherwise it sets `isPreparing3D`, tries `fetchCached3DModel` then falls back to `generate3DModel`, stores the buffer via `jobs.setObjects`, and only opens the picker if the selection hasn't moved on in the meantime.
 - `commitCurrentRotation`: captures the viewer's pose + a canvas snapshot via `model3DFrameRef.current.capture()` **before** closing the picker, computes the on-stage bounds by inflating the object's existing alpha bounds by `MODEL_3D_FRAME_PADDING`, composites the snapshot onto a full-canvas transparent PNG (`compositePreviewOntoCanvas`), then calls `jobs.commitRotation(...)` — falling back to the raw (uncomposited) snapshot if compositing throws.
 - `handleCopy` and `handleDeleteObject` both require `selectedObject?.uuid` to exist; a legacy pre-UUID object surfaces an explicit "This object is from an older session and can't be deleted" error instead of silently no-op'ing. Delete opens a `ConfirmDialog` (`pendingDeleteObjectId`); confirming awaits `jobs.deleteObject(...)`.
 
 ### Drag
 
-A pointer-down inside `.stage-input` that hits an object (rather than arming cut mode) starts a drag: `dragStateRef` is set, `document.body` gets an `is-dragging-object` class, and the object is selected. A separate effect attaches window-level `pointermove`/`pointerup`/`pointercancel` listeners only while `isDragging` is true — converting screen-space pointer delta into natural-image pixels via the rendered rect and natural size, clamping through `clampCutoutOffset`, and calling `jobs.updateOffset` continuously (local-only, no network). On pointer-up (`finishDrag`) the drag state clears, the dashboard preview thumbnail is captured, and the final offset is persisted with `setObjectOffset(uuid, x, y)` — a single PATCH per drag, not per pointermove.
+A pointer-down inside `.stage-input` that hits an object (rather than arming cut mode) starts a drag: `dragStateRef` is set, `document.body` gets an `is-dragging-object` class, and the object is selected. A separate effect attaches window-level `pointermove`/`pointerup`/`pointercancel` listeners only while `isDragging` is true — converting screen-space pointer delta into natural-image pixels via the rendered rect and natural size, clamping through `clampCutoutOffset`, and calling `jobs.updateOffset` continuously (local-only, no network). On pointer-up (`finishDrag`) the drag state clears, the Preview thumbnail is captured, and the final offset is persisted with `setObjectOffset(uuid, x, y)` — a single PATCH per drag, not per pointermove.
 
 ### Preview thumbnail capture
 
 `PREVIEW_DEBOUNCE_MS = 500`. A ref-stashed function (`capturePreviewRef`) composites the current background plus every visible cutout at its offset via `composeSessionPreview` (`utils/preview.ts`) and calls `saveSessionPreview(uid, ...)`, debounced 500ms. It fires from two places:
 
-1. `handleMutated` — called as the `onMutated` callback passed into `useSessionJobs`, so it runs after every hook-driven mutation (inpaint success, rotation, rename, duplicate, delete, hide/show).
+1. `handleMutated` — called as the `onMutated` callback passed into `useSessionJobs`, so it runs after every hook-driven mutation (inpaint success, rotation, rename, copy, delete, hide/show).
 2. Directly from `finishDrag` at drag-end, since drags never go through `useSessionJobs` and so never trigger `onMutated` on their own.
 
 ### Rendering
 
-Renders `Toolbar` (wired to nearly all local + hook state), a `<main className="stage">` containing the background photo, one `.stage-cutout` `<img>` per visible object (z-index keeps the selected object on top regardless of creation order), the transparent `.stage-input` hit layer, a pick-point marker while `cutMode` is armed, the `Model3DFrame` in place of the selected object's 2D cutout while `rotateMode` is on, a 4-corner `.selection-frame` around the selected object, conflict notices (`useConflictNotices`), and `ObjectRail`. Outside `<main>`: `MaskPickerModal` (while choosing a segmentation candidate), the object-delete `ConfirmDialog`, and a generic error modal.
+Renders `Toolbar` (wired to nearly all local + hook state), a `<main className="stage">` containing the Background, one `.stage-cutout` `<img>` per visible object (z-index keeps the selected object on top regardless of creation order), the transparent `.stage-input` hit layer, a pick-point marker while `cutMode` is armed, the `Model3DFrame` in place of the selected object's 2D cutout while `rotateMode` is on, a 4-corner `.selection-frame` around the selected object, conflict notices (`useConflictNotices`), and the Object Selector (`ObjectRail`). Outside `<main>`: `MaskPickerModal` (while choosing a segmentation candidate), the object-delete `ConfirmDialog`, and a generic error modal.
 
-## `DebugScreen`
+## `DebugScreen` (Debug Dashboard)
 
 [`react-front/src/components/layout/DebugScreen.tsx`](../../react-front/src/components/layout/DebugScreen.tsx)
 
 Props: `{ onExit: () => void }`.
 
-Reachable from the dashboard header's flask icon. Upload a photo, click it to set a seed point, and see validation, depth, SAM-everything, auto mask pick, and inpaint-verify traces — nothing here creates a session or writes to disk.
+Reachable from the Room Selector header's flask icon. Upload an Origin Photo, click it to set a segmentation seed, and see validation, depth, SAM-everything, auto mask pick, and inpaint-verify traces — nothing here creates a Room or writes to disk.
 
 - **Source strip** reuses `UploadScreen`'s dropzone markup/classes. Clicking the preview sets natural `(x, y)` via `toNaturalPoint` (red marker). Auto mask pick and inpaint verify stay disabled until a click exists. Picking a new file bumps `runTokenRef` and resets all pipeline panels plus the click.
 - **Panels**: Validation, Depth map, SAM segment-everything, Auto mask pick, Inpaint verification, plus 3D viewer. Each independently `Re-run`-able. Errors render **inside the panel**.
@@ -101,11 +101,11 @@ Reachable from the dashboard header's flask icon. Upload a photo, click it to se
 
 Purely presentational and controlled — owns no state of its own beyond one derived value, `objectToolsDisabled = !hasSelection`.
 
-Left to right: **back** arrow (always enabled, calls `onBack` → `WorkspaceScreen`'s `onExit` → dashboard) · editable **session name** (Enter saves) · **scissors** (arms `cutMode`; `is-armed` class + `aria-pressed` while active; never disabled) · **Manual/Auto** radio (`role="radiogroup"`, cutout-scoped, always enabled) switching `verify` on the next segment/inpaint · **rotate** (icon swaps to a checkmark while `rotateMode` is on, a spinner while `isPreparing3D`; disabled when nothing is selected or while preparing) · **copy/duplicate** (spinner while `isDuplicating`; disabled with no selection, while duplicating, or while `rotateMode` is on) · **smart-paste** switch (`role="switch"`; when on, drag-end calls `POST /images/objects/{uuid}/smart-paste` for depth rescale) · a status readout string (only rendered when non-null; shows `smart pasting` while the request is in flight) · **trash** (red/`is-danger`; spinner while `isDeleting`; disabled with no selection, while deleting, or while `rotateMode` is on).
+Left to right: **back** arrow (always enabled, calls `onBack` → `WorkspaceScreen`'s `onExit` → Room Selector) · editable **room name** (Enter saves) · **scissors** (arms `cutMode`; `is-armed` class + `aria-pressed` while active; never disabled) · **Manual/Auto** radio (`role="radiogroup"`, cutout-scoped, always enabled) switching `verify` on the next segment/inpaint · **rotate** (icon swaps to a checkmark while `rotateMode` is on, a spinner while `isPreparing3D`; disabled when nothing is selected or while preparing) · **copy** (spinner while `isDuplicating`; disabled with no selection, while copying, or while `rotateMode` is on) · **smart-paste** switch (`role="switch"`; when on, drag-end calls `POST /images/objects/{uuid}/smart-paste` for depth rescale) · a status readout string (only rendered when non-null; shows `smart pasting` while the request is in flight) · **trash** (red/`is-danger`; spinner while `isDeleting`; disabled with no selection, while deleting, or while `rotateMode` is on).
 
 Every object-scoped tool (rotate, copy, smart-paste, trash) **greys out** via the `disabled` attribute rather than unmounting when nothing is selected, so the toolbar never reflows. Icons carry no text labels; they self-identify on hover via the shared `[data-tip]` CSS tooltip.
 
-## `ObjectRail`
+## `ObjectRail` (Object Selector)
 
 [`react-front/src/components/workspace/ObjectRail.tsx`](../../react-front/src/components/workspace/ObjectRail.tsx)
 
@@ -126,13 +126,13 @@ Pending inpaint jobs render as a spinner + "Removing" placeholder row (no thumbn
 
 Props: `{ uid, name: string | null, lastChanged: string | null, onOpen, onRequestDelete }`.
 
-One dashboard grid tile. Shows `sessionPreviewUrl(uid, lastChanged)` (cache-busted by `lastChanged`) as the thumbnail; on `<img onError>` it flips a local `previewFailed` flag and swaps to a placeholder icon + "No preview yet" instead of a broken image. A separate hover-revealed trash button calls `onRequestDelete(uid)`. The caption shows `name ?? "Untitled session"` and `formatEditedAgo(lastChanged)` (`utils/time.ts`), which falls back to "never edited".
+One Room Selector grid tile. Shows `sessionPreviewUrl(uid, lastChanged)` (cache-busted by `lastChanged`) as the thumbnail; on `<img onError>` it flips a local `previewFailed` flag and swaps to a placeholder icon + "No preview yet" instead of a broken image. A separate hover-revealed trash button calls `onRequestDelete(uid)`. The caption shows `name ?? "Untitled session"` and `formatEditedAgo(lastChanged)` (`utils/time.ts`), which falls back to "never edited".
 
 ## `ConfirmDialog`
 
 [`react-front/src/components/widgets/ConfirmDialog.tsx`](../../react-front/src/components/widgets/ConfirmDialog.tsx)
 
-Props: `{ title, body, confirmLabel, cancelLabel = "Cancel", destructive = false, busy = false, onConfirm, onCancel }`. Shared by `DashboardScreen` (session delete) and `WorkspaceScreen` (object delete) — no other consumers.
+Props: `{ title, body, confirmLabel, cancelLabel = "Cancel", destructive = false, busy = false, onConfirm, onCancel }`. Shared by `DashboardScreen` (room delete) and `WorkspaceScreen` (object delete) — no other consumers.
 
 Escape and backdrop-click both cancel unless `busy`. The confirm button is `autoFocus`, styled `is-danger` when `destructive` else `is-primary`, and shows a spinner in place of its label while `busy`; both buttons are disabled while `busy`.
 

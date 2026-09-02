@@ -2,9 +2,15 @@
 
 Welcome to the Avroom architecture documentation. These docs describe the **current state** of the project as found in the code (not aspirational design).
 
-> Last refresh: 2026-08-24
+> Last refresh: 2026-09-02
 
 What changed in this refresh:
+
+- Locked product language in [`CONTEXT.md`](../CONTEXT.md): Room (not session), Origin Photo, Room Selector / Room Upload / Room Workspace / Debug Dashboard, Object Selector, Copy, Source Cutout, 3D render, add object.
+- Updated [overview.md](overview.md) glossary to point at `CONTEXT.md` and map domain words onto code identifiers.
+- Updated frontend user-flow, overview, README, and components to use those names (code symbols such as `DashboardScreen` / `ObjectRail` stay in backticks).
+
+Previous refresh (2026-08-24):
 
 - Removed novel-view's HTTP-layer pose snapping (10° grid, azimuth wrap) and its per-`(uid, object_id, azimuth, elevation)` disk cache (`{uid}_{id}_novel_az{az}_el{el}.png` + `.preview.png`, and the now-deleted `core/novel_view_cache.py` module and `POST /images/novel-view/preview-cache` endpoint). `MeshRenderNovelViewStrategy` renders cheaply enough that every request now renders the exact requested pose fresh — see [backend/api-endpoints.md](backend/api-endpoints.md#post-imagesnovel-view), [ai-pipeline/ai-engines/novel-view/](ai-pipeline/ai-engines/novel-view/).
 
@@ -33,7 +39,7 @@ If you change architecture, run the `update-docs` skill (see [`CLAUDE.md`](../CL
 
 Reading depth is intentional:
 
-- **Root shared docs** ([overview.md](overview.md), [architecture.md](architecture.md), [data-flow.md](data-flow.md), [tech-stack.md](tech-stack.md), [repo-structure.md](repo-structure.md), [conventions.md](conventions.md)) explain what the system is, how tiers connect, and global rules. They stay relatively high level.
+- **Root shared docs** ([overview.md](overview.md), [architecture.md](architecture.md), [data-flow.md](data-flow.md), [tech-stack.md](tech-stack.md), [repo-structure.md](repo-structure.md), [conventions.md](conventions.md)) explain what the system is, how tiers connect, and global rules. They stay relatively high level. Product language is in [`CONTEXT.md`](../CONTEXT.md).
 - **Per-tier folders** ([backend/](backend/README.md), [frontend/](frontend/README.md), [ai-pipeline/](ai-pipeline/README.md)) add structure: what lives where in that tier’s code and which doc partials to open next.
 - **Leaf partials** under each subsystem (`components.md`, `flow.md`, `contracts.md`, `operations.md`) are the most technical: current behavior, data steps, and operational knobs for that slice only.
 
@@ -58,11 +64,14 @@ docs/
 └── ai-pipeline/         - avroom_object_removal package in TestModules/
 ```
 
+Product language (Room, Origin Photo, Cutout, …) lives in [`CONTEXT.md`](../CONTEXT.md) at the repo root, not under `docs/`.
+
 AI pipeline docs: each subsystem folder has a short **README** (overview); deeper topics live in **partial** markdown files linked from that README (see [ai-pipeline/overview-vs-partials.md](ai-pipeline/overview-vs-partials.md)).
 
 ## Shared docs
 
-- [overview.md](overview.md) — project goal, MVP scope, glossary.
+- [CONTEXT.md](../CONTEXT.md) — product language (Room, Origin Photo, Cutout, Copy, …).
+- [overview.md](overview.md) — project goal, MVP scope, glossary (maps onto `CONTEXT.md`).
 - [architecture.md](architecture.md) — three-tier diagram and how the tiers talk to each other.
 - [data-flow.md](data-flow.md) — sequence diagram of one full click → background + cutout request.
 - [tech-stack.md](tech-stack.md) — runtime versions of every meaningful dependency.

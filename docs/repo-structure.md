@@ -9,6 +9,7 @@ C:/Avroom/avroom/
 │   └── hooks/            - shell scripts triggered by Cursor events
 ├── .git/                 - git metadata
 ├── .gitignore
+├── CONTEXT.md            - product language (Room, Origin Photo, Cutout, …)
 ├── avroom_context.md     - legacy project notes (predates docs/)
 ├── docs/                 - this docs tree (you are here)
 ├── fastApi-app/          - FastAPI backend service

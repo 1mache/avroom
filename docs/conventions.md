@@ -2,6 +2,10 @@
 
 Project-wide patterns and rules-of-thumb to keep in mind when reading or extending the code.
 
+## Domain language
+
+User-facing nouns and verbs (Room, Origin Photo, Cutout, Copy, Object Selector, …) are defined in [`CONTEXT.md`](../CONTEXT.md). Prefer those words in docs and discussion. Code identifiers (`session`, `uid`, `ObjectRail`, `glbData`) stay as they are in source.
+
 ## Architectural patterns in use
 
 The AI pipeline leans on a strict Facade + Strategy split per AI domain; the web tiers stay deliberately thin.

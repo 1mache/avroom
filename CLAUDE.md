@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The spec document (`SpecDocument1.1.pdf` in parent dir) describes the full planned product. Do not implement unplanned features speculatively.
 
+Product language (Room, Origin Photo, Cutout, Copy, Object Selector, …) is locked in [`CONTEXT.md`](CONTEXT.md). Prefer those words in discussion; code identifiers (`session`, `uid`, `ObjectRail`) stay as they are in source.
+
 ## Repository Structure
 
 ```
@@ -242,7 +244,7 @@ before this change.
 
 ## Frontend Notes
 
-The product has **two screens plus an upload step, plus a separate debug screen**: `DashboardScreen` (session list, new-session entry, session delete), `UploadScreen` (file intake between dashboard and workspace), `WorkspaceScreen` (the editor), and `DebugScreen` (upload a photo, see the full validation report plus rendered depth-map/SAM output — no session created; see "Debug vision endpoints" above). `App.tsx` switches between them with a local discriminated-union `Route` state (`{screen:"dashboard"} | {screen:"upload"} | {screen:"workspace", uid} | {screen:"debug"}`) — no router library, no auth. The dashboard is home (`App` boots into it); `WorkspaceScreen` is mounted `key={uid}` so switching sessions remounts it cleanly rather than reusing state. The Toolbar's back arrow calls `onExit`, which routes back to the dashboard — it is enabled, not disabled. `DashboardScreen`'s header carries a right-aligned flask-icon button (`onOpenDebug`) that routes to `DebugScreen`, always visible regardless of whether the backend's `DEBUG_ENDPOINTS` is on (a disabled backend surfaces as a 404 inside each panel, not a hidden button).
+The product has four screens: **Room Selector** (`DashboardScreen`), **Room Upload** (`UploadScreen`), **Room Workspace** (`WorkspaceScreen`), and **Debug Dashboard** (`DebugScreen` — Origin Photo in, validation/depth/SAM out; no Room created; see "Debug vision endpoints" above). `App.tsx` switches between them with a local discriminated-union `Route` state (`{screen:"dashboard"} | {screen:"upload"} | {screen:"workspace", uid} | {screen:"debug"}`) — no router library, no auth. Room Selector is home (`App` boots into it); `WorkspaceScreen` is mounted `key={uid}` so switching rooms remounts it cleanly rather than reusing state. The Toolbar's back arrow calls `onExit`, which routes back to Room Selector — it is enabled, not disabled. `DashboardScreen`'s header carries a right-aligned flask-icon button (`onOpenDebug`) that routes to Debug Dashboard, always visible regardless of whether the backend's `DEBUG_ENDPOINTS` is on (a disabled backend surfaces as a 404 inside each panel, not a hidden button).
 
 - API base URL defaults to `http://127.0.0.1:8000`; override with `VITE_API_BASE_URL` env var. `DashboardScreen`'s session-list fetch shows an offline state with a retry action on failure; `WorkspaceScreen`'s own session boot shows a plain "Opening the session" placeholder on the stage while loading and falls back to `sessionName = uid` if the cache-status fetch fails (no dedicated offline UI there).
 - Click coordinates are translated from display-space to natural image-space before sending to the API. All the contain-fit ↔ natural-pixel conversions live in `src/utils/stageGeometry.ts` (`getContainedImageRect`, `toNaturalPoint`, `clampCutoutOffset`, `getBoundsStageRect`, `buildHitTestOrder`, `compositePreviewOntoCanvas`) — reuse them rather than re-deriving the math.

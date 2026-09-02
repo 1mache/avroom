@@ -78,7 +78,9 @@ export const App: React.FC = () => {
 };
 ```
 
-`App` boots into `{screen: "dashboard"}`. `DashboardScreen`'s "New session" CTA moves to `upload`; `UploadScreen`'s success callback (`onUploaded`) and a `SessionCard` click both move to `workspace` with a `uid`. `WorkspaceScreen`'s back arrow (`onExit`) and `UploadScreen`'s cancel both return to `dashboard`. Mounting `WorkspaceScreen` with `key={route.uid}` means switching sessions unmounts and remounts the whole editor rather than reusing state across sessions.
+`App` boots into `{screen: "dashboard"}` (Room Selector). Room Selector's "New session" CTA moves to Room Upload; `UploadScreen`'s success callback (`onUploaded`) and a `SessionCard` click both move to Room Workspace with a `uid`. `WorkspaceScreen`'s back arrow (`onExit`) and `UploadScreen`'s cancel both return to Room Selector. Mounting `WorkspaceScreen` with `key={route.uid}` means switching rooms unmounts and remounts the whole editor rather than reusing state across rooms.
+
+Product language: [`CONTEXT.md`](../../CONTEXT.md).
 
 ## File layout
 
@@ -90,35 +92,36 @@ react-front/
 ├── public/                          - favicon.svg, icons.svg, avroom.png (tab icon)
 └── src/
     ├── main.tsx                     - React root
-    ├── App.tsx                      - route switch: dashboard / upload / workspace
+    ├── App.tsx                      - route switch: Room Selector / Room Upload / Room Workspace / Debug Dashboard
     ├── style.css                    - single global stylesheet
-    ├── assets/avroom.png            - logo used in the dashboard header
+    ├── assets/avroom.png            - logo used in the Room Selector header
     ├── api/images.ts                - backend HTTP wrappers
     ├── types/
     │   ├── api.ts                   - mirror of backend Pydantic models
     │   └── session.ts               - client-only view models (CutoutObject, rotation, etc.)
     ├── hooks/
-    │   ├── useSessionJobs.ts        - objects, selection, segment/inpaint/duplicate/delete/rotate/rename
+    │   ├── useSessionJobs.ts        - objects, selection, segment/inpaint/copy/delete/rotate/rename
     │   ├── useSessionSync.ts        - polling + focus/visibility reconcile against server truth
     │   └── useConflictNotices.ts    - turns 409s into dismissible inline notices
     ├── utils/
     │   ├── stageGeometry.ts         - contain-fit / natural-pixel / hit-test math
-    │   ├── preview.ts               - dashboard thumbnail compositing
+    │   ├── preview.ts               - Room Selector thumbnail compositing
     │   └── time.ts                  - relative-time label, most-recently-edited sort
     └── components/
         ├── layout/
-        │   ├── DashboardScreen.tsx  - session list, new-session entry, session delete
-        │   ├── UploadScreen.tsx     - file intake (drag-drop or picker) between dashboard and workspace
-        │   └── WorkspaceScreen.tsx  - the editor; owns most local state, composes the hooks
+        │   ├── DashboardScreen.tsx  - Room Selector
+        │   ├── UploadScreen.tsx     - Room Upload
+        │   ├── WorkspaceScreen.tsx  - Room Workspace
+        │   └── DebugScreen.tsx      - Debug Dashboard
         ├── workspace/
-        │   ├── Toolbar.tsx          - top chrome: back, session name, tools, trash
-        │   └── ObjectRail.tsx       - right-edge object list (replaces the old ObjectPanel)
+        │   ├── Toolbar.tsx          - top chrome: back, room name, tools, trash
+        │   └── ObjectRail.tsx       - Object Selector (right-edge object list)
         ├── dashboard/
-        │   └── SessionCard.tsx      - one dashboard grid tile
+        │   └── SessionCard.tsx      - one Room Selector grid tile
         ├── widgets/
-        │   ├── ConfirmDialog.tsx    - shared confirm/cancel modal (session delete, object delete)
+        │   ├── ConfirmDialog.tsx    - shared confirm/cancel modal (room delete, object delete)
         │   ├── MaskPickerModal.tsx  - segmentation candidate picker
-        │   └── Model3DFrame.tsx     - Three.js GLB viewer, doubles as the rotation angle picker
+        │   └── Model3DFrame.tsx     - Three.js 3D-render viewer, doubles as the rotation angle picker
         └── icons.tsx                - shared inline SVG icon set
 ```
 

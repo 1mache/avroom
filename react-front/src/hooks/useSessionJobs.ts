@@ -25,7 +25,6 @@ import type {
   CutoutBounds,
   JobInfo,
   ObjectInfo,
-  SmartPasteResponse,
   VerifyMode,
 } from "../types/api";
 import type {
@@ -848,44 +847,57 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [isImporting, onError, onMutated],
   );
 
-  const applySmartPasteResult = useCallback(
-    (objectId: number, result: SmartPasteResponse) => {
-      setObjects((prev) =>
-        prev.map((o) =>
-          o.objectId === objectId
-            ? {
-                ...o,
-                displayScale: result.display_scale,
-                rotation: null,
-              }
-            : o,
-        ),
-      );
-      onMutated?.();
-    },
-    [onMutated],
-  );
-
   const runSmartPasteAfterDrag = useCallback(
-    (objectId: number, x: number, y: number) => {
+    (
+      objectId: number,
+      x: number,
+      y: number,
+      options: { scaleByPov?: boolean; smartRotate?: boolean } = {},
+    ) => {
+      const scaleByPov = options.scaleByPov ?? true;
+      const smartRotate = options.smartRotate ?? true;
+      if (!scaleByPov && !smartRotate) {
+        return Promise.resolve(false);
+      }
+
       const currentImageId = imageIdRef.current;
       const target = objectsRef.current.find((o) => o.objectId === objectId);
       if (!currentImageId || !target?.uuid) {
         return Promise.resolve(false);
       }
 
-      return smartPasteObject(target.uuid, x, y)
+      return smartPasteObject(target.uuid, x, y, { scaleByPov, smartRotate })
         .then(async (result) => {
           if (imageIdRef.current !== currentImageId) {
             return false;
           }
-          applySmartPasteResult(objectId, result);
-          if (result.azimuth_deg != null && result.relative_elevation_deg != null) {
+
+          if (scaleByPov) {
+            setObjects((prev) =>
+              prev.map((o) =>
+                o.objectId === objectId
+                  ? {
+                      ...o,
+                      displayScale: result.display_scale,
+                      rotation: smartRotate ? null : o.rotation,
+                    }
+                  : o,
+              ),
+            );
+            onMutated?.();
+          }
+
+          if (
+            smartRotate &&
+            result.azimuth_deg != null &&
+            result.relative_elevation_deg != null
+          ) {
             await applyInferredRotation(objectId, {
               azimuthDeg: result.azimuth_deg,
               relativeElevationDeg: result.relative_elevation_deg,
             });
           }
+
           return true;
         })
         .catch((err) => {
@@ -895,7 +907,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           return false;
         });
     },
-    [applyInferredRotation, applySmartPasteResult, onError],
+    [applyInferredRotation, onError, onMutated],
   );
 
   return {

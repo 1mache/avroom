@@ -190,6 +190,8 @@ class InferenceClient:
         object_uuid: str,
         x: int,
         y: int,
+        scale_by_pov: bool = True,
+        smart_rotate: bool = True,
     ) -> SmartPasteBridgeResult:
         from core.image_processing import SmartPasteBridgeResult
 
@@ -200,6 +202,7 @@ class InferenceClient:
             object_uuid=object_uuid,
             x=x,
             y=y,
+            options={"scale_by_pov": scale_by_pov, "smart_rotate": smart_rotate},
         )
         result = self._run(job)
         self._raise_if_failed(result)

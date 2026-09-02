@@ -125,8 +125,8 @@ def test_smart_paster_delegates_to_depth_rescale() -> None:
 def test_smart_paster_infers_pose_from_normals() -> None:
     depth_map = np.full((64, 64), 100, dtype=np.uint8)
     normal_map = np.zeros((64, 64, 3), dtype=np.float32)
-    normal_map[:, :] = np.array([0.0, -1.0, 0.0], dtype=np.float32)  # floor
-    normal_map[20:40, 20:40] = np.array([1.0, 0.0, 0.0], dtype=np.float32)  # side wall
+    normal_map[:, :] = np.array([-1.0, 0.0, 0.0], dtype=np.float32)  # back wall
+    normal_map[20:40, 20:40] = np.array([0.0, 0.0, -1.0], dtype=np.float32)  # toward camera
 
     result = SmartPaster().smart_paste(
         source_average_depth=100.0,
@@ -141,3 +141,44 @@ def test_smart_paster_infers_pose_from_normals() -> None:
     assert result.azimuth_deg is not None
     assert abs(result.azimuth_deg) > 45.0
     assert result.relative_elevation_deg is not None
+
+
+def test_smart_paster_skips_scale_when_disabled() -> None:
+    depth_map = np.full((64, 64), 80, dtype=np.uint8)
+    depth_map[10, 10] = 160
+
+    result = SmartPaster().smart_paste(
+        source_average_depth=80.0,
+        depth_map=depth_map,
+        x=10,
+        y=10,
+        scale_by_pov=False,
+    )
+
+    assert result.scale_factor == 1.0
+    assert result.target_depth == 80.0
+    assert result.azimuth_deg is None
+    assert result.relative_elevation_deg is None
+
+
+def test_smart_paster_skips_rotate_when_disabled() -> None:
+    depth_map = np.full((64, 64), 80, dtype=np.uint8)
+    depth_map[30, 30] = 160
+    normal_map = np.zeros((64, 64, 3), dtype=np.float32)
+    normal_map[:, :] = np.array([-1.0, 0.0, 0.0], dtype=np.float32)
+    normal_map[20:40, 20:40] = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+
+    result = SmartPaster().smart_paste(
+        source_average_depth=80.0,
+        depth_map=depth_map,
+        x=30,
+        y=30,
+        normal_map=normal_map,
+        source_x=10,
+        source_y=10,
+        smart_rotate=False,
+    )
+
+    assert result.scale_factor > 1.0
+    assert result.azimuth_deg is None
+    assert result.relative_elevation_deg is None

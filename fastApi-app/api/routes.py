@@ -54,6 +54,7 @@ from schemas.objects import (
     ObjectMetadataResponse,
     PlacementRequest,
     PlacementResponse,
+    SmartPasteRequest,
     UpdateObjectRequest,
 )
 from schemas.sessions import ImageUploadResponse, WarmSessionMapsResponse
@@ -664,14 +665,16 @@ def rescale_object_by_depth(
 @router.post("/objects/{object_uuid}/smart-paste", response_model=PlacementResponse)
 def smart_paste_object(
     object_uuid: str,
-    request: PlacementRequest,
+    request: SmartPasteRequest,
 ) -> PlacementResponse:
-    """Run smart paste (depth rescale today) at the given placement point."""
+    """Run smart paste at the given placement point."""
     logger.info(
-        "Smart paste requested: uuid=%s placement=(%d,%d)",
+        "Smart paste requested: uuid=%s placement=(%d,%d) scale_by_pov=%s smart_rotate=%s",
         object_uuid,
         request.x,
         request.y,
+        request.scale_by_pov,
+        request.smart_rotate,
     )
     storage_dir = get_image_storage_dir()
     try:
@@ -680,6 +683,8 @@ def smart_paste_object(
             object_uuid=object_uuid,
             x=request.x,
             y=request.y,
+            scale_by_pov=request.scale_by_pov,
+            smart_rotate=request.smart_rotate,
         )
     except FileNotFoundError as exc:
         logger.warning("Smart paste failed — not found: uuid=%s", object_uuid)

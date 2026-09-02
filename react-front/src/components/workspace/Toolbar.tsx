@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import type { VerifyMode } from "../../types/api";
 import {
@@ -14,6 +14,7 @@ import {
   RevertIcon,
   RotateIcon,
   ScissorsIcon,
+  SettingsIcon,
   SmartPasteIcon,
   TrashIcon,
 } from "../icons";
@@ -51,6 +52,10 @@ export interface ToolbarProps {
   onCopy: () => void;
   smartPaste: boolean;
   onToggleSmartPaste: () => void;
+  scaleByPov: boolean;
+  onToggleScaleByPov: () => void;
+  smartRotate: boolean;
+  onToggleSmartRotate: () => void;
   isDeleting: boolean;
   onDeleteObject: () => void;
   canUndo: boolean;
@@ -99,6 +104,10 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onCopy,
   smartPaste,
   onToggleSmartPaste,
+  scaleByPov,
+  onToggleScaleByPov,
+  smartRotate,
+  onToggleSmartRotate,
   isDeleting,
   onDeleteObject,
   canUndo,
@@ -113,6 +122,39 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 }) => {
   const objectToolsDisabled = !hasSelection;
   const historyDisabled = historyBusy || Boolean(status);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsWrapRef = useRef<HTMLDivElement | null>(null);
+
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!settingsOpen) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeSettings();
+      }
+    };
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const root = settingsWrapRef.current;
+      if (root && !root.contains(event.target as Node)) {
+        closeSettings();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [closeSettings, settingsOpen]);
 
   return (
     <header className="toolbar">
@@ -327,6 +369,55 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <span className="tool-switch-nub" />
         </span>
       </button>
+
+      <div className="toolbar-settings-wrap" ref={settingsWrapRef}>
+        <button
+          type="button"
+          className={`tool-btn${settingsOpen ? " is-armed" : ""}`}
+          data-tip="Smart paste settings"
+          aria-label="Smart paste settings"
+          aria-expanded={settingsOpen}
+          aria-haspopup="dialog"
+          onClick={() => setSettingsOpen((open) => !open)}
+        >
+          <SettingsIcon />
+        </button>
+
+        {settingsOpen ? (
+          <div
+            className="toolbar-settings-popover"
+            role="dialog"
+            aria-label="Smart paste settings"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <p className="toolbar-settings-title">Smart paste</p>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={scaleByPov}
+              className={`toolbar-settings-row tool-switch${scaleByPov ? " is-on" : ""}`}
+              onClick={onToggleScaleByPov}
+            >
+              <span className="toolbar-settings-label">Scale by POV</span>
+              <span className="tool-switch-track">
+                <span className="tool-switch-nub" />
+              </span>
+            </button>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={smartRotate}
+              className={`toolbar-settings-row tool-switch${smartRotate ? " is-on" : ""}`}
+              onClick={onToggleSmartRotate}
+            >
+              <span className="toolbar-settings-label">Smart rotate</span>
+              <span className="tool-switch-track">
+                <span className="tool-switch-nub" />
+              </span>
+            </button>
+          </div>
+        ) : null}
+      </div>
 
       <span className="toolbar-spacer" />
 

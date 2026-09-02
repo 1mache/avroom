@@ -33,24 +33,46 @@ class SmartPaster:
         self,
         *,
         source_average_depth: float,
-        depth_map: np.ndarray,
+        depth_map: np.ndarray | None,
         x: int,
         y: int,
         normal_map: np.ndarray | None = None,
         source_x: int | None = None,
         source_y: int | None = None,
+        scale_by_pov: bool = True,
+        smart_rotate: bool = True,
     ) -> SmartPasteResult:
         """Run smart paste at natural-image placement ``(x, y)``."""
-        logger.info("Smart paste requested: placement=(%d,%d)", x, y)
-        depth_result = self._compute_depth_rescale(
-            source_average_depth=source_average_depth,
-            depth_map=depth_map,
-            x=x,
-            y=y,
+        logger.info(
+            "Smart paste requested: placement=(%d,%d) scale_by_pov=%s smart_rotate=%s",
+            x,
+            y,
+            scale_by_pov,
+            smart_rotate,
         )
+        if scale_by_pov:
+            if depth_map is None:
+                raise ValueError("depth_map is required when scale_by_pov is true")
+            depth_result = self._compute_depth_rescale(
+                source_average_depth=source_average_depth,
+                depth_map=depth_map,
+                x=x,
+                y=y,
+            )
+        else:
+            depth_result = DepthRescaleResult(
+                source_average_depth=source_average_depth,
+                target_depth=source_average_depth,
+                scale_factor=1.0,
+            )
         azimuth_deg: float | None = None
         relative_elevation_deg: float | None = None
-        if normal_map is not None and source_x is not None and source_y is not None:
+        if (
+            smart_rotate
+            and normal_map is not None
+            and source_x is not None
+            and source_y is not None
+        ):
             pose = self._infer_orbit_pose(
                 normal_map=normal_map,
                 source_x=source_x,

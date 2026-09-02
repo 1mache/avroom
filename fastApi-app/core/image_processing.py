@@ -784,13 +784,18 @@ def run_smart_paste(
     object_uuid: str,
     x: int,
     y: int,
+    *,
+    scale_by_pov: bool = True,
+    smart_rotate: bool = True,
 ) -> SmartPasteBridgeResult:
     """Run smart paste for one object at ``(x, y)`` and persist metadata only."""
     logger.info(
-        "Smart paste requested: object_uuid=%s placement=(%d,%d)",
+        "Smart paste requested: object_uuid=%s placement=(%d,%d) scale_by_pov=%s smart_rotate=%s",
         object_uuid,
         x,
         y,
+        scale_by_pov,
+        smart_rotate,
     )
 
     metadata = _load_object_metadata_for_rescale(base_dir, object_uuid)
@@ -800,7 +805,7 @@ def run_smart_paste(
     normal_map: np.ndarray | None = None
     source_x: int | None = None
     source_y: int | None = None
-    if get_normal_map_enabled() and base_bounds is not None:
+    if smart_rotate and get_normal_map_enabled() and base_bounds is not None:
         source_x = int(round((base_bounds.left + base_bounds.right) / 2))
         source_y = int(round((base_bounds.top + base_bounds.bottom) / 2))
         image_bytes = load_canvas_bytes(image_id=metadata.session_id, base_dir=base_dir)
@@ -818,10 +823,12 @@ def run_smart_paste(
             source_y,
             normal_map.shape,
         )
-    elif not get_normal_map_enabled():
+    elif smart_rotate and not get_normal_map_enabled():
         logger.info("Smart paste auto-rotate skipped: NORMAL_MAP=false object_uuid=%s", object_uuid)
 
-    depth_map = _compute_session_depth_map(base_dir, metadata.session_id)
+    depth_map: np.ndarray | None = None
+    if scale_by_pov:
+        depth_map = _compute_session_depth_map(base_dir, metadata.session_id)
 
     with inference_session():
         smart_paster = load_avroom_attr("SmartPaster")()
@@ -833,22 +840,33 @@ def run_smart_paste(
             normal_map=normal_map,
             source_x=source_x,
             source_y=source_y,
+            scale_by_pov=scale_by_pov,
+            smart_rotate=smart_rotate,
         )
 
-    display_scale = paste_result.scale_factor
-    logger.info(
-        "Smart paste scale computed: object_uuid=%s source_depth=%.2f target_depth=%.2f "
-        "scale=%.4f display_scale=%.4f azimuth=%s rel_elevation=%s",
-        object_uuid,
-        paste_result.source_average_depth,
-        paste_result.target_depth,
-        paste_result.scale_factor,
-        display_scale,
-        paste_result.azimuth_deg,
-        paste_result.relative_elevation_deg,
-    )
-
-    _persist_rescale_metadata(object_uuid, display_scale=display_scale)
+    if scale_by_pov:
+        display_scale = paste_result.scale_factor
+        logger.info(
+            "Smart paste scale computed: object_uuid=%s source_depth=%.2f target_depth=%.2f "
+            "scale=%.4f display_scale=%.4f azimuth=%s rel_elevation=%s",
+            object_uuid,
+            paste_result.source_average_depth,
+            paste_result.target_depth,
+            paste_result.scale_factor,
+            display_scale,
+            paste_result.azimuth_deg,
+            paste_result.relative_elevation_deg,
+        )
+        _persist_rescale_metadata(object_uuid, display_scale=display_scale)
+    else:
+        display_scale = metadata.display_scale
+        logger.info(
+            "Smart paste scale skipped: object_uuid=%s display_scale=%.4f azimuth=%s rel_elevation=%s",
+            object_uuid,
+            display_scale,
+            paste_result.azimuth_deg,
+            paste_result.relative_elevation_deg,
+        )
 
     logger.info(
         "Smart paste complete: object_uuid=%s session_id=%s object_id=%d display_scale=%.4f",

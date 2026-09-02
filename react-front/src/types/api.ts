@@ -180,6 +180,8 @@ export interface RescaleByDepthResponse {
 export interface SmartPasteRequest {
   x: number;
   y: number;
+  scale_by_pov?: boolean;
+  smart_rotate?: boolean;
 }
 
 export interface SmartPasteResponse {

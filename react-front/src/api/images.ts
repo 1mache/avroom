@@ -417,13 +417,20 @@ export async function smartPasteObject(
   objectUuid: string,
   x: number,
   y: number,
+  options: { scaleByPov?: boolean; smartRotate?: boolean } = {},
 ): Promise<SmartPasteResponse> {
+  const { scaleByPov = true, smartRotate = true } = options;
   const response = await authedFetch(`${API_BASE_URL}/images/objects/${objectUuid}/smart-paste`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ x, y } satisfies SmartPasteRequest),
+    body: JSON.stringify({
+      x,
+      y,
+      scale_by_pov: scaleByPov,
+      smart_rotate: smartRotate,
+    } satisfies SmartPasteRequest),
   });
 
   return handleJsonResponse<SmartPasteResponse>(response);

@@ -181,3 +181,12 @@ export const FlaskIcon: React.FC<IconProps> = (props) => (
     <path d="M7.8 15h8.4" />
   </Svg>
 );
+
+/** Session sign-out — door frame with an exit arrow. */
+export const LogoutIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <path d="M13.5 4.5H7a1 1 0 00-1 1v13a1 1 0 001 1h6.5" />
+    <path d="M10.5 12h9.5" />
+    <path d="M16.5 8l3.5 4-3.5 4" />
+  </Svg>
+);

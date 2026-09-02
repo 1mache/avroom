@@ -118,13 +118,24 @@ Session and object metadata (previously four JSON sidecars — `sessions.json`, 
 - **`db/models.py`** — `User`, `SessionRow` (table `sessions`, the `uid` used everywhere else), `ObjectRow` (table `objects`). `db/session.py` exposes `get_engine()` (per-process lazy singleton) and `session_scope()`.
 - **`core/repositories/session_repo.py`** — replaces the old sidecar functions 1:1 by name (`register_uid`, `touch_session`, `set_session_name`, `evaluate_session_sync`, `SessionNotFoundError`, `delete_session`, …), now DB-backed.
 - **`core/object_metadata.py`** — same public functions as before (`save_object_metadata`, `get_object_by_uuid`, `list_object_ids`, `build_clone_metadata`, …) but each opens its own short DB session instead of reading/writing a JSON file; `base_dir`/`storage_dir` parameters were dropped since metadata no longer lives under the image storage dir. `list_object_ids` / `next_object_id` moved here from `core/object_storage.py` (they used to scan the filesystem; now they query the `objects` table — the real fix for a `next_object_id` dir-scan race described below).
-- **Local dev user**: `AUTH_MODE=single_user` (the default — see `settings.get_auth_mode()`) auto-provisions one fixed user (`local@avroom.dev`, `core/auth/single_user.py::LOCAL_USER_ID`) that every session is attached to. No login, no token, identical UX to before. `AUTH_MODE=jwt` (real per-user auth, ownership checks on every route) is not implemented yet — the schema already supports it (`sessions.user_id` FK), only route-level "who is asking" resolution is still hardcoded to the local user.
+- **Local dev user**: `AUTH_MODE=single_user` (the default — see `settings.get_auth_mode()`) auto-provisions one fixed user (`local@avroom.dev`, `core/auth/single_user.py::LOCAL_USER_ID`) that every session is attached to. No login, no token, identical UX to before. `AUTH_MODE=jwt` is now implemented — see "Session Ownership & Login" below.
 - **Local Postgres runs via `docker-compose.yml`** (repo root): `docker compose up -d db`. Host port is **5433**, not 5432 — a native Postgres install may already own 5432 on the host (this bit us during development on Windows). `DATABASE_URL` defaults to `postgresql+psycopg://avroom:avroom@localhost:5433/avroom` accordingly (`settings.get_database_url()`).
 - **Schema is managed by Alembic**, not `Base.metadata.create_all()` in application code — run `alembic upgrade head` from `fastApi-app/` after `docker compose up -d db` (both locally and once hosted against RDS) before starting the app. `alembic/env.py` resolves its target DB from `settings.get_database_url()`, the same URL the app itself uses, so there is exactly one place that decides which database this points at. `fastApi-app/tests/conftest.py`'s `_clean_database` fixture is the one exception: it calls `Base.metadata.create_all()` directly and truncates every table before each test, since tests want a schema-matches-models guarantee and per-test isolation, not migration history.
 - **Tests never run against the dev database.** `conftest.py`'s `_use_test_database()` runs at import time (before any test module or `db.session.get_engine()` can execute) and repoints `DATABASE_URL` at `<dbname>_test` (e.g. `avroom_test`), creating that database via a maintenance connection if it doesn't exist yet. This exists because `_clean_database` truncates `objects`/`sessions`/`users` before every test, and `settings.get_database_url()`'s default is otherwise identical between app and test process — without the swap, running `pytest` against a normal local setup wipes live session data. Gotcha if touching this: `str(sqlalchemy.engine.URL)` masks the password as `***`; building the env var string requires `url.render_as_string(hide_password=False)`.
-- `save_object_metadata` auto-provisions its session row (owned by the local user) if the session hasn't been registered yet, matching the old sidecars' decoupled behavior where object metadata and session registration were independent files.
+- `save_object_metadata` auto-provisions its session row (owned by the local dev user, via `register_uid`'s default — see "Session Ownership & Login" below) if the session hasn't been registered yet, matching the old sidecars' decoupled behavior where object metadata and session registration were independent files. In practice this never fires on a real request path: an object is only ever created for a session that upload already registered under its real owner.
 
 Three races the old filesystem/JSON approach had are now closed: `next_object_id` (used to be a dir-scan max, now a DB query — still relies on the existing canvas-writer lock to serialize concurrent inpaint/duplicate per session on a single instance, see `docs/backend/concurrency.md`, rather than a row lock); `count_clones_of_root` (used to be an O(n) per-file JSON read, now `COUNT(*)`); `PATCH /images/objects/{uuid}` (still a read-then-write, but against one row under the object's own uuid rather than a shared JSON file).
+
+## Session Ownership & Login
+
+Two seams close the gap between "the schema has always had a real `user_id` FK on every session" and "a real login actually enforces it":
+
+- **`core/auth/ownership.py::require_session_owner`** — a router-level FastAPI dependency (`dependencies=[Depends(require_session_owner)]` on the `APIRouter(...)` constructor, not `main.py::include_router` — several tests build a bare `FastAPI(); include_router(router)` and bypass `main.py` entirely, and a dependency declared there would silently vanish for exactly those tests) attached to `api/routes.py`, `api/sessions.py`, `api/object_views.py`, `api/novel_view.py`, and `api/model_3d.py` (not `api/jobs.py`, which already checks ownership per-job via `job_repo.get_job`, and not `api/debug_vision.py`, which has no session concept). It resolves whichever session a request targets — path `uid`, path `object_uuid` (via `get_object_by_uuid` → `metadata.session_id`), or a JSON body's `uid`/`image_id`/`session_id` field, in that priority order, path `uid` always checked first so a multipart route's body is never touched (reading `request.body()` on a multipart request raises `RuntimeError: Stream consumed`) — and 404s (never 403) when the resolved owner isn't the caller, with the exact same message an unknown uid/uuid would produce. Before this, every uid-bearing route trusted the URL/body outright; invisible under `single_user` (one fixed user owns everything), a real IDOR the moment `jwt` mode ships real accounts. `tests/test_route_guard_coverage.py` is the standing anti-fail-open check — it walks the live `main.app` route table and fails if any route that looks session-scoped is missing the dependency.
+- **`core/auth/identity.py::current_user_id`** — branches on `settings.get_auth_mode()`. `single_user` (default): always the fixed local user, auto-provisioning its row. `jwt`: reads `Authorization: Bearer <token>`, decodes it via `core/auth/jwt_backend.py` (PyJWT, HS256, `JWT_SECRET`/`JWT_EXPIRE_MINUTES`), 401 on anything missing/invalid/expired. Every route needing caller identity already depended on this via `Depends(current_user_id)`; adding the mandatory `request: Request` parameter touched none of those call sites (FastAPI injects it automatically) — it only broke the one place `session_repo.py` used to call it bare, off any request (see below).
+- **`core/auth/jwt_backend.py`** — `hash_password`/`verify_password` (raw `bcrypt`, not `passlib[bcrypt]`: passlib 1.7.4 probes `bcrypt.__about__.__version__`, gone since bcrypt ≥4.1, and raises `ValueError: password cannot be longer than 72 bytes` on every hash call regardless of length), `issue_token`/`decode_token`, `AuthError`. No `fastapi.security` usage (matching the rest of the repo) — `HTTPBearer`'s `auto_error=True` default raises 403 not 401, and this module wants 401 throughout, so `identity.py` reads the header itself.
+- **`api/auth.py`** — `POST /auth/signup` (open registration, 201 + token), `POST /auth/login` (one 401 for wrong-password/unknown-email/inactive-account, no user-enumeration oracle), `GET /auth/me`. Not session-scoped, so no ownership dependency; must work with zero token. Exists and issues real tokens even in `single_user` mode, where nothing else checks them.
+- **No new column, no migration.** `users.password_hash` (nullable `String(255)`) and the unique `ix_users_email` index already existed (`alembic/versions/0001_initial.py`) — a bcrypt hash is 60 bytes. Alembic head stays `0006_session_history`.
+- **`session_repo.register_uid(uid, user_id=None)`** is now the *only* creation path for a `SessionRow` — `touch_session`/`set_session_name` became lookup-or-raise (`SessionNotFoundError`) instead of create-on-miss. The old create-on-miss silently resurrected a ghost session row owned by whichever fixed identity a bare `current_user_id()` call resolved to (always the local user, off-request) — e.g. deleting a session while a queued job targeting it was still in flight. That bare call is also what the `request`-requiring `current_user_id` broke; `register_uid`'s `user_id` defaults to the fixed local dev user (auto-provisioning that row too) so every off-request/test caller that only ever ran under `single_user` needs no change, while `api/routes.py`'s upload handler — the one place a uid is actually born under a real caller — passes its own resolved `user_id` explicitly.
 
 ## Durable Job Queue
 
@@ -135,7 +146,7 @@ Segment, inpaint, and 3D generation are **queued, not blocking**. `POST /images/
 - **`core/jobs/dispatcher.py`** — `max(1, INFERENCE_WORKERS)` daemon threads polling `claim_next_job()` every 0.5s. Started/stopped in `main.py`'s lifespan, alongside `mark_running_orphans_failed()` on startup.
 - **Result shape**: a successful `inpaint`/`generate_3d` job **deletes its own row** — the `ObjectRow` / GLB file already *is* the durable result. A successful `segment` job stays `done` with `result={"mask_ids":[...]}` until consumed (an inpaint submitted with `from_job_id`) or dismissed (`DELETE /jobs/{job_id}`) — **several segment results can be queued at once**, consumed one at a time.
 - **Delivery is polling, not push**: `POST /images/{uid}/sync-check` now also returns that session's `jobs` list (unconditionally, not gated on `needs_refresh` — a job's status can change without bumping `last_changed`); `GET /jobs/active` is the same idea across every session for the dashboard's per-card dot; `GET /jobs/{job_id}` inflates a done segment job's `mask_ids` into full candidates on read.
-- **Identity seam**: `core/auth/identity.py::current_user_id()` resolves "who is asking" — today it always returns the fixed local user (same as `session_repo._get_or_create_session_row`, which now calls this too instead of `core.auth.single_user` directly), but it is the **one** function a future `AUTH_MODE=jwt` needs to change. Every `/jobs` route and all three submit routes depend on it; job listing/reads filter `WHERE user_id = :caller`, which is the entire result-routing mechanism for multiple users sharing one queue.
+- **Identity seam**: `core/auth/identity.py::current_user_id()` resolves "who is asking" — see "Session Ownership & Login" above for the `single_user`/`jwt` branch. Every `/jobs` route and all three submit routes depend on it; job listing/reads filter `WHERE user_id = :caller`, which is the entire result-routing mechanism for multiple users sharing one queue.
 - **The pinning fix**: `reserved_mask_ids(session_id)` (in `job_repo.py`) protects mask ids belonging to an unconsumed `done` segment job **and** to any `queued`/`running` inpaint job, unioned with the existing in-memory `pinned_mask_ids` at the segment call site. This exists because queuing widened a real race — a submitted inpaint can now sit `queued` for an arbitrary time before a dispatcher thread actually takes its in-memory lease, so a concurrent segment's candidate wipe needs to know about that not-yet-running inpaint too, not just live leases.
 - **Novel-view rotation is deliberately NOT queued** — it stays exactly as it was (a detached blocking request with a local `rotation` marker on the object; see "Rotation flow" below).
 
@@ -287,6 +298,82 @@ Segment and inpaint are queued server-side now (see "Durable Job Queue" above): 
 ### Dashboard preview thumbnails
 
 `GET`/`POST /images/{uid}/preview` (`fastApi-app/api/routes.py`) back the session card thumbnail — a JPEG of the room roughly as the user left it. `POST /images/upload` writes an initial one (downscaled original) via `core/session_preview.py::write_upload_preview` so a card is never empty. `WorkspaceScreen.tsx`'s `capturePreviewRef` composites background + every visible cutout at its current offset (`utils/preview.ts::composeSessionPreview`, canvas-based, 640px long edge, JPEG q0.82) and calls `saveSessionPreview` debounced 500ms (`PREVIEW_DEBOUNCE_MS`) after any mutation settles — wired through `onMutated` for inpaint/rotation/rename/duplicate/delete/hide, and directly from `finishDrag` for drag-end (drags never go through `useSessionJobs`, so `onMutated` alone doesn't cover them). The POST never calls `touch_session` — it fires well after the mutation that already bumped `last_changed`, so the dashboard's `?t=` cache-buster is already correct.
+
+## Deployment (AWS, phase 1)
+
+Deployed as **one EC2 GPU instance** (`g4dn.xlarge`, `eu-central-1`) running the
+whole stack via docker-compose — not ECS/Fargate, which has no GPU support at all.
+Full click-by-click procedure in [docs/deployment/aws-runbook.md](docs/deployment/aws-runbook.md);
+rationale in `docs/superpowers/specs/2026-08-29-aws-integration-design.md`.
+
+- **`fastApi-app/Dockerfile`** — two stages. Stage 1 (`node:20-slim`) runs
+  `npm run build` with `VITE_API_BASE_URL=""`; stage 2 (`python:3.11-slim`)
+  installs the Python stack and copies the built `dist/` in. Build context is the
+  **repo root**, not `fastApi-app/` (requirements.txt and TestModules/ live there).
+  Base is deliberately *not* an `nvidia/cuda` image: PyPI torch wheels bundle their
+  own CUDA runtime as `nvidia-*-cu12` deps, so only the host driver matters and it
+  arrives via the NVIDIA Container Toolkit. `torch` is installed on its own earlier
+  layer because `torchmcubes` (a git dep of TestModules) imports torch in its
+  `setup.py` at build time.
+- **`PYOPENGL_PLATFORM=osmesa`** is set in the image. `pyrender`'s offscreen
+  renderer (`MeshRenderNovelViewStrategy`, novel-view rotation) needs *some* GL
+  context on a headless host. OSMesa is software rendering: unlike EGL it needs no
+  `NVIDIA_DRIVER_CAPABILITIES=graphics` negotiation, and behaves identically on a
+  CPU-only laptop and the GPU box, so local testing exercises the real path.
+  Renders are only 512×512, so CPU rasterization is fast enough.
+- **FastAPI serves the React build itself** — `main.py` mounts
+  `react-front/dist/` with `StaticFiles(html=True)` **after** every
+  `include_router`, so `/images`, `/3d`, `/jobs`, `/debug` still win and the mount
+  only catches `/`, `/assets/*`, `/avroom.png`. No nginx container and **no CORS**:
+  the SPA is built with `VITE_API_BASE_URL=""`, making every fetch relative and
+  therefore same-origin. The mount is skipped when `dist/` is absent, so local dev
+  still uses the Vite dev server on `:5173` unchanged.
+- **The health endpoint is `GET /healthz`, not `GET /`** — `/` now belongs to the
+  SPA's `index.html`. Routes registered before the mount always shadow it, so
+  leaving health on `/` would have hidden the app.
+- **Two deployment overlays**, applied with `-f docker-compose.yml -f
+  docker-compose.deploy.yml [-f docker-compose.gpu.yml]`. `docker-compose.deploy.yml`
+  carries everything true of *any* deployed instance — `restart: unless-stopped`,
+  port 80, and the three named volumes that must outlive a rebuild: `hf-cache`
+  (~10GB of weights — without it every rebuild re-downloads them),
+  `sam-checkpoints` (fetched via `SAM_AUTO_DOWNLOAD=1`), and `avroom-blobs`
+  (`fastApi-app/tmp`, the real user data). `docker-compose.gpu.yml` adds only the
+  GPU device reservation on top. Split this way because the pipeline runs on
+  CPU today (just slower — minutes per operation, same as a laptop with no
+  CUDA) and the G-family EC2 vCPU quota can take 24-48h to approve on a new
+  account: a CPU instance (`m7i.xlarge`) can take the `deploy` overlay alone
+  and go live immediately, then move to `g4dn.xlarge` plus the `gpu` overlay
+  once approved, with no other file changing. Both overlays are kept separate
+  from the base file so local dev still works with no deploy-specific env
+  vars and no NVIDIA GPU.
+- **`docker-entrypoint.sh`** runs `alembic upgrade head` then uvicorn. It
+  deliberately does *not* run `scripts/migrate_local_sidecars_to_db.py` (which
+  `run.bat` does) — that imports legacy JSON sidecars from a dev machine.
+- **`run-ec2.sh`** (repo root) is the deployed box's entry point — the Linux,
+  containers-only counterpart to `run.bat`. Wraps `docker compose -f
+  docker-compose.yml -f docker-compose.deploy.yml [-f docker-compose.gpu.yml]
+  --profile full`, builds/starts, then follows logs; any args (`down`, `ps`,
+  `exec api bash`) pass through with those flags already applied. `GPU=1
+  ./run-ec2.sh` adds the GPU overlay. See `docs/deployment/aws-runbook.md`.
+- **`INFERENCE_WORKERS=0` in production.** Two workers would each load their own
+  copy of every model and exhaust the T4's 16GB VRAM.
+- **`torchmcubes` is deliberately not a dependency**, so the **TripoSR fallback
+  does not work in the container** — a failure of the primary Hunyuan3D Space
+  backend surfaces as an error rather than falling back. It compiles against
+  torch's CMake config, which demands a full CUDA *toolkit* (`nvcc`, headers);
+  the `nvidia-*-cu12` runtime libs inside the PyPI torch wheel are not enough,
+  so it cannot build on the slim base without a ~6GB CUDA-devel image. **All
+  TripoSR code is intentionally retained and still supported** — the import is
+  lazy and guarded in `_load_tsr_model`, so nothing breaks at startup. Restore
+  with `pip install "torchmcubes @ git+https://github.com/tatsy/torchmcubes.git"`
+  on any host with the toolkit; no code change needed. See the NOTE in
+  `TestModules/pyproject.toml`.
+- Still deferred: RDS, S3 blobs (`STORAGE_BACKEND=s3` exists but unused), HTTPS/
+  domain, and self-hosted Hunyuan3D (needs its own 24GB+ box; the public HF Space
+  is flaky and rate-limited, so this is planned for demo day). `AUTH_MODE=jwt`
+  is implemented (see "Session Ownership & Login") but not the deployed default —
+  flipping it needs `JWT_SECRET` set on the instance and a frontend login screen,
+  neither of which exists yet.
 
 ## Planned but Not Yet Implemented
 

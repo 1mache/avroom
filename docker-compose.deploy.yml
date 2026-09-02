@@ -1,0 +1,62 @@
+# Deployment overlay: everything true of a deployed server regardless of
+# whether it has a GPU. Layered ON TOP of docker-compose.yml:
+#
+#   # CPU box
+#   docker compose -f docker-compose.yml -f docker-compose.deploy.yml \
+#     --profile full up -d --build
+#
+#   # GPU box - same thing plus the GPU reservation
+#   docker compose -f docker-compose.yml -f docker-compose.deploy.yml \
+#     -f docker-compose.gpu.yml --profile full up -d --build
+#
+# Kept separate from docker-compose.gpu.yml so a CPU-only instance can take all
+# of this without the GPU reservation, which would make the container fail to
+# start on a host with no NVIDIA runtime. Kept separate from
+# docker-compose.yml so local development is unaffected.
+#
+# See docs/deployment/aws-runbook.md.
+
+services:
+  db:
+    # Survive an instance reboot without a manual `docker compose up`.
+    restart: unless-stopped
+
+  api:
+    restart: unless-stopped
+
+    ports:
+      # Answer on plain HTTP. Compose appends to the base file's 8000:8000
+      # rather than replacing it, so both are published on the host; the EC2
+      # security group only opens 80, which is the real access control.
+      - "80:8000"
+
+    environment:
+      # Fetch the SAM checkpoint (~375MB) on first use instead of requiring it
+      # to be copied onto the box by hand. Lands in the sam-checkpoints volume.
+      SAM_AUTO_DOWNLOAD: "1"
+      # Container logs belong on stdout, where `docker compose logs` and any
+      # future CloudWatch agent can see them - not in a rotating file inside
+      # an ephemeral container.
+      LOG_DIR: disabled
+      # Skip the AI pipeline's per-stage debug PNG dumps; they are a
+      # development aid and would fill the disk in a long-running deployment.
+      DEBUG_IMAGE_SAVE: "false"
+
+    volumes:
+      # Everything below must outlive `docker compose down` and image rebuilds.
+      #
+      # ~10GB of model weights (Stable Diffusion inpaint, the two depth
+      # checkpoints, CLIP). Without this volume every rebuild re-downloads all
+      # of it, turning a 2-minute restart into a 20-minute one.
+      - hf-cache:/root/.cache/huggingface
+      # SAM checkpoint, fetched once via SAM_AUTO_DOWNLOAD above.
+      - sam-checkpoints:/app/TestModules/checkpoints
+      # Actual user data: uploaded photos, cutout PNGs, generated GLBs,
+      # novel-view caches. Postgres holds the metadata that points at these,
+      # so this volume and the db volume must be kept or discarded together.
+      - avroom-blobs:/app/fastApi-app/tmp
+
+volumes:
+  hf-cache:
+  sam-checkpoints:
+  avroom-blobs:

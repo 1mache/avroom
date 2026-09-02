@@ -2,10 +2,11 @@ import React, { useCallback, useEffect, useState } from "react";
 
 import { deleteSession, getActiveJobs, getSessions } from "../../api/images";
 import avroomLogo from "../../assets/avroom.png";
+import { useAuth } from "../../context/AuthContext";
 import type { JobInfo, SessionInfo } from "../../types/api";
 import { byMostRecentlyEdited } from "../../utils/time";
 import { SessionCard } from "../dashboard/SessionCard";
-import { FlaskIcon, PlusIcon } from "../icons";
+import { FlaskIcon, LogoutIcon, PlusIcon } from "../icons";
 import { ConfirmDialog } from "../widgets/ConfirmDialog";
 
 // How often the dashboard re-checks which sessions have queued/running or
@@ -31,6 +32,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onNewSession,
   onOpenDebug,
 }) => {
+  const { logout } = useAuth();
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [pendingDeleteUid, setPendingDeleteUid] = useState<string | null>(null);
@@ -109,6 +111,9 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           data-tip="Pipeline debug"
         >
           <FlaskIcon />
+        </button>
+        <button type="button" className="tool-btn" onClick={logout} aria-label="Sign out" data-tip="Sign out">
+          <LogoutIcon />
         </button>
       </header>
 

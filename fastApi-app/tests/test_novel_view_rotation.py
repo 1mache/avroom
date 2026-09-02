@@ -16,6 +16,7 @@ if str(_APP_ROOT) not in sys.path:
     sys.path.insert(0, str(_APP_ROOT))
 
 import settings  # noqa: E402
+from core.repositories import session_repo  # noqa: E402
 
 
 class _FakeInferenceClient:
@@ -71,6 +72,7 @@ def storage_sandbox(monkeypatch: pytest.MonkeyPatch) -> Path:
     # -- patch its own get_3d_storage_dir reference.
     monkeypatch.setattr("core.object_3d.get_3d_storage_dir", lambda: glb_dir)
     assert settings.get_image_storage_dir() == images_dir
+    session_repo.register_uid("sess-1")
 
     cutout = np.zeros((4, 4, 4), dtype=np.uint8)
     cutout[:, :, 3] = 255

@@ -19,9 +19,11 @@ from typing import Annotated
 import uuid
 import logging
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
 from pathlib import Path
 
+from core.auth.identity import current_user_id
+from core.auth.ownership import require_session_owner
 from core.image_validation import ImageValidator
 from core.inference_pool.client import get_inference_client
 from core.inference_pool.session_runtime import (
@@ -72,13 +74,14 @@ from settings import (
     get_normal_map_enabled,
 )
 
-router = APIRouter(prefix="/images", tags=["images"])
+router = APIRouter(prefix="/images", tags=["images"], dependencies=[Depends(require_session_owner)])
 logger = logging.getLogger(__name__)
 
 
 @router.post("/upload", response_model=ImageUploadResponse)
 async def upload_image(
     file: Annotated[UploadFile, File(..., description="Image file to be stored on the server.")],
+    user_id: str = Depends(current_user_id),
 ) -> ImageUploadResponse:
     """Upload an image and persist it to disk.
 
@@ -152,7 +155,7 @@ async def upload_image(
         len(file_bytes),
     )
 
-    register_uid(image_id)
+    register_uid(image_id, user_id)
     last_changed = touch_session(image_id)
 
     write_upload_preview(storage_dir, image_id, file_bytes)

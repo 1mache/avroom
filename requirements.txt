@@ -41,8 +41,8 @@ numpy==1.26.4
 kornia>=0.7.0
 opencv-python==4.11.0.86
 imageio[ffmpeg]>=2.31.0
+bcrypt==5.0.0
 packaging==26.0
-passlib[bcrypt]==1.7.4
 pathspec==1.0.4
 Pillow==9.5.0
 psutil==7.2.2
@@ -91,6 +91,10 @@ websockets==16.0
 zipp==3.23.0
 gradio_client>=1.4
 onnxruntime>=1.20
-PyOpenGL>=3.1.0
+# Vanilla PyPI PyOpenGL's raw OSMesa bindings omit OSMesaCreateContextAttribs
+# outright (an ImportError from OpenGL.osmesa itself, not a system-lib gap) --
+# pyrender's own install docs point at this fork to fix OSMesa offscreen
+# rendering headless (see mesh_render_novel_view_strategy.py).
+PyOpenGL @ git+https://github.com/mmatl/pyopengl.git
 pyrender>=0.1.45
 geocalib @ git+https://github.com/cvg/GeoCalib.git

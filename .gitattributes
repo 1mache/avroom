@@ -1,0 +1,7 @@
+# Files that are executed inside a Linux container must keep LF endings even
+# when checked out on Windows. A shell script with CRLF fails at startup with
+# `bad interpreter: /usr/bin/env sh^M: no such file or directory`, which is a
+# confusing way to discover a line-ending problem.
+*.sh text eol=lf
+Dockerfile text eol=lf
+docker-entrypoint.sh text eol=lf

@@ -23,6 +23,7 @@ import type {
   BatchRequest,
   BatchResponse,
 } from "../types/api";
+import { authedFetch, withAuthParam } from "./authToken";
 
 export const API_BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "http://127.0.0.1:8000";
@@ -37,7 +38,7 @@ async function fetchWithTimeout(
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(input, { ...init, signal: controller.signal });
+    return await authedFetch(input, { ...init, signal: controller.signal });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       throw new ApiError(0, "Request timed out — is the image service running?");
@@ -92,7 +93,7 @@ async function throwApiError(response: Response): Promise<never> {
 
 // Central JSON error mapping so screens can treat backend error bodies as
 // typed ApiErrors instead of generic network failures.
-async function handleJsonResponse<T>(response: Response): Promise<T> {
+export async function handleJsonResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     return throwApiError(response);
   }
@@ -104,7 +105,7 @@ export async function uploadImage(file: File): Promise<ImageUploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${API_BASE_URL}/images/upload`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/upload`, {
     method: "POST",
     body: formData,
   });
@@ -116,7 +117,7 @@ export async function uploadImage(file: File): Promise<ImageUploadResponse> {
 // backend no longer blocks the request on the model run. Callers await
 // completion via waitForJobDone, then fetch the GLB via fetchCached3DModel.
 export async function submitGenerate3D(uid: string, objectId: number): Promise<string> {
-  const response = await fetch(`${API_BASE_URL}/3d/test-3d`, {
+  const response = await authedFetch(`${API_BASE_URL}/3d/test-3d`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -146,7 +147,8 @@ export const PREVIEW_API_READY = true;
  */
 export function sessionPreviewUrl(uid: string, lastChanged: string | null): string {
   const bust = lastChanged ? `?t=${encodeURIComponent(lastChanged)}` : "";
-  return `${API_BASE_URL}/images/${uid}/preview${bust}`;
+  // <img> can't send an Authorization header, so the token rides the URL here.
+  return withAuthParam(`${API_BASE_URL}/images/${uid}/preview${bust}`);
 }
 
 /**
@@ -158,7 +160,7 @@ export async function saveSessionPreview(uid: string, imageB64: string): Promise
     return;
   }
 
-  const response = await fetch(`${API_BASE_URL}/images/${uid}/preview`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/${uid}/preview`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -172,7 +174,7 @@ export async function saveSessionPreview(uid: string, imageB64: string): Promise
 }
 
 export async function setSessionName(uid: string, name: string): Promise<SessionInfo> {
-  const response = await fetch(`${API_BASE_URL}/images/${uid}/name`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/${uid}/name`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -184,12 +186,12 @@ export async function setSessionName(uid: string, name: string): Promise<Session
 }
 
 export async function getUidCacheStatus(uid: string): Promise<UidCacheStatusResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/${uid}/cache`);
+  const response = await authedFetch(`${API_BASE_URL}/images/${uid}/cache`);
   return handleJsonResponse<UidCacheStatusResponse>(response);
 }
 
 export async function undoSessionBackground(uid: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/images/${uid}/history/undo`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/${uid}/history/undo`, {
     method: "POST",
   });
   if (!response.ok) {
@@ -198,7 +200,7 @@ export async function undoSessionBackground(uid: string): Promise<void> {
 }
 
 export async function redoSessionBackground(uid: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/images/${uid}/history/redo`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/${uid}/history/redo`, {
     method: "POST",
   });
   if (!response.ok) {
@@ -207,7 +209,7 @@ export async function redoSessionBackground(uid: string): Promise<void> {
 }
 
 export async function warmSessionMaps(uid: string): Promise<WarmSessionMapsResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/${uid}/warm-maps`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/${uid}/warm-maps`, {
     method: "POST",
   });
   return handleJsonResponse<WarmSessionMapsResponse>(response);
@@ -217,7 +219,7 @@ export async function warmSessionMaps(uid: string): Promise<WarmSessionMapsRespo
 // (mask candidates) shows up later in the session's jobs list (see
 // syncCheckSession) once the dispatcher finishes it.
 export async function segmentImage(payload: SegmentRequest): Promise<JobSubmitResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/segment`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/segment`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -230,7 +232,7 @@ export async function segmentImage(payload: SegmentRequest): Promise<JobSubmitRe
 
 // Queues inpainting and returns its job id immediately (202).
 export async function inpaintMask(payload: SubmitInpaintRequest): Promise<JobSubmitResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/inpaint`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/inpaint`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -243,7 +245,7 @@ export async function inpaintMask(payload: SubmitInpaintRequest): Promise<JobSub
 
 // Queues erase inpainting and returns the first job id immediately (202).
 export async function eraseMask(payload: SubmitEraseRequest): Promise<JobSubmitResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/erase`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/erase`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -262,13 +264,13 @@ export async function getActiveJobs(): Promise<JobInfo[]> {
 }
 
 export async function getJob(jobId: string): Promise<JobDetailResponse> {
-  const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`);
+  const response = await authedFetch(`${API_BASE_URL}/jobs/${jobId}`);
   return handleJsonResponse<JobDetailResponse>(response);
 }
 
 /** Dismiss a failed/conflict job, or discard an unconsumed segment result. */
 export async function deleteJob(jobId: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/jobs/${jobId}`, { method: "DELETE" });
+  const response = await authedFetch(`${API_BASE_URL}/jobs/${jobId}`, { method: "DELETE" });
   if (!response.ok) {
     return throwApiError(response);
   }
@@ -318,7 +320,7 @@ export async function waitForJobDone(jobId: string): Promise<void> {
 }
 
 export async function deleteSession(uid: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/images/${uid}`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/${uid}`, {
     method: "DELETE",
   });
 
@@ -329,7 +331,7 @@ export async function deleteSession(uid: string): Promise<void> {
 
 // 404 means "model not generated yet", not an exceptional transport failure.
 export async function fetchCached3DModel(uid: string, objectId: number): Promise<ArrayBuffer | null> {
-  const response = await fetch(`${API_BASE_URL}/3d/${uid}/${objectId}`);
+  const response = await authedFetch(`${API_BASE_URL}/3d/${uid}/${objectId}`);
   if (response.status === 404) return null;
   if (!response.ok) {
     return throwApiError(response);
@@ -338,7 +340,7 @@ export async function fetchCached3DModel(uid: string, objectId: number): Promise
 }
 
 export async function getSessionObjects(uid: string): Promise<ObjectListResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/${uid}/objects`);
+  const response = await authedFetch(`${API_BASE_URL}/images/${uid}/objects`);
   return handleJsonResponse<ObjectListResponse>(response);
 }
 
@@ -346,7 +348,7 @@ export async function setObjectName(
   objectUuid: string,
   name: string | null,
 ): Promise<ObjectMetadataResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -365,7 +367,7 @@ export async function setObjectName(
 export async function resetObjectTransform(
   objectUuid: string,
 ): Promise<ObjectMetadataResponse> {
-  const response = await fetch(
+  const response = await authedFetch(
     `${API_BASE_URL}/images/objects/${objectUuid}/reset-transform`,
     {
       method: "POST",
@@ -380,7 +382,7 @@ export async function setObjectOffset(
   offsetX: number,
   offsetY: number,
 ): Promise<ObjectMetadataResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -398,7 +400,7 @@ export async function setObjectDisplayScale(
   objectUuid: string,
   displayScale: number,
 ): Promise<ObjectMetadataResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
     method: "PATCH",
     headers: {
       "Content-Type": "application/json",
@@ -416,7 +418,7 @@ export async function smartPasteObject(
   x: number,
   y: number,
 ): Promise<SmartPasteResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}/smart-paste`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/objects/${objectUuid}/smart-paste`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -428,7 +430,7 @@ export async function smartPasteObject(
 }
 
 export async function runSessionBatch(uid: string, payload: BatchRequest): Promise<BatchResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/${uid}/batch`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/${uid}/batch`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -439,7 +441,7 @@ export async function runSessionBatch(uid: string, payload: BatchRequest): Promi
 }
 
 export async function duplicateObject(objectUuid: string): Promise<DuplicateObjectResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}/duplicate`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/objects/${objectUuid}/duplicate`, {
     method: "POST",
   });
 
@@ -450,7 +452,7 @@ export async function importObjectCutout(uid: string, file: File): Promise<Impor
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${API_BASE_URL}/images/${uid}/objects/import`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/${uid}/objects/import`, {
     method: "POST",
     body: formData,
   });
@@ -464,7 +466,7 @@ export async function importObjectCutout(uid: string, file: File): Promise<Impor
  * inpainted hole -- this never restores the object's original pixels.
  */
 export async function deleteObject(objectUuid: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
     method: "DELETE",
   });
 
@@ -475,7 +477,7 @@ export async function deleteObject(objectUuid: string): Promise<void> {
 
 /** Removes this object's cached GLB only; cutout and metadata stay intact. */
 export async function deleteObject3d(objectUuid: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/images/objects/${objectUuid}/3d`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/objects/${objectUuid}/3d`, {
     method: "DELETE",
   });
 
@@ -491,7 +493,7 @@ export async function syncCheckSession(
   uid: string,
   clientLastChanged: string | null,
 ): Promise<SessionSyncCheckResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/${uid}/sync-check`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/${uid}/sync-check`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -503,7 +505,7 @@ export async function syncCheckSession(
 }
 
 export async function synthesizeNovelView(payload: NovelViewRequest): Promise<NovelViewResponse> {
-  const response = await fetch(`${API_BASE_URL}/images/novel-view`, {
+  const response = await authedFetch(`${API_BASE_URL}/images/novel-view`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

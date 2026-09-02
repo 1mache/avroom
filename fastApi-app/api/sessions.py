@@ -25,6 +25,7 @@ from core.image_processing import (
     split_mask_components,
 )
 from core.auth.identity import current_user_id
+from core.auth.ownership import require_session_owner
 from core.inference_pool.client import get_inference_client
 from core.inference_pool.session_runtime import SessionConflictError, acquire_canvas_writer, release_canvas_writer
 from core.mask_cache import delete_candidates, save_refined_mask_only
@@ -71,17 +72,17 @@ from core.session_history import (
 )
 from settings import get_3d_storage_dir, get_image_storage_dir
 
-router = APIRouter(prefix="/images", tags=["images"])
+router = APIRouter(prefix="/images", tags=["images"], dependencies=[Depends(require_session_owner)])
 logger = logging.getLogger(__name__)
 
 
 @router.get("/sessions")
-async def get_sessions() -> list[SessionInfo]:
-    """Return all image UIDs registered via upload, with optional human-readable names."""
-    logger.info("Sessions list requested")
+async def get_sessions(user_id: str = Depends(current_user_id)) -> list[SessionInfo]:
+    """Return the caller's image UIDs registered via upload, with optional human-readable names."""
+    logger.info("Sessions list requested: user_id=%s", user_id)
     result = [
         SessionInfo(uid=uid, name=name, last_changed=last_changed)
-        for uid, name, last_changed in list_sessions_with_names()
+        for uid, name, last_changed in list_sessions_with_names(user_id)
     ]
     logger.info("Sessions list returned: count=%d", len(result))
     return result

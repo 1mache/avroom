@@ -68,7 +68,16 @@ def _load_tsr_model(
         raise RuntimeError(
             "TripoSR local inference requires PyTorch, vendored ``tsr``, "
             "``torchmcubes``, ``omegaconf``, and ``einops``. "
-            "Install TestModules dependencies (see requirements.txt)."
+            "Install TestModules dependencies (see requirements.txt).\n"
+            "\n"
+            "NOTE: ``torchmcubes`` is intentionally absent from this package's "
+            "dependencies, so this is the expected error in the deployed "
+            "container rather than a broken install. It needs a full CUDA "
+            "toolkit to compile, which the slim runtime image does not carry "
+            "(see the NOTE in TestModules/pyproject.toml). TripoSR is the "
+            "fallback backend; the primary Hunyuan3D Space path is unaffected. "
+            "To restore it here:\n"
+            '    pip install "torchmcubes @ git+https://github.com/tatsy/torchmcubes.git"'
         ) from exc
 
     logger.info(

@@ -7,12 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 
 from core.auth.identity import current_user_id
+from core.auth.ownership import require_session_owner
 from core.object_storage import resolve_object_cutout_path, resolve_object_glb_path
 from core.repositories.job_repo import create_job
 from schemas.jobs import Generate3DJobRequest, JobSubmitResponse
 from settings import get_3d_storage_dir, get_image_storage_dir
 
-router = APIRouter(prefix="/3d", tags=["3d"])
+router = APIRouter(prefix="/3d", tags=["3d"], dependencies=[Depends(require_session_owner)])
 logger = logging.getLogger(__name__)
 
 _DEBUG_MODE = False

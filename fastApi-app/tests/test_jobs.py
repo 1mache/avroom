@@ -180,19 +180,10 @@ def test_dispatch_classifies_other_exceptions_as_failed(monkeypatch: pytest.Monk
     assert "bad input" in (result.error or "")
 
 
-def test_list_active_jobs_excludes_done_and_other_users() -> None:
-    user_id = _make_user_and_session()
-    other_user_id = "00000000-0000-0000-0000-000000000099"
-    from db.models import SessionRow, User
-    from db.session import session_scope
+def test_list_active_jobs_excludes_done_and_other_users(other_users_session: str) -> None:
+    from conftest import OTHER_USER_ID
 
-    with session_scope() as db:
-        db.add(User(id=other_user_id, email="other@example.com", is_active=True))
-    session_repo.register_uid("sess-other")  # owned by local user by default; reassign below
-    with session_scope() as db:
-        row = db.get(SessionRow, "sess-other")
-        assert row is not None
-        row.user_id = other_user_id
+    user_id = _make_user_and_session()
 
     my_failed = create_job(user_id, "sess-1", "inpaint", {"mask_id": "0"})
     fail_job(my_failed.id, "failed", "boom")
@@ -200,7 +191,7 @@ def test_list_active_jobs_excludes_done_and_other_users() -> None:
     my_done_segment = create_job(user_id, "sess-1", "segment", {"x": 0, "y": 0})
     finish_job(my_done_segment.id, {"mask_ids": ["0"]})
 
-    someone_elses = create_job(other_user_id, "sess-other", "segment", {"x": 0, "y": 0})
+    someone_elses = create_job(OTHER_USER_ID, other_users_session, "segment", {"x": 0, "y": 0})
 
     active_ids = {j.job_id for j in list_active_jobs(user_id)}
     assert active_ids == {my_failed.id}

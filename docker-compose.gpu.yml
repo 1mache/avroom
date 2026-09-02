@@ -1,0 +1,23 @@
+# GPU-only addition, layered on top of docker-compose.deploy.yml (see that
+# file for everything else true of a deployed server):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.deploy.yml \
+#     -f docker-compose.gpu.yml --profile full up -d --build
+#
+# Split out on its own so a CPU-only deploy (docker-compose.deploy.yml alone)
+# doesn't carry a GPU reservation, which fails the container outright on a
+# host with no NVIDIA runtime.
+
+services:
+  api:
+    # Hand the container the host's GPU via the NVIDIA Container Toolkit,
+    # preinstalled on the Deep Learning AMI. Without this, torch silently
+    # falls back to CPU and inference is ~50x slower - verify after deploy
+    # with the torch.cuda.is_available() check in the runbook.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

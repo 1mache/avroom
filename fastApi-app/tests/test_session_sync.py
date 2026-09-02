@@ -35,6 +35,7 @@ def _register_session(uid: str) -> None:
 
 def test_touch_session_writes_and_updates_timestamp(storage_sandbox: Path) -> None:
     uid = "session-a"
+    _register_session(uid)
     first = session_repo.touch_session(uid)
     second = session_repo.touch_session(uid)
 
@@ -46,6 +47,7 @@ def test_touch_session_writes_and_updates_timestamp(storage_sandbox: Path) -> No
 
 def test_clear_session_last_changed_removes_entry(storage_sandbox: Path) -> None:
     uid = "session-b"
+    _register_session(uid)
     session_repo.touch_session(uid)
     session_repo.clear_session_last_changed(uid)
 

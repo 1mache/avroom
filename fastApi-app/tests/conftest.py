@@ -73,3 +73,35 @@ def _clean_database() -> Iterator[None]:
     with engine.begin() as conn:
         conn.execute(text("TRUNCATE TABLE objects, sessions, users RESTART IDENTITY CASCADE"))
     yield
+
+
+OTHER_USER_ID = "00000000-0000-0000-0000-000000000099"
+
+
+@pytest.fixture
+def other_users_session() -> str:
+    """Create a second user plus a session they own; return the session's uid.
+
+    The shared fixture for every "not my session" ownership test: a request
+    authenticated as the default local user must 404 against this uid exactly
+    like an unknown one.
+    """
+    from db.models import SessionRow, User
+    from db.session import session_scope
+
+    uid = "sess-not-yours"
+    with session_scope() as db:
+        db.add(User(id=OTHER_USER_ID, email="other@example.com", is_active=True))
+        db.add(SessionRow(id=uid, user_id=OTHER_USER_ID, name=None, last_changed=None))
+    return uid
+
+
+@pytest.fixture
+def jwt_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Switch AUTH_MODE to jwt for one test, with a throwaway signing secret.
+
+    Safe because `settings.get_auth_mode()`/`get_jwt_secret()` read
+    `os.environ` fresh on every call -- nothing to un-cache on teardown.
+    """
+    monkeypatch.setenv("AUTH_MODE", "jwt")
+    monkeypatch.setenv("JWT_SECRET", "test-secret-not-for-production")

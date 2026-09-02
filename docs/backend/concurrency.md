@@ -8,7 +8,7 @@ The FastAPI service coordinates same-session segment and inpaint work in the **A
 
 Module: [`core/repositories/job_repo.py`](../../fastApi-app/core/repositories/job_repo.py) (Postgres-backed, `jobs` table), [`core/jobs/handlers.py`](../../fastApi-app/core/jobs/handlers.py) (the actual work, one function per kind — the former route bodies), [`core/jobs/dispatcher.py`](../../fastApi-app/core/jobs/dispatcher.py) (drains the queue).
 
-- **Submit**: `create_job(user_id, session_id, kind, payload)` inserts a `queued` row and returns immediately. `user_id` comes from `core/auth/identity.py::current_user_id()` — the one seam a future `AUTH_MODE=jwt` will change — and is the routing key that lets multiple users share one queue without cross-talk.
+- **Submit**: `create_job(user_id, session_id, kind, payload)` inserts a `queued` row and returns immediately. `user_id` comes from `core/auth/identity.py::current_user_id()` — the seam that branches on `AUTH_MODE` (`single_user` vs `jwt`, see CLAUDE.md's "Session Ownership & Login") — and is the routing key that lets multiple users share one queue without cross-talk.
 - **Claim**: `claim_next_job()` is one `SELECT ... FOR UPDATE SKIP LOCKED ORDER BY created_at LIMIT 1` followed by an update to `running`. This is plain FIFO across every user and session, and the `SKIP LOCKED` is what lets `max(1, INFERENCE_WORKERS)` dispatcher threads (or, in the future, multiple API instances) claim rows concurrently without ever double-claiming — the database does the serialization, not an application lock.
 - **Run**: the claimed job dispatches to `run_segment_job` / `run_inpaint_job` / `run_erase_job` / `run_generate_3d_job`, each of which does exactly what the corresponding route used to do inline, including the canvas-writer/lease sandwich described below.
 - **Finish**: a successful `inpaint`/`erase`/`generate_3d` job **deletes its own row** — the `ObjectRow` / GLB file (or, for erase, the updated `{uid}_background.png`) *is* the durable result, so keeping a `done` row would just duplicate truth. A successful `segment` job is marked `done` with `result = {"mask_ids": [...]}` and stays until the frontend consumes it (an inpaint submitted with `from_job_id` set) or dismisses it (`DELETE /jobs/{job_id}`).
@@ -154,7 +154,8 @@ Segment does **not** acquire the canvas writer. It may read a pre-commit canvas 
 | [`core/repositories/job_repo.py`](../../fastApi-app/core/repositories/job_repo.py) | The `jobs` table: create/claim/finish/fail/delete, `reserved_mask_ids`, startup orphan sweep |
 | [`core/jobs/handlers.py`](../../fastApi-app/core/jobs/handlers.py) | Per-kind job bodies (former route bodies) |
 | [`core/jobs/dispatcher.py`](../../fastApi-app/core/jobs/dispatcher.py) | Claim loop, `max(1, INFERENCE_WORKERS)` threads, status classification |
-| [`core/auth/identity.py`](../../fastApi-app/core/auth/identity.py) | `current_user_id()` — the routing key and the one seam for future JWT auth |
+| [`core/auth/identity.py`](../../fastApi-app/core/auth/identity.py) | `current_user_id()` — the routing key; branches on `AUTH_MODE` (single_user / jwt) |
+| [`core/auth/ownership.py`](../../fastApi-app/core/auth/ownership.py) | `require_session_owner` — router-level guard, 404 on a session/object owned by someone else |
 | [`core/inference_pool/session_runtime.py`](../../fastApi-app/core/inference_pool/session_runtime.py) | Canvas writer, region leases, overlap checks |
 | [`core/inference_pool/session_lock.py`](../../fastApi-app/core/inference_pool/session_lock.py) | Thin wrapper around canvas writer for tests |
 | [`core/mask_cache.py`](../../fastApi-app/core/mask_cache.py) | Per-mask delete, exclude pins on wipe |

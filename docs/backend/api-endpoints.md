@@ -1,10 +1,12 @@
 # API Endpoints
 
-Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py). 3D routes live in [`fastApi-app/api/model_3d.py`](../../fastApi-app/api/model_3d.py). Novel-view (rotation) routes live in [`fastApi-app/api/novel_view.py`](../../fastApi-app/api/novel_view.py). Debug/inspection routes live in [`fastApi-app/api/debug_vision.py`](../../fastApi-app/api/debug_vision.py) — see [Debug endpoints](#debug-endpoints).
+Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.py). 3D routes live in [`fastApi-app/api/model_3d.py`](../../fastApi-app/api/model_3d.py). Novel-view (rotation) routes live in [`fastApi-app/api/novel_view.py`](../../fastApi-app/api/novel_view.py). Debug/inspection routes live in [`fastApi-app/api/debug_vision.py`](../../fastApi-app/api/debug_vision.py) — see [Debug endpoints](#debug-endpoints). Auth routes live in [`fastApi-app/api/auth.py`](../../fastApi-app/api/auth.py) — see [Auth endpoints](#auth-endpoints).
+
+**Ownership**: every route below that resolves a session (`uid`, or `object_uuid` via its owning session) is guarded by `core/auth/ownership.py::require_session_owner`, attached at the `APIRouter(...)` level of `api/routes.py`, `api/sessions.py`, `api/object_views.py`, `api/novel_view.py`, and `api/model_3d.py`. A uid/uuid that exists but belongs to a different caller 404s with the exact same message an unknown uid/uuid would — never 403, so a response never confirms something exists that isn't yours. In `AUTH_MODE=single_user` (default) this is a no-op, since the one fixed local user owns everything.
 
 | Method | Path | Request | Response |
 |---|---|---|---|
-| `GET` | `/images/sessions` | none | `list[SessionInfo]` |
+| `GET` | `/images/sessions` | none | `list[SessionInfo]` (only the caller's sessions) |
 | `POST` | `/images/upload` | multipart file | `ImageUploadResponse` (422 on failed technical or content validation) |
 | `POST` | `/images/segment` | `SegmentRequest` | `SegmentResponse` |
 | `POST` | `/images/inpaint` | `InpaintMaskRequest` | `InpaintMaskResponse` |
@@ -39,6 +41,9 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `POST` | `/debug/sam-everything` | multipart `file` + query params | PNG bytes |
 | `POST` | `/debug/auto-mask-pick` | multipart `file` + `x` `y` query | `DebugAutoMaskPickResponse` |
 | `POST` | `/debug/inpaint-verify` | multipart `file` + `x` `y` `mask_index` query | `DebugInpaintVerifyResponse` |
+| `POST` | `/auth/signup` | `SignupRequest` | `TokenResponse` (201) |
+| `POST` | `/auth/login` | `LoginRequest` | `TokenResponse` |
+| `GET` | `/auth/me` | Bearer token | `MeResponse` |
 
 ## `POST /images/upload`
 
@@ -129,7 +134,7 @@ Orchestrator: [`fastApi-app/core/batch_jobs.py`](../../fastApi-app/core/batch_jo
 
 Returns all processed objects for a session as `ObjectListResponse`. For each object id found on disk, the endpoint reads the cutout PNG, base64-encodes it, derives `cutout_bounds`, loads metadata (uuid, name, `average_depth`) when present, and checks whether a GLB model exists.
 
-Missing individual cutouts are skipped with a WARNING log — the response is still 200 with the remaining objects. An unknown `uid` returns 200 with an empty `objects` list (same behavior as `/images/{uid}/cache`).
+Missing individual cutouts are skipped with a WARNING log — the response is still 200 with the remaining objects. An unknown or not-yours `uid` returns **404** (the ownership guard — see the note at the top of this document); this replaced an earlier 200-with-empty-list behavior.
 
 ## `GET /images/objects/{object_uuid}`
 
@@ -419,3 +424,23 @@ Runs `ObjectSegmentor` at query `x`,`y` (natural-image pixels) then `select_best
 ### `POST /debug/inpaint-verify`
 
 Same click segmentation as auto-mask-pick, then hybrid inpaint on `mask_index` (optional; defaults to CLIP winner). Returns LaMa PNG, per-retry candidate + CLIP crop, CLIP scores, SD params sent, verifier `param_fixes_json`, and the final sharpened image. `422` if the click is out of bounds, `mask_index` is out of range, or there is no viable mask when `mask_index` is omitted.
+
+## Auth endpoints
+
+Router: [`fastApi-app/api/auth.py`](../../fastApi-app/api/auth.py), prefix `/auth`. Not session-scoped, so none of these carry the ownership guard — `/login`/`/signup` must work with no token at all. Only relevant when `AUTH_MODE=jwt`; in the default `single_user` mode these routes still exist and issue real tokens, but every other route ignores them and resolves the one fixed local user regardless.
+
+### `POST /auth/signup`
+
+Creates a `User` row (`bcrypt`-hashed password via `core/auth/jwt_backend.py::hash_password`) and returns an immediately usable token. `409` if the email is already registered (the DB's unique index on `users.email` is the source of truth — no pre-`SELECT`). `422` if the password is outside 8–72 bytes (72 is bcrypt's hard limit — see the module docstring).
+
+### `POST /auth/login`
+
+Verifies email + password and returns a token. One failure path — `401 "Invalid email or password"` — covers an unknown email, a wrong password, and a deactivated (`is_active=False`) account identically, so the response never confirms whether an email is registered.
+
+### `GET /auth/me`
+
+Returns the caller's own `user_id` and `email`, resolved from the bearer token via `core/auth/identity.py::current_user_id`. The simplest proof a token round-trips; used by `tests/test_auth_jwt.py`.
+
+### Token format
+
+`POST /3d/test-3d`, and every session-scoped route, expect `Authorization: Bearer <token>` when `AUTH_MODE=jwt`. Tokens are HS256 JWTs signed with `JWT_SECRET` (env-required in `jwt` mode — the app refuses to boot without it, see `main.py`'s `lifespan`), `sub` = user id, expiring after `JWT_EXPIRE_MINUTES` (default 7 days). A missing/invalid/expired token is **401** with a `WWW-Authenticate: Bearer` header; a valid token against someone else's session is **404** (ownership guard, not 401/403 — see the note at the top of this document).

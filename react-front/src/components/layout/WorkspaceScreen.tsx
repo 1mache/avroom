@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { withAuthParam } from "../../api/authToken";
 import {
   API_BASE_URL,
   ApiError,
@@ -302,7 +303,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
   useEffect(() => {
     let cancelled = false;
-    setOriginalSrc(`${API_BASE_URL}/images/${uid}/original`);
+    setOriginalSrc(withAuthParam(`${API_BASE_URL}/images/${uid}/original`));
     startMapsWarm();
 
     const load = async () => {
@@ -316,7 +317,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         setCanRedo(status.can_redo);
 
         if (status.has_background) {
-          jobs.setBackgroundSrc(`${API_BASE_URL}/images/${uid}/background`);
+          jobs.setBackgroundSrc(withAuthParam(`${API_BASE_URL}/images/${uid}/background`));
         }
 
         if (status.has_cutout) {

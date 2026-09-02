@@ -56,6 +56,8 @@ export interface ToolbarProps {
   onToggleScaleByPov: () => void;
   smartRotate: boolean;
   onToggleSmartRotate: () => void;
+  autoGenerate3d: boolean;
+  onToggleAutoGenerate3d: () => void;
   isDeleting: boolean;
   onDeleteObject: () => void;
   canUndo: boolean;
@@ -108,6 +110,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onToggleScaleByPov,
   smartRotate,
   onToggleSmartRotate,
+  autoGenerate3d,
+  onToggleAutoGenerate3d,
   isDeleting,
   onDeleteObject,
   canUndo,
@@ -374,8 +378,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         <button
           type="button"
           className={`tool-btn${settingsOpen ? " is-armed" : ""}`}
-          data-tip="Smart paste settings"
-          aria-label="Smart paste settings"
+          data-tip="Options"
+          aria-label="Options"
           aria-expanded={settingsOpen}
           aria-haspopup="dialog"
           onClick={() => setSettingsOpen((open) => !open)}
@@ -387,34 +391,51 @@ export const Toolbar: React.FC<ToolbarProps> = ({
           <div
             className="toolbar-settings-popover"
             role="dialog"
-            aria-label="Smart paste settings"
+            aria-label="Options"
             onClick={(event) => event.stopPropagation()}
           >
-            <p className="toolbar-settings-title">Smart paste</p>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={scaleByPov}
-              className={`toolbar-settings-row tool-switch${scaleByPov ? " is-on" : ""}`}
-              onClick={onToggleScaleByPov}
-            >
-              <span className="toolbar-settings-label">Scale by POV</span>
-              <span className="tool-switch-track">
-                <span className="tool-switch-nub" />
-              </span>
-            </button>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={smartRotate}
-              className={`toolbar-settings-row tool-switch${smartRotate ? " is-on" : ""}`}
-              onClick={onToggleSmartRotate}
-            >
-              <span className="toolbar-settings-label">Smart rotate</span>
-              <span className="tool-switch-track">
-                <span className="tool-switch-nub" />
-              </span>
-            </button>
+            <div className="toolbar-settings-section">
+              <p className="toolbar-settings-title">Object removal</p>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={autoGenerate3d}
+                className={`toolbar-settings-row tool-switch${autoGenerate3d ? " is-on" : ""}`}
+                onClick={onToggleAutoGenerate3d}
+              >
+                <span className="toolbar-settings-label">Auto 3D</span>
+                <span className="tool-switch-track">
+                  <span className="tool-switch-nub" />
+                </span>
+              </button>
+            </div>
+            <div className="toolbar-settings-section">
+              <p className="toolbar-settings-title">Smart paste</p>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={scaleByPov}
+                className={`toolbar-settings-row tool-switch${scaleByPov ? " is-on" : ""}`}
+                onClick={onToggleScaleByPov}
+              >
+                <span className="toolbar-settings-label">Scale by POV</span>
+                <span className="tool-switch-track">
+                  <span className="tool-switch-nub" />
+                </span>
+              </button>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={smartRotate}
+                className={`toolbar-settings-row tool-switch${smartRotate ? " is-on" : ""}`}
+                onClick={onToggleSmartRotate}
+              >
+                <span className="toolbar-settings-label">Smart rotate</span>
+                <span className="tool-switch-track">
+                  <span className="tool-switch-nub" />
+                </span>
+              </button>
+            </div>
           </div>
         ) : null}
       </div>

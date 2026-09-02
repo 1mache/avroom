@@ -31,7 +31,7 @@ from core.object_3d import ensure_object_glb
 from core.object_metadata import next_object_id, save_object_metadata
 from core.object_storage import object_cutout_path, resolve_object_cutout_path
 from core.session_history import commit_background
-from core.repositories.job_repo import JobRecord, reserved_mask_ids
+from core.repositories.job_repo import JobRecord, create_job, reserved_mask_ids
 from core.repositories.session_repo import touch_session
 from schemas.image import ImageProcessingOptions
 from settings import get_image_storage_dir
@@ -131,6 +131,22 @@ def run_inpaint_job(job: JobRecord) -> None:
         if lease is not None:
             drop_lease(job.session_id, lease)
         release_canvas_writer(job.session_id)
+
+    if job.payload.get("generate_3d"):
+        try:
+            create_job(job.user_id, job.session_id, "generate_3d", {"object_id": object_id})
+            logger.info(
+                "Auto 3D queued after inpaint: job_id=%s session_id=%s object_id=%d",
+                job.id,
+                job.session_id,
+                object_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to enqueue generate_3d after inpaint: job_id=%s object_id=%d",
+                job.id,
+                object_id,
+            )
 
     logger.info(
         "Inpaint job complete: job_id=%s session_id=%s object_id=%d object_uuid=%s",

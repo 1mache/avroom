@@ -142,6 +142,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const [smartPaste, setSmartPaste] = useState(false);
   const [scaleByPov, setScaleByPov] = useState(true);
   const [smartRotate, setSmartRotate] = useState(true);
+  const [autoGenerate3d, setAutoGenerate3d] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [historyBusy, setHistoryBusy] = useState(false);
@@ -220,6 +221,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     onError: handleJobError,
     onMutated: handleMutated,
     onConflict: handleJobConflict,
+    autoGenerate3d,
   });
 
   const sync = useSessionSync({
@@ -1293,6 +1295,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         onToggleScaleByPov={handleToggleScaleByPov}
         smartRotate={smartRotate}
         onToggleSmartRotate={handleToggleSmartRotate}
+        autoGenerate3d={autoGenerate3d}
+        onToggleAutoGenerate3d={() => setAutoGenerate3d((on) => !on)}
         isDeleting={jobs.isDeleting}
         onDeleteObject={handleDeleteObject}
         canUndo={canUndo}

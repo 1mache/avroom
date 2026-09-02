@@ -271,6 +271,66 @@ def test_inpaint_job_success_deletes_row_and_creates_object(
     assert cutout_out_path.read_bytes() == b"fake-cutout"
 
 
+def test_inpaint_job_with_generate_3d_enqueues_follow_up(
+    storage_sandbox: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core.jobs.handlers import run_inpaint_job
+
+    user_id = _make_user_and_session()
+    _write_fake_candidate(storage_sandbox, "sess-1", "0")
+
+    class _FakeClient:
+        def run_inpaint(self, *, image_id: str, mask_id: str, base_dir: Path) -> tuple[bytes, bytes, str]:
+            return b"fake-bg", b"fake-cutout", "png"
+
+    fake_metadata = create_object_metadata(
+        session_id="sess-1", object_id=0, average_depth=100.0, content_hash="abc123"
+    )
+
+    monkeypatch.setattr("core.jobs.handlers.get_inference_client", lambda: _FakeClient())
+    monkeypatch.setattr("core.jobs.handlers.build_object_metadata_for_inpaint", lambda **kwargs: fake_metadata)
+
+    job = create_job(user_id, "sess-1", "inpaint", {"mask_id": "0", "generate_3d": True})
+    claimed = claim_next_job()
+    assert claimed is not None
+
+    run_inpaint_job(claimed)
+
+    follow_ups = list_session_jobs(user_id, "sess-1")
+    assert len(follow_ups) == 1
+    assert follow_ups[0].kind == "generate_3d"
+    assert follow_ups[0].object_id == 0
+    assert follow_ups[0].status == "queued"
+
+
+def test_inpaint_job_without_generate_3d_skips_follow_up(
+    storage_sandbox: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core.jobs.handlers import run_inpaint_job
+
+    user_id = _make_user_and_session()
+    _write_fake_candidate(storage_sandbox, "sess-1", "0")
+
+    class _FakeClient:
+        def run_inpaint(self, *, image_id: str, mask_id: str, base_dir: Path) -> tuple[bytes, bytes, str]:
+            return b"fake-bg", b"fake-cutout", "png"
+
+    fake_metadata = create_object_metadata(
+        session_id="sess-1", object_id=0, average_depth=100.0, content_hash="abc123"
+    )
+
+    monkeypatch.setattr("core.jobs.handlers.get_inference_client", lambda: _FakeClient())
+    monkeypatch.setattr("core.jobs.handlers.build_object_metadata_for_inpaint", lambda **kwargs: fake_metadata)
+
+    job = create_job(user_id, "sess-1", "inpaint", {"mask_id": "0"})
+    claimed = claim_next_job()
+    assert claimed is not None
+
+    run_inpaint_job(claimed)
+
+    assert list_session_jobs(user_id, "sess-1") == []
+
+
 def test_run_segment_job_leases_every_seed(storage_sandbox: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from unittest.mock import MagicMock, patch
 

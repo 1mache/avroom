@@ -94,6 +94,8 @@ interface UseSessionJobsOptions {
    * overlapped an in-flight removal). Fired once per job; the job row is
    * then dismissed automatically since the caller has already been told. */
   onConflict?: (job: JobInfo) => void;
+  /** When true, queue 3D generation after each cut-out (inpaint or batch). */
+  autoGenerate3d?: boolean;
 }
 
 /**
@@ -107,7 +109,7 @@ interface UseSessionJobsOptions {
  * the next sync tick) picks it back up.
  */
 export function useSessionJobs(imageId: string | null, options: UseSessionJobsOptions) {
-  const { onError, onMutated, onConflict } = options;
+  const { onError, onMutated, onConflict, autoGenerate3d = false } = options;
 
   const [objects, setObjects] = useState<CutoutObject[]>([]);
   const [selectedObjectId, setSelectedObjectId] = useState<number | null>(null);
@@ -136,6 +138,11 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   useEffect(() => {
     jobsRef.current = jobs;
   }, [jobs]);
+
+  const autoGenerate3dRef = useRef(autoGenerate3d);
+  useEffect(() => {
+    autoGenerate3dRef.current = autoGenerate3d;
+  }, [autoGenerate3d]);
 
   useEffect(() => {
     segmentChoosingJobIdRef.current =
@@ -332,7 +339,13 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       batchingRef.current = true;
       setIsBatching(true);
       try {
-        await runSessionBatch(currentImageId, { source, verify: "auto" });
+        const then: BatchRequest["then"] =
+          source.kind === "objects"
+            ? ["generate_3d"]
+            : autoGenerate3dRef.current
+              ? ["inpaint", "generate_3d"]
+              : ["inpaint"];
+        await runSessionBatch(currentImageId, { source, verify: "auto", then });
         if (imageIdRef.current === currentImageId) {
           onMutated?.();
         }
@@ -448,7 +461,12 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         return;
       }
 
-      inpaintMask({ image_id: currentImageId, mask_id: maskId, from_job_id: jobId })
+      inpaintMask({
+        image_id: currentImageId,
+        mask_id: maskId,
+        from_job_id: jobId,
+        generate_3d: autoGenerate3dRef.current,
+      })
         .then(() => onMutated?.())
         .catch((err) => {
           if (imageIdRef.current === currentImageId) {

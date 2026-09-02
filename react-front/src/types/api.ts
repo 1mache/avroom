@@ -49,6 +49,7 @@ export interface SubmitInpaintRequest {
   image_id: string;
   mask_id: string;
   from_job_id?: string | null;
+  generate_3d?: boolean;
 }
 
 export interface SubmitEraseRequest {

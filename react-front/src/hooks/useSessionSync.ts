@@ -89,8 +89,9 @@ export function useSessionSync(options: UseSessionSyncOptions) {
           const cutoutAlphaBounds = toCutoutAlphaBounds(info.cutout_bounds);
 
           if (local) {
+            const beyondStage = info.beyond_stage ?? false;
             // Update server-owned fields; keep purely-local/transient ones
-            // (offset, hidden, glbData, normalizedClickPos) untouched.
+            // (offset, hidden, revealed, glbData, normalizedClickPos) untouched.
             return {
               ...local,
               uuid: info.uuid ?? local.uuid,
@@ -102,6 +103,8 @@ export function useSessionSync(options: UseSessionSyncOptions) {
                 info.source_elevation_deg ?? local.sourceElevationDeg,
               has3d: info.has_3d ?? local.has3d,
               cloneRootUuid: info.clone_root_uuid ?? local.cloneRootUuid,
+              beyondStage,
+              revealed: beyondStage ? local.revealed : false,
             };
           }
 
@@ -115,6 +118,8 @@ export function useSessionSync(options: UseSessionSyncOptions) {
             glbData: null,
             rotation: null,
             hidden: false,
+            beyondStage: info.beyond_stage ?? false,
+            revealed: false,
             offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
             displayScale: info.display_scale ?? 1,
             sourceElevationDeg: info.source_elevation_deg ?? 15,

@@ -179,7 +179,7 @@ def test_undo_redo_api_endpoints(storage_sandbox: Path) -> None:
     assert current_background_path(storage_sandbox, uid).read_bytes() == _png_bytes((2, 2, 2))
 
 
-def test_objects_list_hides_future_stage_objects(storage_sandbox: Path) -> None:
+def test_objects_list_marks_future_stage_objects_beyond_stage(storage_sandbox: Path) -> None:
     from fastapi.testclient import TestClient
 
     from main import app
@@ -198,24 +198,20 @@ def test_objects_list_hides_future_stage_objects(storage_sandbox: Path) -> None:
     save_object_metadata(meta)
     object_cutout_path(storage_sandbox, uid, 0).write_bytes(_png_bytes())
 
-    commit_background(uid, _png_bytes((2, 2, 2)), storage_sandbox)
     client = TestClient(app)
-    assert client.get(f"/images/{uid}/objects").json()["objects"]
+    assert client.get(f"/images/{uid}/objects").json()["objects"][0]["beyond_stage"] is False
 
     undo_background(uid, storage_sandbox)
     response = client.get(f"/images/{uid}/objects").json()
-    assert response["objects"] == []
+    assert len(response["objects"]) == 1
+    assert response["objects"][0]["beyond_stage"] is True
 
-    commit_background(uid, _png_bytes((1, 1, 1)), storage_sandbox)
-    cursor = get_history_flags(uid).history_cursor
-    meta = create_object_metadata(
-        session_id=uid,
-        object_id=0,
-        average_depth=1.0,
-        content_hash="hash-again",
-        stage_seq=cursor,
-    )
-    save_object_metadata(meta)
-    object_cutout_path(storage_sandbox, uid, 0).write_bytes(_png_bytes())
+    redo_background(uid, storage_sandbox)
     response = client.get(f"/images/{uid}/objects").json()
     assert len(response["objects"]) == 1
+    assert response["objects"][0]["beyond_stage"] is False
+
+    undo_background(uid, storage_sandbox)
+    commit_background(uid, _png_bytes((3, 3, 3)), storage_sandbox)
+    assert list_object_ids(uid, visible_only=False) == []
+    assert not object_cutout_path(storage_sandbox, uid, 0).exists()

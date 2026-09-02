@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 
 import { PREVIEW_API_READY, saveSessionPreview } from "../api/images";
-import { effectiveCutoutBounds, effectiveCutoutSrc, type CutoutObject } from "../types/session";
+import { effectiveCutoutBounds, effectiveCutoutSrc, isDrawnOnStage, type CutoutObject } from "../types/session";
 import { composeSessionPreview } from "../utils/preview";
 import type { Size } from "../utils/stageGeometry";
 
@@ -53,7 +53,7 @@ export function useDashboardPreview(uid: string, inputs: PreviewInputs) {
       }
 
       const layers = objects
-        .filter((obj) => !obj.hidden)
+        .filter(isDrawnOnStage)
         .map((obj) => ({
           src: effectiveCutoutSrc(obj, shown.has(obj.objectId)),
           offset: obj.offset,

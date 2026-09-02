@@ -117,6 +117,16 @@ class ObjectInfo(ObjectFields):
             description="UUID of the clone root when this object was duplicated from another.",
         ),
     ]
+    beyond_stage: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=(
+                "True when this object was created after the session's current "
+                "background history cursor (backtrack hides it on the stage)."
+            ),
+        ),
+    ]
 
 
 class ObjectListResponse(BaseModel):

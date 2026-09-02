@@ -51,6 +51,10 @@ export interface CutoutObject {
   // Per-object visibility toggle. Hidden objects render nothing and cannot be
   // selected/dragged; see ObjectPanel eye button.
   hidden: boolean;
+  /** Server flag: object was created after the current background history cursor. */
+  beyondStage: boolean;
+  /** Local override: show a beyond-stage cutout on the current (earlier) background. */
+  revealed: boolean;
   // Per-object drag offset, natural-image pixels. Every object stays composited
   // on the background simultaneously, so position can't live in shared state.
   offset: ClickPosition;
@@ -62,6 +66,13 @@ export interface CutoutObject {
   has3d: boolean;
   /** UUID of the clone root when this object was duplicated from another. */
   cloneRootUuid: string | null;
+}
+
+/** True when an object's cutout should be composited and hittable on the stage. */
+export function isDrawnOnStage(
+  obj: Pick<CutoutObject, "hidden" | "beyondStage" | "revealed">,
+): boolean {
+  return !obj.hidden && (!obj.beyondStage || obj.revealed);
 }
 
 /** True when *obj* has a non-default canvas transform or a rotation result. */

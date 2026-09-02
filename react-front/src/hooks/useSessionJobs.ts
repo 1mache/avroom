@@ -54,7 +54,13 @@ const upsertObject = (objects: CutoutObject[], next: CutoutObject): CutoutObject
   // Keep whatever local-only state the reconciled copy already accumulated
   // (drag offset, hidden flag, 3D model) rather than resetting it.
   const existing = objects[index];
-  const merged = { ...next, offset: existing.offset, hidden: existing.hidden, glbData: existing.glbData ?? next.glbData };
+  const merged = {
+    ...next,
+    offset: existing.offset,
+    hidden: existing.hidden,
+    revealed: next.beyondStage ? existing.revealed : false,
+    glbData: existing.glbData ?? next.glbData,
+  };
   return objects.map((o, i) => (i === index ? merged : o));
 };
 
@@ -303,6 +309,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       glbData: null,
       rotation: null,
       hidden: false,
+      beyondStage: info.beyond_stage ?? false,
+      revealed: false,
       offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
       sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
       displayScale: info.display_scale ?? 1,
@@ -533,6 +541,11 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         if (!target) {
           return prev;
         }
+        if (target.beyondStage) {
+          return prev.map((o) =>
+            o.objectId === objectId ? { ...o, revealed: !o.revealed } : o,
+          );
+        }
         const willBeHidden = !target.hidden;
         if (willBeHidden) {
           setSelectedObjectId((current) => (current === objectId ? null : current));
@@ -729,6 +742,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           glbData: source.glbData,
           rotation: null,
           hidden: false,
+          beyondStage: info.beyond_stage ?? false,
+          revealed: false,
           // Server-computed nudge (build_clone_metadata), not a raw copy of
           // source.offset -- the clone lands beside its source, not on it.
           offset: { x: info.offset_x ?? source.offset.x, y: info.offset_y ?? source.offset.y },
@@ -805,6 +820,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           glbData: null,
           rotation: null,
           hidden: false,
+          beyondStage: info.beyond_stage ?? false,
+          revealed: false,
           offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
           displayScale: info.display_scale ?? 1,
           sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,

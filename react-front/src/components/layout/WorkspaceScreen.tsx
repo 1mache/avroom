@@ -28,6 +28,7 @@ import {
   effectiveCutoutSrc,
   effectiveDisplayBounds,
   hasCloneSiblings,
+  isDrawnOnStage,
   type ClickPosition,
   type CutoutObject,
 } from "../../types/session";
@@ -961,7 +962,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
   // --- derived render values ---------------------------------------------
 
-  const visibleObjects = jobs.objects.filter((o) => !o.hidden);
+  const visibleObjects = jobs.objects.filter(isDrawnOnStage);
   // While the selected object's 3D model is shown, its 2D cutout is skipped so
   // the 3D frame replaces it rather than stacking on top of it.
   const stageObjects = visibleObjects.filter(

@@ -286,7 +286,7 @@ Behavior:
 2. Return **409** when nothing to undo/redo, when segment/inpaint/erase work is `queued`/`running` for this session, or when the canvas-writer lock times out.
 3. **Undo**: copy the live `{uid}_background.png` to `{uid}_bg_hist_{cursor}` (so redo can recover it), decrement `history_cursor`, then restore from `{uid}_bg_hist_{cursor}` or delete the live file when returning to the original upload (stage 0).
 4. **Redo**: mirror undo — stash live at current cursor, increment cursor, restore from the forward snapshot.
-5. Objects with `stage_seq > history_cursor` are omitted from `GET /images/{uid}/objects` (hidden, not deleted). A new background commit after undo dumps forward stages (snapshot files + object rows/artifacts).
+5. Objects with `stage_seq > history_cursor` stay in `GET /images/{uid}/objects` with `beyond_stage: true` (hidden on the stage, not deleted). A new background commit after undo dumps forward stages (snapshot files + object rows/artifacts).
 6. `touch_session` on success so the next `sync-check` reconciles background URL and object list.
 
 `GET /images/{uid}/cache` exposes `can_undo` / `can_redo` from the session's `history_min` / `history_cursor` / `history_head` columns. Up to four prior stages are retained (`BACKGROUND_HISTORY_LIMIT = 4` in `core/session_history.py`).

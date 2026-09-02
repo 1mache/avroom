@@ -3,6 +3,7 @@
 // placement) has to convert between three spaces: natural-image pixels, the
 // rendered (letterboxed) rect, and stage-local CSS pixels.
 import type { ClickPosition, CutoutAlphaBounds } from "../types/session";
+import { isDrawnOnStage } from "../types/session";
 
 export interface Size {
   width: number;
@@ -276,11 +277,13 @@ export const ALPHA_HIT_THRESHOLD = 10;
 // Objects render back-to-front in array order (later = on top), so hit-testing
 // must walk topmost-first. The selected object is always drawn above the rest,
 // so it is tested first regardless of its position in the array.
-export const buildHitTestOrder = <T extends { objectId: number; hidden: boolean }>(
+export const buildHitTestOrder = <
+  T extends { objectId: number; hidden: boolean; beyondStage: boolean; revealed: boolean },
+>(
   objects: T[],
   selectedObjectId: number | null,
 ): T[] => {
-  const visible = objects.filter((o) => !o.hidden);
+  const visible = objects.filter(isDrawnOnStage);
   const topmostFirst = [...visible].reverse();
 
   if (selectedObjectId === null) {

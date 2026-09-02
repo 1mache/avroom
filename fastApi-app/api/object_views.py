@@ -76,8 +76,12 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
     """
     logger.debug("Objects list requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
-    obj_ids = list_object_ids(uid, visible_only=True)
+    obj_ids = list_object_ids(uid)
     three_d_dir = get_3d_storage_dir()
+    try:
+        history_cursor = get_history_flags(uid).history_cursor
+    except SessionNotFoundError:
+        history_cursor = 0
 
     # TODO: this loop performs blocking I/O per object synchronously on the async event loop.
     # For MVP session sizes this is acceptable; move to a thread pool executor if sessions
@@ -101,6 +105,7 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
             # Metadata is absent for objects created before it was introduced;
             # those fall back to nulls plus an unmoved (0, 0) offset.
             meta = load_object_metadata(uid, oid)
+            stage_seq = meta.stage_seq if meta is not None else 0
             objects_list.append(
                 ObjectInfo(
                     object_id=oid,
@@ -118,6 +123,7 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
                     offset_y=meta.offset_y if meta is not None else 0.0,
                     display_scale=meta.display_scale if meta is not None else 1.0,
                     clone_root_uuid=meta.clone_root_uuid if meta is not None else None,
+                    beyond_stage=stage_seq > history_cursor,
                 )
             )
         except FileNotFoundError as exc:
@@ -137,10 +143,19 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
     """Return which processed artifacts are cached on disk for the given UID."""
     logger.debug("Cache status requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
-    obj_ids = list_object_ids(uid, visible_only=True)
+    all_obj_ids = list_object_ids(uid)
+    try:
+        history_cursor = get_history_flags(uid).history_cursor
+    except SessionNotFoundError:
+        history_cursor = 0
+    visible_obj_ids = [
+        oid
+        for oid in all_obj_ids
+        if (meta := load_object_metadata(uid, oid)) is None or meta.stage_seq <= history_cursor
+    ]
 
-    # Derive cutout bounds from the latest (highest-id) object.
-    latest_object_id = max(obj_ids) if obj_ids else None
+    # Derive cutout bounds from the latest (highest-id) stage-visible object.
+    latest_object_id = max(visible_obj_ids) if visible_obj_ids else None
     cutout_path_to_check = (
         resolve_object_cutout_path(storage_dir, uid, latest_object_id)
         if latest_object_id is not None
@@ -154,7 +169,7 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
 
     three_d_dir = get_3d_storage_dir()
     has_3d = any(
-        resolve_object_glb_path(three_d_dir, uid, oid).exists() for oid in obj_ids
+        resolve_object_glb_path(three_d_dir, uid, oid).exists() for oid in all_obj_ids
     )
 
     name = get_session_name(uid)
@@ -166,7 +181,7 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
         uid=uid,
         name=name,
         has_background=current_background_path(storage_dir, uid).exists(),
-        has_cutout=bool(obj_ids),
+        has_cutout=bool(all_obj_ids),
         has_3d=has_3d,
         can_undo=history_flags.can_undo if history_flags is not None else False,
         can_redo=history_flags.can_redo if history_flags is not None else False,

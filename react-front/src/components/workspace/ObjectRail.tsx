@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import type { JobInfo } from "../../types/api";
-import { effectiveCutoutSrc, hasUndoableObjectChanges, type ObjectRotation } from "../../types/session";
+import { effectiveCutoutSrc, hasUndoableObjectChanges, isDrawnOnStage, type ObjectRotation } from "../../types/session";
 import { CheckIcon, EyeIcon, EyeOffIcon, MoreIcon, PlusIcon, RevertIcon, TrashIcon } from "../icons";
 
 const JOB_KIND_LABEL: Record<JobInfo["kind"], string> = {
@@ -20,6 +20,8 @@ interface ObjectEntry {
   cutoutSrc: string;
   rotation: ObjectRotation | null;
   hidden: boolean;
+  beyondStage: boolean;
+  revealed: boolean;
   has3d: boolean;
   cloneRootUuid: string | null;
   offset: { x: number; y: number };
@@ -223,7 +225,7 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
             className={[
               "rail-notch",
               obj.objectId === selectedObjectId ? "is-selected" : "",
-              obj.hidden ? "is-hidden" : "",
+              !isDrawnOnStage(obj) ? "is-hidden" : "",
               obj.rotation?.status === "pending" ? "is-working" : "",
             ]
               .filter(Boolean)
@@ -285,6 +287,7 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
             const showUndoChanges =
               hasUndoableObjectChanges(obj) && obj.rotation?.status !== "pending";
             const rowBusy = isDuplicating || isDeleting;
+            const drawnOnStage = isDrawnOnStage(obj);
 
             return (
               <div
@@ -292,7 +295,7 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
                 className={[
                   "rail-row",
                   isSelected ? "is-selected" : "",
-                  obj.hidden ? "is-hidden" : "",
+                  !drawnOnStage ? "is-hidden" : "",
                   obj.uuid && batchUuids.has(obj.uuid) ? "is-batch" : "",
                   menuOpen ? "is-menu-open" : "",
                 ]
@@ -319,7 +322,7 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
                       }
                       handleSelect(obj.objectId);
                     }}
-                    disabled={disabled || obj.hidden}
+                    disabled={disabled || (obj.hidden && !obj.beyondStage)}
                     aria-label={`Select ${obj.name ?? `object ${obj.objectId}`}`}
                   >
                     <img
@@ -406,12 +409,12 @@ export const ObjectRail: React.FC<ObjectRailProps> = ({
                     <button
                       type="button"
                       className="rail-action"
-                      data-tip={obj.hidden ? "Show" : "Hide"}
-                      aria-label={obj.hidden ? "Show object" : "Hide object"}
+                      data-tip={drawnOnStage ? "Hide" : "Show"}
+                      aria-label={drawnOnStage ? "Hide object" : "Show object"}
                       onClick={() => !disabled && onToggleHidden(obj.objectId)}
                       disabled={disabled}
                     >
-                      {obj.hidden ? <EyeOffIcon size={15} /> : <EyeIcon size={15} />}
+                      {drawnOnStage ? <EyeIcon size={15} /> : <EyeOffIcon size={15} />}
                     </button>
 
                     {canRevert ? (

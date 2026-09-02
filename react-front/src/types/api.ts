@@ -209,6 +209,7 @@ export interface ObjectInfo {
   offset_y: number;
   display_scale?: number;
   clone_root_uuid?: string | null;
+  beyond_stage?: boolean;
 }
 
 export interface ObjectListResponse {

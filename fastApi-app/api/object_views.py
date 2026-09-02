@@ -18,7 +18,7 @@ import os
 
 from PIL import Image, UnidentifiedImageError
 
-from fastapi import APIRouter, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 
 from core.image_codec import to_base64_ascii
@@ -39,10 +39,11 @@ from core.object_storage import (
 )
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.session_history import get_history_flags
-from core.repositories.session_repo import SessionNotFoundError, is_session_registered, load_names
+from core.auth.ownership import require_session_owner
+from core.repositories.session_repo import SessionNotFoundError, get_session_name, is_session_registered
 from settings import get_3d_storage_dir, get_image_storage_dir
 
-router = APIRouter(prefix="/images", tags=["images"])
+router = APIRouter(prefix="/images", tags=["images"], dependencies=[Depends(require_session_owner)])
 logger = logging.getLogger(__name__)
 
 
@@ -75,8 +76,6 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
     """
     logger.debug("Objects list requested: uid=%s", uid)
     storage_dir = get_image_storage_dir()
-    # TODO: validate uid against the sessions table and return 404 for unknown sessions.
-    # Currently returns 200 + empty list for unknown UIDs, consistent with /{uid}/cache.
     obj_ids = list_object_ids(uid, visible_only=True)
     three_d_dir = get_3d_storage_dir()
 
@@ -158,14 +157,14 @@ async def get_uid_cache_status(uid: str) -> UidCacheStatusResponse:
         resolve_object_glb_path(three_d_dir, uid, oid).exists() for oid in obj_ids
     )
 
-    names = load_names()
+    name = get_session_name(uid)
     try:
         history_flags = get_history_flags(uid)
     except SessionNotFoundError:
         history_flags = None
     status = UidCacheStatusResponse(
         uid=uid,
-        name=names.get(uid),
+        name=name,
         has_background=current_background_path(storage_dir, uid).exists(),
         has_cutout=bool(obj_ids),
         has_3d=has_3d,

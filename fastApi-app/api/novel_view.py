@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from avroom_object_removal.ai_engines.novel_view import NovelViewRotationAdapter
 
+from core.auth.ownership import require_session_owner
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.image_codec import encode_png, to_base64_ascii
 from core.inference_pool.client import get_inference_client
@@ -16,7 +17,7 @@ from schemas.common import DEFAULT_SOURCE_ELEVATION_DEG
 from schemas.novel_view import NovelViewRequest, NovelViewResponse
 from settings import get_image_storage_dir
 
-router = APIRouter(prefix="/images", tags=["images"])
+router = APIRouter(prefix="/images", tags=["images"], dependencies=[Depends(require_session_owner)])
 logger = logging.getLogger(__name__)
 
 # Below this the requested and stored elevations are the same angle, just

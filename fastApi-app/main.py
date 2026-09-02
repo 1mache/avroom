@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 
+from api.auth import router as auth_router
 from api.routes import router as images_router
 from api.sessions import router as sessions_router
 from api.object_views import router as object_views_router
@@ -16,12 +17,13 @@ from api.model_3d import router as model_3d_router
 from api.novel_view import router as novel_view_router
 from api.debug_vision import router as debug_vision_router
 from api.jobs import router as jobs_router
+from core.auth.jwt_backend import ensure_configured as ensure_jwt_configured
 from core.inference_pool.client import init_inference_client, shutdown_inference_client
 from core.inference_pool.pool import InferencePool
 from core.jobs.dispatcher import start_dispatcher, stop_dispatcher
 from core.repositories.job_repo import mark_running_orphans_failed
 from logging_config import setup_logging
-from settings import get_cors_allow_origins, get_inference_worker_count
+from settings import get_auth_mode, get_cors_allow_origins, get_inference_worker_count
 
 # Load fastApi-app/.env (gitignored) into os.environ before anything else runs,
 # so HF_TOKEN is available when the 3D reconstruction strategies are lazily
@@ -37,6 +39,10 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # startup
+    if get_auth_mode() == "jwt":
+        # Fail loudly here, not on the first login request -- a missing
+        # secret would otherwise 500 mid-request instead of refusing to boot.
+        ensure_jwt_configured()
     pool: InferencePool | None = None
     worker_count = get_inference_worker_count()
     if worker_count > 0:
@@ -96,6 +102,7 @@ app.include_router(model_3d_router)
 app.include_router(novel_view_router)
 app.include_router(debug_vision_router)
 app.include_router(jobs_router)
+app.include_router(auth_router)
 
 # Serve the built React SPA from this same app, when a build is present.
 #

@@ -41,8 +41,8 @@ numpy==1.26.4
 kornia>=0.7.0
 opencv-python==4.11.0.86
 imageio[ffmpeg]>=2.31.0
+bcrypt==5.0.0
 packaging==26.0
-passlib[bcrypt]==1.7.4
 pathspec==1.0.4
 Pillow==9.5.0
 psutil==7.2.2

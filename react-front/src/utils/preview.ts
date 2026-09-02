@@ -1,5 +1,6 @@
 // Builds composited room images: the inpainted background with every visible
 // cutout at its current position — the room exactly as the user left it.
+import { authedFetch } from "../api/authToken";
 import type { ClickPosition } from "../types/session";
 import type { Size } from "./stageGeometry";
 
@@ -33,7 +34,7 @@ export interface PreviewLayer {
 // cached entry entirely. Confirmed via browser devtools: this is the actual
 // cause of "delete/duplicate/drag never update the dashboard thumbnail".
 const loadForCanvas = async (src: string): Promise<HTMLImageElement> => {
-  const response = await fetch(src, { mode: "cors", cache: "reload" });
+  const response = await authedFetch(src, { mode: "cors", cache: "reload" });
   if (!response.ok) {
     throw new Error(`Failed to fetch ${src}: ${response.status}`);
   }

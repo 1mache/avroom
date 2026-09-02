@@ -1,4 +1,5 @@
 import { API_BASE_URL, ApiError } from "./images";
+import { authedFetch } from "./authToken";
 import type {
   DebugAutoMaskPickResponse,
   DebugImageResult,
@@ -39,7 +40,7 @@ export async function validateImageDebug(file: File): Promise<DebugValidationRes
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(`${API_BASE_URL}/debug/validate`, {
+  const response = await authedFetch(`${API_BASE_URL}/debug/validate`, {
     method: "POST",
     body: formData,
   });
@@ -58,7 +59,7 @@ async function postForDebugImage(url: string, file: File): Promise<DebugImageRes
   const formData = new FormData();
   formData.append("file", file);
 
-  const response = await fetch(url, { method: "POST", body: formData });
+  const response = await authedFetch(url, { method: "POST", body: formData });
   if (!response.ok) {
     return throwDebugApiError(response);
   }
@@ -121,7 +122,7 @@ export async function debugAutoMaskPick(
   const formData = new FormData();
   formData.append("file", file);
   const params = new URLSearchParams({ x: String(x), y: String(y) });
-  const response = await fetch(`${API_BASE_URL}/debug/auto-mask-pick?${params.toString()}`, {
+  const response = await authedFetch(`${API_BASE_URL}/debug/auto-mask-pick?${params.toString()}`, {
     method: "POST",
     body: formData,
   });
@@ -143,7 +144,7 @@ export async function debugInpaintVerify(
   if (maskIndex !== null) {
     params.set("mask_index", String(maskIndex));
   }
-  const response = await fetch(`${API_BASE_URL}/debug/inpaint-verify?${params.toString()}`, {
+  const response = await authedFetch(`${API_BASE_URL}/debug/inpaint-verify?${params.toString()}`, {
     method: "POST",
     body: formData,
   });

@@ -38,6 +38,11 @@ def current_user_id(request: Request) -> str:
 
     scheme, _, token = request.headers.get("authorization", "").partition(" ")
     if scheme.lower() != "bearer" or not token:
+        # <img src> can't set an Authorization header, so the three routes
+        # rendered that way (background/original/preview) fall back to a
+        # query param. Every other route still only ever sees the header.
+        token = request.query_params.get("token", "")
+    if not token:
         raise HTTPException(status_code=401, detail="Not authenticated", headers=_WWW_AUTHENTICATE)
     try:
         return decode_token(token)

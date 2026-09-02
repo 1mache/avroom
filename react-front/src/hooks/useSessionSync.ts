@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { withAuthParam } from "../api/authToken";
 import { API_BASE_URL, getSessionObjects, getUidCacheStatus, syncCheckSession } from "../api/images";
 import { toCutoutAlphaBounds } from "./useSessionJobs";
 import type { JobInfo } from "../types/api";
@@ -130,7 +131,9 @@ export function useSessionSync(options: UseSessionSyncOptions) {
 
         setBackgroundSrc(
           cache.has_background
-            ? `${API_BASE_URL}/images/${uid}/background?t=${encodeURIComponent(freshTimestamp)}`
+            ? withAuthParam(
+                `${API_BASE_URL}/images/${uid}/background?t=${encodeURIComponent(freshTimestamp)}`,
+              )
             : null,
         );
         applyHistoryFlags?.({

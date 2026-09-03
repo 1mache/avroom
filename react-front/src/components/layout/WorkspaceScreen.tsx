@@ -511,7 +511,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // --- drag-a-box batch select (hook wired after handlers below) -----------
 
   const selectObject = useCallback(
-    (objectId: number) => {
+    (objectId: number | null) => {
       jobs.setSelectedObjectId(objectId);
       // Rotation is scoped to whichever object is selected — switching away
       // closes the angle picker.
@@ -1030,7 +1030,11 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         selectObject(obj.objectId);
         return;
       }
-      // No object under the pointer: keep the current selection unchanged.
+      // No object under the pointer: clicking empty stage area clears selection.
+      if (jobs.selectedObjectId !== null) {
+        event.preventDefault();
+        selectObject(null);
+      }
     },
     [
       naturalSize,

@@ -71,3 +71,24 @@ def notify_pipeline_event(
             logger.warning("Notify failed: uid=%s event=%s", uid, event, exc_info=True)
 
     _spawn(_send)
+
+
+def request_recipient_verification(email: str) -> None:
+    """Kick off SES address verification for a newly registered account.
+
+    No-op unless notifications are on AND the SES backend is active -- local
+    dev sends through Mailpit, which needs no verification at all. Never
+    raises and never blocks: signup must succeed even if SES is unreachable.
+    """
+    if not get_notify_enabled() or get_notify_backend() != "ses":
+        return
+
+    def _verify() -> None:
+        try:
+            from core.notifications.ses_backend import verify_recipient
+
+            verify_recipient(email)
+        except Exception:
+            logger.warning("SES recipient verification failed: email=%s", email, exc_info=True)
+
+    _spawn(_verify)

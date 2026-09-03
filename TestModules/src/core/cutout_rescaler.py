@@ -9,8 +9,15 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-# Fraction of the raw depth ratio applied. 1.0 = full target/source; lower = milder.
-_RESCALE_STRENGTH = 0.75
+# Shrink is milder than grow: uint8 far-wall ratios are tiny (e.g. 40/203)
+# while near-camera headroom is small (255/203). Same strength made far
+# placements collapse and closer ones barely change.
+_SHRINK_STRENGTH = 0.40
+_GROW_STRENGTH = 1.15
+_MIN_SCALE = 0.70
+_MAX_SCALE = 1.45
+# Back-compat alias used by older tests / comments.
+_RESCALE_STRENGTH = _SHRINK_STRENGTH
 
 
 def depth_map_extrema(depth_map: np.ndarray) -> tuple[float, float]:
@@ -31,8 +38,10 @@ def depth_map_extrema(depth_map: np.ndarray) -> tuple[float, float]:
 
 
 def _dampen_scale(raw: float) -> float:
-    """Pull a raw size ratio toward 1.0 by ``_RESCALE_STRENGTH``."""
-    return 1.0 + _RESCALE_STRENGTH * (raw - 1.0)
+    """Map a raw target/source ratio toward 1.0, stronger on shrink than grow."""
+    if raw >= 1.0:
+        return 1.0 + _GROW_STRENGTH * (raw - 1.0)
+    return 1.0 + _SHRINK_STRENGTH * (raw - 1.0)
 
 
 def compute_depth_scale_factor(
@@ -48,7 +57,9 @@ def compute_depth_scale_factor(
     - Deeper than start (lower target) → factor < 1 → smaller.
     - Closer to POV than start (higher target) → factor > 1 → larger.
 
-    Raw scale is ``target / source``, then softened by ``_RESCALE_STRENGTH``.
+    Raw scale is ``target / source``, then shrink is softened more than grow
+    (far-wall uint8 ratios collapse; near-camera headroom is small). The
+    result is clamped to ``[_MIN_SCALE, _MAX_SCALE]``.
     When ``deepest`` / ``closest`` are provided, the factor is clipped to the
     same softened scene range — no fixed global min/max.
     """
@@ -60,7 +71,7 @@ def compute_depth_scale_factor(
         )
     dampened = _dampen_scale(target_depth / source_depth)
     if deepest is None or closest is None:
-        return dampened
+        return max(_MIN_SCALE, min(_MAX_SCALE, dampened))
     if not math.isfinite(deepest) or not math.isfinite(closest):
         raise ValueError("Scene depth extrema must be finite.")
     if deepest <= 0 or closest <= 0:
@@ -72,7 +83,50 @@ def compute_depth_scale_factor(
     hi = _dampen_scale(closest / source_depth)
     if lo > hi:
         lo, hi = hi, lo
+    lo = max(_MIN_SCALE, lo)
+    hi = min(_MAX_SCALE, hi)
+    if lo > hi:
+        lo, hi = hi, lo
     return max(lo, min(hi, dampened))
+
+
+def drop_is_at_original_footprint(
+    *,
+    left: float,
+    top: float,
+    right: float,
+    bottom: float,
+    x: int,
+    y: int,
+    natural_width: float = 0.0,
+    natural_height: float = 0.0,
+    radius_frac: float = 0.07,
+) -> bool:
+    """Return True when ``(x, y)`` is still the original placement.
+
+    Exact origin is rare after a round-trip drag. Depth cliffs (~90 uint8 in
+    50px) would shrink a visual put-back. Snap if the drop is inside the
+    original alpha bbox or within ``radius_frac`` of the image's long edge
+    from the bbox center (~112px on a 1600px photo).
+    """
+    in_bbox = left <= x <= right and top <= y <= bottom
+    cx = (left + right) / 2.0
+    cy = (top + bottom) / 2.0
+    radius = radius_frac * max(float(natural_width), float(natural_height), 1.0)
+    return in_bbox or math.hypot(x - cx, y - cy) <= radius
+
+
+def origin_depth_sample_point(left: float, top: float, right: float, bottom: float) -> tuple[int, int]:
+    """Return the POV reference pixel: bottom-center of the original alpha bbox.
+
+    Geometric center sits on the object body (closer uint8). Foreground floor
+    is often *lower* than that, so moving toward the camera still shrank.
+    The feet pixel is the floor contact used as source depth.
+    """
+    cx = int(round((left + right) / 2.0))
+    cy = int(bottom) - 1
+    cy = max(int(top), cy)
+    return cx, cy
 
 
 def sample_depth_at_point(depth_map: np.ndarray, x: int, y: int) -> float:

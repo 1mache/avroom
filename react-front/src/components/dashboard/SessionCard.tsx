@@ -18,6 +18,7 @@ export interface SessionCardProps {
   onOpen: (uid: string) => void;
   onRequestDelete: (uid: string) => void;
   onRequestCopy: (uid: string) => void;
+  onRequestRename: (uid: string) => void;
 }
 
 /**
@@ -35,6 +36,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   onOpen,
   onRequestDelete,
   onRequestCopy,
+  onRequestRename,
 }) => {
   const [previewFailed, setPreviewFailed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -118,6 +120,19 @@ export const SessionCard: React.FC<SessionCardProps> = ({
         </button>
         {menuOpen ? (
           <div className="session-card-menu" role="menu">
+            <button
+              type="button"
+              className="session-card-menu-item"
+              role="menuitem"
+              disabled={isCopying}
+              onClick={(event) => {
+                event.stopPropagation();
+                closeMenu();
+                onRequestRename(uid);
+              }}
+            >
+              Rename
+            </button>
             <button
               type="button"
               className="session-card-menu-item"

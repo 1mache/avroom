@@ -23,6 +23,7 @@ import { useObjectResize } from "../../hooks/useObjectResize";
 import { useRotationController } from "../../hooks/useRotationController";
 import { useSessionJobs, type JobErrorContext } from "../../hooks/useSessionJobs";
 import { useSessionSync } from "../../hooks/useSessionSync";
+import { useStageFocusZoom } from "../../hooks/useStageFocusZoom";
 import type { BatchSource, VerifyMode } from "../../types/api";
 import type { ArmedJobSource } from "../../types/armedBatch";
 import {
@@ -45,6 +46,7 @@ import {
   inflateBounds,
   mapPointThroughInverseScale,
   toNaturalPoint,
+  unzoomStagePoint,
   type Rect,
   type ResizeHandle,
   type Size,
@@ -471,10 +473,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
   // --- drag-to-reposition ----------------------------------------------------
 
+  // Live focus-zoom scale/origin for pointer mapping. Synced after
+  // useStageFocusZoom below; read from callbacks/move handlers, not render.
+  const focusZoomRef = useRef({ origin: { x: 0, y: 0 }, scale: 1 });
+
   const objectDrag = useObjectDrag({
     objects: jobs.objects,
     naturalSize,
     renderedRect,
+    getFocusZoomScale: () => focusZoomRef.current.scale,
     showOriginalIds,
     smartPasteEnabled: smartPaste,
     updateOffset: jobs.updateOffset,
@@ -488,12 +495,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         return null;
       }
       const stageRect = stageInputRef.current.getBoundingClientRect();
-      return toNaturalPoint(
-        clientX - stageRect.left,
-        clientY - stageRect.top,
-        renderedRect,
-        naturalSize,
-      );
+      let localX = clientX - stageRect.left;
+      let localY = clientY - stageRect.top;
+      const zoom = focusZoomRef.current;
+      if (zoom.scale !== 1) {
+        const unzoomed = unzoomStagePoint({ x: localX, y: localY }, zoom.origin, zoom.scale);
+        localX = unzoomed.x;
+        localY = unzoomed.y;
+      }
+      return toNaturalPoint(localX, localY, renderedRect, naturalSize);
     },
     [naturalSize, renderedRect],
   );
@@ -507,6 +517,13 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     onError: (err) => setError(errorMessage(err, "Failed to save object size.")),
     onSettled: capturePreview,
   });
+
+  const focusZoom = useStageFocusZoom({
+    stageRef,
+    renderedRect,
+    blocked: rotation.rotateMode || objectDrag.isDragging || objectResize.isResizing,
+  });
+  focusZoomRef.current = { origin: focusZoom.origin, scale: focusZoom.scale };
 
   // --- drag-a-box batch select (hook wired after handlers below) -----------
 
@@ -710,9 +727,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   useLassoSelect({
     lassoDraft,
     setLassoDraft,
-    naturalSize,
-    renderedRect,
-    stageRef,
+    clientToNatural,
     onLassoComplete: handleLassoComplete,
   });
 
@@ -720,9 +735,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     areaDraft,
     setAreaDraft,
     setAreaMode,
-    naturalSize,
-    renderedRect,
-    stageRef,
+    clientToNatural,
     onBoxReady: handleBoxReady,
   });
 
@@ -935,10 +948,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         return;
       }
 
-      const stageRect = event.currentTarget.getBoundingClientRect();
-      const localX = event.clientX - stageRect.left;
-      const localY = event.clientY - stageRect.top;
-      const natural = toNaturalPoint(localX, localY, renderedRect, naturalSize);
+      const natural = clientToNatural(event.clientX, event.clientY);
       if (!natural) {
         return;
       }
@@ -1035,6 +1045,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     [
       naturalSize,
       renderedRect,
+      clientToNatural,
       cutMode,
       eraserMode,
       areaMode,
@@ -1458,185 +1469,196 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       >
         {photoSrc ? (
           <>
-            {/* The canvas edge, drawn on the letterbox — the photo's own
-                boundary is the only frame in this screen. */}
-            {renderedRect ? (
-              <div
-                className="stage-canvas-edge"
-                style={rectStyle({
-                  left: renderedRect.x,
-                  top: renderedRect.y,
-                  width: renderedRect.width,
-                  height: renderedRect.height,
-                })}
-              />
-            ) : null}
+            <div
+              className="stage-zoom"
+              style={{
+                transform: `scale(${focusZoom.scale})`,
+                transformOrigin: `${focusZoom.origin.x}px ${focusZoom.origin.y}px`,
+              }}
+            >
+              {/* The canvas edge, drawn on the letterbox — the photo's own
+                  boundary is the only frame in this screen. */}
+              {renderedRect ? (
+                <div
+                  className="stage-canvas-edge"
+                  style={rectStyle({
+                    left: renderedRect.x,
+                    top: renderedRect.y,
+                    width: renderedRect.width,
+                    height: renderedRect.height,
+                  })}
+                />
+              ) : null}
 
-            <img src={photoSrc} alt="" className="stage-photo" onLoad={handleImageLoad} />
+              <img src={photoSrc} alt="" className="stage-photo" onLoad={handleImageLoad} />
 
-            {stageObjects.map((obj, index) => (
-              <img
-                key={obj.objectId}
-                src={effectiveCutoutSrc(obj, isShowingOriginal(obj))}
-                alt=""
-                className="stage-cutout"
-                style={cutoutStyle(
-                  obj,
-                  isShowingOriginal(obj),
-                  obj.objectId === jobs.selectedObjectId ? stageObjects.length + 2 : index + 2,
-                )}
-                draggable={false}
-              />
-            ))}
+              {stageObjects.map((obj, index) => (
+                <img
+                  key={obj.objectId}
+                  src={effectiveCutoutSrc(obj, isShowingOriginal(obj))}
+                  alt=""
+                  className="stage-cutout"
+                  style={cutoutStyle(
+                    obj,
+                    isShowingOriginal(obj),
+                    obj.objectId === jobs.selectedObjectId ? stageObjects.length + 2 : index + 2,
+                  )}
+                  draggable={false}
+                />
+              ))}
+
+              {displayedBatchBox && renderedRect && naturalSize ? (
+                <div
+                  className={`stage-area-box${batchBoxIsPending ? " is-pending" : ""}`}
+                  style={batchBoxStageStyle(displayedBatchBox, renderedRect, naturalSize)}
+                />
+              ) : null}
+
+              {renderedRect && naturalSize
+                ? armedBoxes.map(({ id, box, selected }) => (
+                    <div
+                      key={id}
+                      className={`stage-area-box is-pending${selected ? " is-selected" : ""}`}
+                      style={batchBoxStageStyle(box, renderedRect, naturalSize)}
+                    />
+                  ))
+                : null}
+
+              {pendingSeeds.length > 0 && renderedRect && naturalSize ? (
+                <div className="stage-seed-markers" aria-hidden="true">
+                  {pendingSeeds.map((seed, index) => (
+                    <span
+                      key={`${seed.x}-${seed.y}-${index}`}
+                      className={`stage-pick-marker${cutMode ? " is-armed" : ""}`}
+                      style={{
+                        left: `${renderedRect.x + (seed.x / naturalSize.width) * renderedRect.width}px`,
+                        top: `${renderedRect.y + (seed.y / naturalSize.height) * renderedRect.height}px`,
+                      }}
+                    >
+                      <span className="stage-pick-marker-ring" />
+                      {pendingSeeds.length > 1 ? (
+                        <span className="stage-pick-marker-label">{index + 1}</span>
+                      ) : null}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+
+              {renderedRect && naturalSize && armedSeeds.length > 0 ? (
+                <div className="stage-seed-markers" aria-hidden="true">
+                  {armedSeeds.map((seed) => (
+                    <span
+                      key={seed.id}
+                      className={`stage-pick-marker is-pending${seed.selected ? " is-selected" : ""}`}
+                      style={{
+                        left: `${renderedRect.x + (seed.point.x / naturalSize.width) * renderedRect.width}px`,
+                        top: `${renderedRect.y + (seed.point.y / naturalSize.height) * renderedRect.height}px`,
+                      }}
+                    >
+                      <span className="stage-pick-marker-ring" />
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+
+              {renderedRect && naturalSize && (lassoDraft || pendingEraseRegions.length > 0 || armedLassos.length > 0) ? (
+                <svg className="stage-lasso-layer" aria-hidden="true">
+                  {armedLassos.map((lasso) => (
+                    <polygon
+                      key={lasso.id}
+                      className={`stage-lasso-path is-pending${lasso.selected ? " is-selected" : ""}`}
+                      points={lassoPolygonStagePoints(lasso.polygon, renderedRect, naturalSize)}
+                    />
+                  ))}
+                  {pendingEraseRegions.map((polygon, index) => (
+                    <polygon
+                      key={`pending-erase-${index}`}
+                      className="stage-lasso-path is-pending"
+                      points={lassoPolygonStagePoints(polygon, renderedRect, naturalSize)}
+                    />
+                  ))}
+                  {lassoDraft ? (
+                    <polyline
+                      className="stage-lasso-path"
+                      points={lassoPolygonStagePoints(lassoDraft.points, renderedRect, naturalSize)}
+                    />
+                  ) : null}
+                </svg>
+              ) : null}
+
+              {rotation.rotateMode && rotation.glbData ? (
+                <Model3DFrame ref={rotation.model3DFrameRef} glbData={rotation.glbData} style={model3DFrameStyle} />
+              ) : null}
+
+              {selectedRect && !rotation.rotateMode ? (
+                <div className="selection-frame" style={{ ...rectStyle(selectedRect), zIndex: 210 }}>
+                  {canResize ? (
+                    <>
+                      <button
+                        type="button"
+                        className="selection-handle selection-corner tl"
+                        aria-label="Resize top left"
+                        onPointerDown={handleResizePointerDown("tl")}
+                      />
+                      <button
+                        type="button"
+                        className="selection-handle selection-corner tr"
+                        aria-label="Resize top right"
+                        onPointerDown={handleResizePointerDown("tr")}
+                      />
+                      <button
+                        type="button"
+                        className="selection-handle selection-corner bl"
+                        aria-label="Resize bottom left"
+                        onPointerDown={handleResizePointerDown("bl")}
+                      />
+                      <button
+                        type="button"
+                        className="selection-handle selection-corner br"
+                        aria-label="Resize bottom right"
+                        onPointerDown={handleResizePointerDown("br")}
+                      />
+                      <button
+                        type="button"
+                        className="selection-handle selection-edge t"
+                        aria-label="Resize top"
+                        onPointerDown={handleResizePointerDown("t")}
+                      />
+                      <button
+                        type="button"
+                        className="selection-handle selection-edge r"
+                        aria-label="Resize right"
+                        onPointerDown={handleResizePointerDown("r")}
+                      />
+                      <button
+                        type="button"
+                        className="selection-handle selection-edge b"
+                        aria-label="Resize bottom"
+                        onPointerDown={handleResizePointerDown("b")}
+                      />
+                      <button
+                        type="button"
+                        className="selection-handle selection-edge l"
+                        aria-label="Resize left"
+                        onPointerDown={handleResizePointerDown("l")}
+                      />
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
 
             {/* Cutouts are full-size transparent PNGs, so a topmost overlay
                 would swallow every click; this transparent layer owns pointer
-                input and hit-tests against real alpha instead. */}
+                input and hit-tests against real alpha instead. Stays outside
+                .stage-zoom so its getBoundingClientRect stays unscaled. */}
             <div
               ref={stageInputRef}
               className="stage-input"
               onPointerDown={handleStagePointerDown}
+              onPointerMove={focusZoom.onStagePointerMove}
+              onPointerLeave={focusZoom.onStagePointerLeave}
             />
-
-            {displayedBatchBox && renderedRect && naturalSize ? (
-              <div
-                className={`stage-area-box${batchBoxIsPending ? " is-pending" : ""}`}
-                style={batchBoxStageStyle(displayedBatchBox, renderedRect, naturalSize)}
-              />
-            ) : null}
-
-            {renderedRect && naturalSize
-              ? armedBoxes.map(({ id, box, selected }) => (
-                  <div
-                    key={id}
-                    className={`stage-area-box is-pending${selected ? " is-selected" : ""}`}
-                    style={batchBoxStageStyle(box, renderedRect, naturalSize)}
-                  />
-                ))
-              : null}
-
-            {pendingSeeds.length > 0 && renderedRect && naturalSize ? (
-              <div className="stage-seed-markers" aria-hidden="true">
-                {pendingSeeds.map((seed, index) => (
-                  <span
-                    key={`${seed.x}-${seed.y}-${index}`}
-                    className={`stage-pick-marker${cutMode ? " is-armed" : ""}`}
-                    style={{
-                      left: `${renderedRect.x + (seed.x / naturalSize.width) * renderedRect.width}px`,
-                      top: `${renderedRect.y + (seed.y / naturalSize.height) * renderedRect.height}px`,
-                    }}
-                  >
-                    <span className="stage-pick-marker-ring" />
-                    {pendingSeeds.length > 1 ? (
-                      <span className="stage-pick-marker-label">{index + 1}</span>
-                    ) : null}
-                  </span>
-                ))}
-              </div>
-            ) : null}
-
-            {renderedRect && naturalSize && armedSeeds.length > 0 ? (
-              <div className="stage-seed-markers" aria-hidden="true">
-                {armedSeeds.map((seed) => (
-                  <span
-                    key={seed.id}
-                    className={`stage-pick-marker is-pending${seed.selected ? " is-selected" : ""}`}
-                    style={{
-                      left: `${renderedRect.x + (seed.point.x / naturalSize.width) * renderedRect.width}px`,
-                      top: `${renderedRect.y + (seed.point.y / naturalSize.height) * renderedRect.height}px`,
-                    }}
-                  >
-                    <span className="stage-pick-marker-ring" />
-                  </span>
-                ))}
-              </div>
-            ) : null}
-
-            {renderedRect && naturalSize && (lassoDraft || pendingEraseRegions.length > 0 || armedLassos.length > 0) ? (
-              <svg className="stage-lasso-layer" aria-hidden="true">
-                {armedLassos.map((lasso) => (
-                  <polygon
-                    key={lasso.id}
-                    className={`stage-lasso-path is-pending${lasso.selected ? " is-selected" : ""}`}
-                    points={lassoPolygonStagePoints(lasso.polygon, renderedRect, naturalSize)}
-                  />
-                ))}
-                {pendingEraseRegions.map((polygon, index) => (
-                  <polygon
-                    key={`pending-erase-${index}`}
-                    className="stage-lasso-path is-pending"
-                    points={lassoPolygonStagePoints(polygon, renderedRect, naturalSize)}
-                  />
-                ))}
-                {lassoDraft ? (
-                  <polyline
-                    className="stage-lasso-path"
-                    points={lassoPolygonStagePoints(lassoDraft.points, renderedRect, naturalSize)}
-                  />
-                ) : null}
-              </svg>
-            ) : null}
-
-            {rotation.rotateMode && rotation.glbData ? (
-              <Model3DFrame ref={rotation.model3DFrameRef} glbData={rotation.glbData} style={model3DFrameStyle} />
-            ) : null}
-
-            {selectedRect && !rotation.rotateMode ? (
-              <div className="selection-frame" style={{ ...rectStyle(selectedRect), zIndex: 210 }}>
-                {canResize ? (
-                  <>
-                    <button
-                      type="button"
-                      className="selection-handle selection-corner tl"
-                      aria-label="Resize top left"
-                      onPointerDown={handleResizePointerDown("tl")}
-                    />
-                    <button
-                      type="button"
-                      className="selection-handle selection-corner tr"
-                      aria-label="Resize top right"
-                      onPointerDown={handleResizePointerDown("tr")}
-                    />
-                    <button
-                      type="button"
-                      className="selection-handle selection-corner bl"
-                      aria-label="Resize bottom left"
-                      onPointerDown={handleResizePointerDown("bl")}
-                    />
-                    <button
-                      type="button"
-                      className="selection-handle selection-corner br"
-                      aria-label="Resize bottom right"
-                      onPointerDown={handleResizePointerDown("br")}
-                    />
-                    <button
-                      type="button"
-                      className="selection-handle selection-edge t"
-                      aria-label="Resize top"
-                      onPointerDown={handleResizePointerDown("t")}
-                    />
-                    <button
-                      type="button"
-                      className="selection-handle selection-edge r"
-                      aria-label="Resize right"
-                      onPointerDown={handleResizePointerDown("r")}
-                    />
-                    <button
-                      type="button"
-                      className="selection-handle selection-edge b"
-                      aria-label="Resize bottom"
-                      onPointerDown={handleResizePointerDown("b")}
-                    />
-                    <button
-                      type="button"
-                      className="selection-handle selection-edge l"
-                      aria-label="Resize left"
-                      onPointerDown={handleResizePointerDown("l")}
-                    />
-                  </>
-                ) : null}
-              </div>
-            ) : null}
           </>
         ) : (
           <div className="stage-message">
@@ -1678,18 +1700,18 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         ) : pendingSeeds.length > 0 ? (
           <p className="stage-hint">
             {armedBatch.batchMode
-              ? `${pendingSeeds.length} seed${pendingSeeds.length === 1 ? "" : "s"} · Enter or checkmark arms · Esc clears`
-              : `${pendingSeeds.length} seed${pendingSeeds.length === 1 ? "" : "s"} placed · Shift+click adds · Enter or checkmark runs · Esc clears`}
+              ? `${pendingSeeds.length} seed${pendingSeeds.length === 1 ? "" : "s"} · Enter or checkmark arms · Esc clears · hold Ctrl to zoom · scroll to adjust`
+              : `${pendingSeeds.length} seed${pendingSeeds.length === 1 ? "" : "s"} placed · Shift+click adds · Enter or checkmark runs · Esc clears · hold Ctrl to zoom · scroll to adjust`}
           </p>
         ) : cutMode ? (
           <p className="stage-hint">
             {armedBatch.batchMode
               ? multiPoint
-                ? "Click to add seeds · Enter or checkmark arms · Esc cancels"
-                : "Click to arm cutout · Shift+click adds seeds · Esc cancels"
+                ? "Click to add seeds · Enter or checkmark arms · Esc cancels · hold Ctrl to zoom · scroll to adjust"
+                : "Click to arm cutout · Shift+click adds seeds · Esc cancels · hold Ctrl to zoom · scroll to adjust"
               : multiPoint
-                ? "Click to add seeds · Enter or checkmark runs · Esc cancels"
-                : "Click the object · Shift+click adds seeds · Esc cancels"}
+                ? "Click to add seeds · Enter or checkmark runs · Esc cancels · hold Ctrl to zoom · scroll to adjust"
+                : "Click the object · Shift+click adds seeds · Esc cancels · hold Ctrl to zoom · scroll to adjust"}
           </p>
         ) : armedBatch.batchMode && armedBatch.jobs.length > 0 ? (
           <p className="stage-hint">

@@ -61,6 +61,8 @@ sequenceDiagram
 
 Because `selectMask` fires the inpaint request detached, the user can immediately click a new point and start a second segment/inpaint while the first is still running — the backend's per-session canvas-writer lock and region leases (`docs/backend/concurrency.md`) make this safe, and `useConflictNotices` surfaces any resulting 409 as a dismissible inline notice rather than a hard error.
 
+**Hold Control to zoom**: while the pointer is over the photo, holding Control (not Cmd) magnifies the stage around the cursor after a short delay (default ~2.5×; scroll wheel adjusts between 1.25× and 6×) so a small detail is easier to seed. Release Control to return to 1×. Clicks while zoomed still map to the same natural-image pixel. Zoom is off during rotate mode, text fields, and object drag/resize; Ctrl+Z / Ctrl+Y still undo/redo without flashing the zoom.
+
 ## Batch area cut and bulk 3D
 
 The toolbar area tool arms a box drag on the stage (always `verify=auto`). Mouse-up calls `POST /images/{uid}/batch` with `source.kind=box`. Ctrl/Cmd-click Object Selector thumbs plus the Object Selector **3D** button send `source.kind=objects`. One batch at a time on the client. Results land through `useSessionSync` after `onMutated`.

@@ -17,6 +17,9 @@ interface UseObjectDragOptions {
   objects: CutoutObject[];
   naturalSize: Size | null;
   renderedRect: Rect | null;
+  /** Active stage focus-zoom scale (1 when idle). Read on every move so a
+   * mid-drag Control hold does not outrun the cursor. */
+  getFocusZoomScale?: () => number;
   showOriginalIds: ReadonlySet<number>;
   smartPasteEnabled: boolean;
   updateOffset: (objectId: number, offset: ClickPosition) => void;
@@ -36,6 +39,7 @@ export function useObjectDrag({
   objects,
   naturalSize,
   renderedRect,
+  getFocusZoomScale,
   showOriginalIds,
   smartPasteEnabled,
   updateOffset,
@@ -55,6 +59,8 @@ export function useObjectDrag({
   naturalSizeRef.current = naturalSize;
   const renderedRectRef = useRef(renderedRect);
   renderedRectRef.current = renderedRect;
+  const getFocusZoomScaleRef = useRef(getFocusZoomScale);
+  getFocusZoomScaleRef.current = getFocusZoomScale;
   const showOriginalIdsRef = useRef(showOriginalIds);
   showOriginalIdsRef.current = showOriginalIds;
   const smartPasteRef = useRef(smartPasteEnabled);
@@ -95,8 +101,9 @@ export function useObjectDrag({
         return;
       }
 
-      const scaleX = rect.width / size.width;
-      const scaleY = rect.height / size.height;
+      const zoom = getFocusZoomScaleRef.current?.() ?? 1;
+      const scaleX = (rect.width / size.width) * zoom;
+      const scaleY = (rect.height / size.height) * zoom;
       if (scaleX <= 0 || scaleY <= 0) {
         return;
       }
@@ -107,7 +114,8 @@ export function useObjectDrag({
         : null;
 
       // Mouse delta arrives in screen pixels; convert back to natural-image
-      // pixels so drag behavior stays stable under responsive resize.
+      // pixels so drag behavior stays stable under responsive resize and
+      // hold-Control focus zoom.
       const nextOffset = clampCutoutOffset(
         {
           x: dragState.startOffsetX + (event.clientX - dragState.startClientX) / scaleX,

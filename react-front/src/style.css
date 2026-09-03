@@ -409,6 +409,23 @@ input {
   cursor: grabbing;
 }
 
+/* Hold-Control focus zoom: visuals scale; pointer-events stay on .stage-input
+   (sibling, unscaled). Interactive children re-enable hits above the input. */
+.stage-zoom {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+  transform: scale(1);
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.stage-zoom .selection-handle,
+.stage-zoom .model-3d-frame {
+  pointer-events: auto;
+}
+
 .stage-photo {
   position: absolute;
   inset: 0;

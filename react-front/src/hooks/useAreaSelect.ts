@@ -1,9 +1,8 @@
 import { useEffect, useRef } from "react";
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import type { Dispatch, SetStateAction } from "react";
 
 import type { BatchSource } from "../types/api";
 import type { ClickPosition } from "../types/session";
-import { toNaturalPoint, type Rect, type Size } from "../utils/stageGeometry";
 
 const MIN_BOX_PX = 8;
 
@@ -34,9 +33,8 @@ interface UseAreaSelectOptions {
   areaDraft: AreaDraft | null;
   setAreaDraft: Dispatch<SetStateAction<AreaDraft | null>>;
   setAreaMode: Dispatch<SetStateAction<boolean>>;
-  naturalSize: Size | null;
-  renderedRect: Rect | null;
-  stageRef: RefObject<HTMLElement | null>;
+  /** Client → natural-image (must apply any active stage zoom). */
+  clientToNatural: (clientX: number, clientY: number) => ClickPosition | null;
   /** Called once on pointer-up when the box is large enough — does not submit. */
   onBoxReady: (source: BatchSource) => void;
 }
@@ -49,30 +47,20 @@ export function useAreaSelect({
   areaDraft,
   setAreaDraft,
   setAreaMode,
-  naturalSize,
-  renderedRect,
-  stageRef,
+  clientToNatural,
   onBoxReady,
 }: UseAreaSelectOptions) {
   const areaDraftRef = useRef(areaDraft);
   areaDraftRef.current = areaDraft;
+  const clientToNaturalRef = useRef(clientToNatural);
+  clientToNaturalRef.current = clientToNatural;
 
   useEffect(() => {
-    if (!areaDraft || !naturalSize || !renderedRect) {
+    if (!areaDraft) {
       return;
     }
     const handleMove = (event: PointerEvent) => {
-      const stage = stageRef.current;
-      if (!stage) {
-        return;
-      }
-      const stageRect = stage.getBoundingClientRect();
-      const natural = toNaturalPoint(
-        event.clientX - stageRect.left,
-        event.clientY - stageRect.top,
-        renderedRect,
-        naturalSize,
-      );
+      const natural = clientToNaturalRef.current(event.clientX, event.clientY);
       if (!natural) {
         return;
       }
@@ -96,5 +84,5 @@ export function useAreaSelect({
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
     };
-  }, [areaDraft, naturalSize, renderedRect, stageRef, onBoxReady, setAreaDraft, setAreaMode]);
+  }, [areaDraft, onBoxReady, setAreaDraft, setAreaMode]);
 }

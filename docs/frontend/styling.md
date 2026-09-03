@@ -53,7 +53,7 @@ The file is organized into comment-delimited sections (`/* ── Name ── */
 | Reset + scrollbar | global |
 | Toolbar | `Toolbar` — `.toolbar`, `.session-name`, `.tool-btn`/`.tool-switch` (`.is-armed`, `.is-danger`, disabled greyed state), `.tool-spinner` |
 | Tooltips | shared — `[data-tip]` CSS-only hover tooltip (0.32s delay); `.rail-action[data-tip]` opens leftward since the rail sits at the right edge |
-| Stage | `WorkspaceScreen` — `.stage`, `.stage-photo` (`object-fit: contain`), `.stage-canvas-edge` (hairline + shadow), `.stage-cutout` (`pointer-events: none`), `.stage-input` (the real pointer owner), `.stage-pick-marker`, `.selection-frame`/`.selection-corner`, `.stage-hint`, `.stage-message` |
+| Stage | `WorkspaceScreen` — `.stage`, `.stage-zoom` (hold-Control focus scale), `.stage-photo` (`object-fit: contain`), `.stage-canvas-edge` (hairline + shadow), `.stage-cutout` (`pointer-events: none`), `.stage-input` (the real pointer owner), `.stage-pick-marker`, `.selection-frame`/`.selection-corner`, `.stage-hint`, `.stage-message` |
 | Conflict notices | `WorkspaceScreen` via `useConflictNotices` — `.notice-stack`, `.notice`, `.notice-dismiss` |
 | Object rail | `ObjectRail` — `.rail-spine`/`.rail-notch` (`is-selected`/`is-hidden`/`is-working`), `.rail-panel`, `.rail-row`, `.rail-thumb` (checkerboard background), `.rail-name`/`.rail-name-input`, `.rail-action`, `.rail-empty` |
 | Modals | `ConfirmDialog`, `MaskPickerModal`, inline error modals — `.modal-backdrop`, `.modal` (`.is-masks`/`.is-error` size variants), `.mask-grid`/`.mask-card` |

@@ -41,3 +41,4 @@ class MeResponse(BaseModel):
 
     user_id: Annotated[str, Field(description="Caller's user id, resolved from the bearer token.")]
     email: Annotated[EmailStr, Field(description="Caller's account email.")]
+    is_admin: Annotated[bool, Field(description="Whether the caller may use admin-only tools.")]

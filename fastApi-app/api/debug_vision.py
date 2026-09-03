@@ -12,9 +12,10 @@ import logging
 import time
 from typing import Annotated
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 
+from core.auth.admin import require_admin
 from core.debug_vision import COLORMAPS, DEPTH_STRATEGIES, NORMAL_HUB_MODELS, SEGMENT_SOURCES
 from core.image_validation import ImageValidator
 from core.inference_pool.client import InferenceJobError, get_inference_client
@@ -26,7 +27,7 @@ from schemas.debug import (
 )
 from settings import get_debug_endpoints_enabled
 
-router = APIRouter(prefix="/debug", tags=["debug"])
+router = APIRouter(prefix="/debug", tags=["debug"], dependencies=[Depends(require_admin)])
 logger = logging.getLogger(__name__)
 
 _DEFAULT_DEPTH_MODEL = "LiheYoung/depth-anything-small-hf"

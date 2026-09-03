@@ -28,7 +28,7 @@ def get_or_create_default_user(db: Session) -> User:
     if user is not None:
         return user
 
-    user = User(id=LOCAL_USER_ID, email=LOCAL_USER_EMAIL, password_hash=None, is_active=True)
+    user = User(id=LOCAL_USER_ID, email=LOCAL_USER_EMAIL, password_hash=None, is_active=True, is_admin=True)
     db.add(user)
     db.flush()
     logger.info("Provisioned local dev user: id=%s email=%s", user.id, user.email)

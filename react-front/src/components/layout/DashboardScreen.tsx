@@ -32,7 +32,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   onNewSession,
   onOpenDebug,
 }) => {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [pendingDeleteUid, setPendingDeleteUid] = useState<string | null>(null);
@@ -103,18 +103,22 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       <header className="dash-header">
         <img src={avroomLogo} alt="" className="dash-logo" />
         <span className="dash-wordmark">AVRoom</span>
-        <button
-          type="button"
-          className="tool-btn dash-header-end"
-          onClick={onOpenDebug}
-          aria-label="Pipeline debug"
-          data-tip="Pipeline debug"
-        >
-          <FlaskIcon />
-        </button>
-        <button type="button" className="tool-btn" onClick={logout} aria-label="Sign out" data-tip="Sign out">
-          <LogoutIcon />
-        </button>
+        <div className="dash-header-end">
+          {user?.is_admin && (
+            <button
+              type="button"
+              className="tool-btn"
+              onClick={onOpenDebug}
+              aria-label="Pipeline debug"
+              data-tip="Pipeline debug"
+            >
+              <FlaskIcon />
+            </button>
+          )}
+          <button type="button" className="tool-btn" onClick={logout} aria-label="Sign out" data-tip="Sign out">
+            <LogoutIcon />
+          </button>
+        </div>
       </header>
 
       <main className="dash-main">

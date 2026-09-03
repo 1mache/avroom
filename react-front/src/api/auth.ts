@@ -8,6 +8,7 @@ import { API_BASE_URL, handleJsonResponse } from "./images";
 export interface AuthUser {
   id: string;
   email: string;
+  is_admin: boolean;
 }
 
 interface TokenResponse {
@@ -17,6 +18,7 @@ interface TokenResponse {
 interface MeResponse {
   user_id: string;
   email: string;
+  is_admin: boolean;
 }
 
 async function requestToken(path: "signup" | "login", email: string, password: string): Promise<string> {
@@ -43,5 +45,5 @@ export async function login(email: string, password: string): Promise<void> {
 export async function fetchCurrentUser(): Promise<AuthUser> {
   const response = await authedFetch(`${API_BASE_URL}/auth/me`);
   const body = await handleJsonResponse<MeResponse>(response);
-  return { id: body.user_id, email: body.email };
+  return { id: body.user_id, email: body.email, is_admin: body.is_admin };
 }

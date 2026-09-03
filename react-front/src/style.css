@@ -2108,6 +2108,9 @@ body.is-resizing-object {
 /* ── Pipeline debug ──────────────────────────────────────────────────────── */
 
 .dash-header-end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   margin-left: auto;
 }
 

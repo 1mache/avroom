@@ -1,0 +1,15 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "avroom (local docker)",
+      "Group": "Servers",
+      "Host": "localhost",
+      "Port": 5433,
+      "MaintenanceDB": "avroom",
+      "Username": "avroom",
+      "SSLMode": "prefer",
+      "PassFile": "",
+      "Comment": "docker compose up -d db, from repo root"
+    }
+  }
+}

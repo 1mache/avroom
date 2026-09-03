@@ -101,9 +101,12 @@ export async function handleJsonResponse<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function uploadImage(file: File): Promise<ImageUploadResponse> {
+export async function uploadImage(file: File, skipValidation = false): Promise<ImageUploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
+  if (skipValidation) {
+    formData.append("skip_validation", "true");
+  }
 
   const response = await authedFetch(`${API_BASE_URL}/images/upload`, {
     method: "POST",

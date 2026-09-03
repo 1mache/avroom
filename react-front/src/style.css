@@ -337,6 +337,27 @@ input {
   color: var(--ink);
 }
 
+.toolbar-settings-action {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  border-radius: 3px;
+  padding: 6px 4px;
+}
+
+.toolbar-settings-action:hover:not(:disabled) {
+  background: var(--chrome-sunk);
+}
+
+.toolbar-settings-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .tool-spinner {
   width: 14px;
   height: 14px;
@@ -1961,8 +1982,88 @@ body.is-resizing-object {
   color: #ff7b74;
 }
 
-/* Project cards only -- rooms have no equivalent, they're renamed from the
-   workspace toolbar. Sits left of the trash button, same treatment. */
+/* Hover-reveal 3-dot menu trigger — sits left of the trash button. */
+.session-card-more-wrap {
+  position: absolute;
+  top: 8px;
+  right: 40px;
+  z-index: 2;
+}
+
+.session-card-more {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  background: rgba(14, 14, 14, 0.88);
+  color: var(--ink-dim);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition: opacity 0.14s ease, transform 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+
+.session-card:hover .session-card-more,
+.session-card-more:focus-visible,
+.session-card-more.is-open {
+  opacity: 1;
+  transform: none;
+}
+
+.session-card-more:hover,
+.session-card-more.is-open {
+  background: var(--cyan-wash);
+  color: var(--cyan-bright);
+}
+
+.session-card-more:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.session-card-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  min-width: 120px;
+  padding: 4px 0;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  background: var(--chrome-raise);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 8px 20px rgba(0, 0, 0, 0.45);
+  z-index: 30;
+}
+
+.session-card-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--ink-bright);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.session-card-menu-item:hover:not(:disabled) {
+  background: var(--chrome-sunk);
+}
+
+.session-card-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Legacy alias kept so older docs that name this class still resolve. */
 .session-card-rename {
   position: absolute;
   top: 8px;
@@ -2549,8 +2650,9 @@ body.is-resizing-object {
     gap: 18px 14px;
   }
 
-  /* Touch has no hover, so the delete affordance must stay visible. */
-  .session-card-delete {
+  /* Touch has no hover, so card affordances must stay visible. */
+  .session-card-delete,
+  .session-card-more {
     opacity: 1;
     transform: none;
   }

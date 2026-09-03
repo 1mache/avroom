@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 
-import { deleteSession, getActiveJobs, getSessions } from "../../api/images";
+import { copySession, deleteSession, getActiveJobs, getSessions } from "../../api/images";
 import type { JobInfo, SessionInfo } from "../../types/api";
 import { byMostRecentlyEdited } from "../../utils/time";
 import { SessionCard } from "../dashboard/SessionCard";
@@ -39,6 +39,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [pendingDeleteUid, setPendingDeleteUid] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [copyingUid, setCopyingUid] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeJobs, setActiveJobs] = useState<JobInfo[]>([]);
 
@@ -100,6 +101,21 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }
   }, [pendingDeleteUid]);
 
+  const handleCopyRoom = useCallback(
+    async (uid: string) => {
+      setCopyingUid(uid);
+      try {
+        await copySession(uid);
+        await load();
+      } catch (copyError) {
+        setError(copyError instanceof Error ? copyError.message : "Failed to copy the room.");
+      } finally {
+        setCopyingUid(null);
+      }
+    },
+    [load],
+  );
+
   return (
     <div className="dashboard">
       <header className="dash-header">
@@ -160,8 +176,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                     lastChanged={session.last_changed}
                     isBusy={sessionJobs.some((job) => job.status === "queued" || job.status === "running")}
                     isFailed={sessionJobs.some((job) => job.status === "failed" || job.status === "conflict")}
+                    isCopying={copyingUid === session.uid}
                     onOpen={onOpenSession}
                     onRequestDelete={setPendingDeleteUid}
+                    onRequestCopy={(uid) => void handleCopyRoom(uid)}
                   />
                 );
               })}

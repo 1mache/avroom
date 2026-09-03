@@ -70,6 +70,7 @@ def _path_uid_cases(uid: str) -> list[tuple[str, str, dict[str, Any]]]:
         ("POST", f"/images/{uid}/batch", {"json": {"source": {"kind": "objects", "uuids": ["x"]}}}),
         ("DELETE", f"/images/{uid}", {}),
         ("POST", f"/images/{uid}/name", {"json": {"name": "Test"}}),
+        ("POST", f"/images/{uid}/copy", {}),
         ("POST", f"/images/{uid}/history/undo", {}),
         ("POST", f"/images/{uid}/history/redo", {}),
         ("POST", f"/images/{uid}/sync-check", {"json": {"client_last_changed": None}}),
@@ -91,7 +92,10 @@ def _path_uid_cases(uid: str) -> list[tuple[str, str, dict[str, Any]]]:
     ]
 
 
-@pytest.mark.parametrize("index", range(16))
+_PATH_UID_CASE_COUNT = len(_path_uid_cases("x"))
+
+
+@pytest.mark.parametrize("index", range(_PATH_UID_CASE_COUNT))
 def test_path_uid_route_404s_for_other_users_session(
     storage_sandbox: Path, other_users_session: str, index: int
 ) -> None:
@@ -101,7 +105,7 @@ def test_path_uid_route_404s_for_other_users_session(
     assert response.json()["detail"] == _NOT_FOUND_DETAIL.format(uid=other_users_session)
 
 
-@pytest.mark.parametrize("index", range(16))
+@pytest.mark.parametrize("index", range(_PATH_UID_CASE_COUNT))
 def test_path_uid_route_404s_identically_for_unknown_uid(storage_sandbox: Path, index: int) -> None:
     unknown_uid = "totally-unknown-uid"
     method, path, kwargs = _path_uid_cases(unknown_uid)[index]

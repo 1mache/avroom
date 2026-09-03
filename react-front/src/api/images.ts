@@ -195,6 +195,14 @@ export async function setSessionName(uid: string, name: string): Promise<Session
   return handleJsonResponse<SessionInfo>(response);
 }
 
+/** Clone a room into the same project (Origin Photo, Background, objects, GLBs). */
+export async function copySession(uid: string): Promise<SessionInfo> {
+  const response = await authedFetch(`${API_BASE_URL}/images/${uid}/copy`, {
+    method: "POST",
+  });
+  return handleJsonResponse<SessionInfo>(response);
+}
+
 export async function getUidCacheStatus(uid: string): Promise<UidCacheStatusResponse> {
   const response = await authedFetch(`${API_BASE_URL}/images/${uid}/cache`);
   return handleJsonResponse<UidCacheStatusResponse>(response);

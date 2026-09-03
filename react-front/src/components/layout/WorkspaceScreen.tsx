@@ -4,6 +4,7 @@ import { withAuthParam } from "../../api/authToken";
 import {
   API_BASE_URL,
   ApiError,
+  copySession,
   deleteJob,
   getSessionObjects,
   getUidCacheStatus,
@@ -152,6 +153,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const [canRedo, setCanRedo] = useState(false);
   const [historyBusy, setHistoryBusy] = useState(false);
   const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
+  const [isCopyingRoom, setIsCopyingRoom] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Object id awaiting delete confirmation. Deletion is permanent (the
   // background keeps its inpainted hole), so the trash button arms this
@@ -868,6 +870,20 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     [imageId, sessionName],
   );
 
+  const handleCopyRoom = useCallback(async () => {
+    if (!imageId || isCopyingRoom) {
+      return;
+    }
+    setIsCopyingRoom(true);
+    try {
+      await copySession(imageId);
+    } catch (copyError) {
+      setError(errorMessage(copyError, "Failed to copy the room."));
+    } finally {
+      setIsCopyingRoom(false);
+    }
+  }, [imageId, isCopyingRoom]);
+
   // Enter commits the rotation (same as pressing rotate again); Escape backs
   // out of whichever mode is armed. Both bail while a text field owns focus.
   useEffect(() => {
@@ -1452,6 +1468,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         onToggleAutoGenerate3d={() => setAutoGenerate3d((on) => !on)}
         isDeleting={jobs.isDeleting}
         onDeleteObject={handleDeleteObject}
+        isCopyingRoom={isCopyingRoom}
+        onCopyRoom={() => void handleCopyRoom()}
         canUndo={canUndo}
         canRedo={canRedo}
         historyBusy={historyBusy}

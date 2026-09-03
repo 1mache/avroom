@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pathlib import Path
 
 from core.session_teardown import delete_session_and_files
+from core.session_clone import clone_session
 
 from core.image_codec import to_base64_ascii
 from core.image_processing import (
@@ -318,6 +319,40 @@ async def set_name(uid: str, request: SetNameRequest) -> SessionInfo:
     last_changed = touch_session(uid)
     logger.info("Name set: uid=%s name=%r", uid, request.name)
     return SessionInfo(uid=uid, name=request.name, last_changed=last_changed)
+
+
+@router.post("/{uid}/copy", response_model=SessionInfo)
+def copy_session(uid: str) -> SessionInfo:
+    """Clone a room into the same project: Origin Photo, Background, Preview,
+    and every currently-visible object (cutout + optional GLB).
+
+    The copy is named like object copies (``Living room-copy``, then
+    ``-copy1``, …). Undo history, jobs, mask candidates, and depth caches
+    are not copied. Returns the new room's ``SessionInfo``.
+    """
+    logger.info("Session copy requested: uid=%s", uid)
+    try:
+        cloned = clone_session(uid)
+    except SessionNotFoundError:
+        logger.warning("Session copy failed — unknown uid: %s", uid)
+        raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'") from None
+    except SessionConflictError as exc:
+        logger.warning("Session copy rejected — canvas writer timeout: uid=%s", uid)
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        logger.exception("Session copy failed due to missing file: uid=%s", uid)
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Session copy failed: uid=%s", uid)
+        raise HTTPException(status_code=500, detail=f"Session copy failed: {exc}") from exc
+
+    logger.info(
+        "Session copy finished: source_uid=%s dest_uid=%s name=%r",
+        uid,
+        cloned.uid,
+        cloned.name,
+    )
+    return SessionInfo(uid=cloned.uid, name=cloned.name, last_changed=cloned.last_changed)
 
 
 def _run_history_step(uid: str, *, undo: bool) -> Response:

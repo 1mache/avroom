@@ -178,6 +178,10 @@ _Avoid_: move, place (when meaning offset only)
 Create a Copy of the selected object, nudged aside. Background unchanged.
 _Avoid_: Duplicate, Clone
 
+**Copy room**:
+Create a new Room in the same Project that clones the Origin Photo, Background, Preview, and every visible object (including 3D renders). Named like object copies (`Living room-copy`, then `-copy1`).
+_Avoid_: Duplicate room, Clone session, Copy (alone — that is the object action)
+
 **Add object**:
 Bring a user-supplied PNG into the room as a new overlay object. Background unchanged.
 _Avoid_: Import

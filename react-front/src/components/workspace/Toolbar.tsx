@@ -67,6 +67,9 @@ export interface ToolbarProps {
   onToggleAutoGenerate3d: () => void;
   isDeleting: boolean;
   onDeleteObject: () => void;
+  /** Copy the whole room into the same project. */
+  isCopyingRoom: boolean;
+  onCopyRoom: () => void;
   canUndo: boolean;
   canRedo: boolean;
   historyBusy: boolean;
@@ -126,6 +129,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   onToggleAutoGenerate3d,
   isDeleting,
   onDeleteObject,
+  isCopyingRoom,
+  onCopyRoom,
   canUndo,
   canRedo,
   historyBusy,
@@ -441,6 +446,22 @@ export const Toolbar: React.FC<ToolbarProps> = ({
             aria-label="Options"
             onClick={(event) => event.stopPropagation()}
           >
+            <div className="toolbar-settings-section">
+              <p className="toolbar-settings-title">Room</p>
+              <button
+                type="button"
+                className="toolbar-settings-row toolbar-settings-action"
+                onClick={() => {
+                  closeSettings();
+                  onCopyRoom();
+                }}
+                disabled={isCopyingRoom}
+              >
+                <span className="toolbar-settings-label">
+                  {isCopyingRoom ? "Copying room…" : "Copy room"}
+                </span>
+              </button>
+            </div>
             <div className="toolbar-settings-section">
               <p className="toolbar-settings-title">Object removal</p>
               <button

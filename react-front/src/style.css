@@ -1944,6 +1944,38 @@ body.is-resizing-object {
   color: #ff7b74;
 }
 
+/* Project cards only -- rooms have no equivalent, they're renamed from the
+   workspace toolbar. Sits left of the trash button, same treatment. */
+.session-card-rename {
+  position: absolute;
+  top: 8px;
+  right: 40px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  background: rgba(14, 14, 14, 0.88);
+  color: var(--ink-dim);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-3px);
+  transition: opacity 0.14s ease, transform 0.14s ease, background 0.14s ease, color 0.14s ease;
+}
+
+.session-card:hover .session-card-rename,
+.session-card-rename:focus-visible {
+  opacity: 1;
+  transform: none;
+}
+
+.session-card-rename:hover {
+  background: var(--cyan-wash);
+  color: var(--cyan-bright);
+}
+
 .session-card-caption {
   display: flex;
   align-items: baseline;
@@ -1965,6 +1997,179 @@ body.is-resizing-object {
   font-family: var(--mono);
   font-size: 9.5px;
   color: var(--ink-faint);
+}
+
+/* ── Project rows ────────────────────────────────────────────────────────
+   Projects are folders, not photos: a contiguous list of thin horizontal
+   bars reads structurally opposite to the gapped photo-tile grid rooms use
+   below, so which screen you're on is legible at a glance. */
+.project-list {
+  display: flex;
+  flex-direction: column;
+  margin-top: 18px;
+  border-top: 1px solid var(--chrome-line);
+}
+
+.project-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 10px 12px 16px;
+  border-bottom: 1px solid var(--chrome-line);
+  border-left: 2px solid transparent;
+  transition: border-left-color 0.15s ease, background 0.15s ease;
+}
+
+.project-row:hover {
+  background: rgba(255, 255, 255, 0.025);
+  border-left-color: var(--cyan);
+}
+
+.project-row-frame {
+  position: relative;
+  flex: 0 0 auto;
+  width: 112px;
+  height: 66px;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  overflow: hidden;
+  cursor: pointer;
+  background-color: var(--chrome-sunk);
+  background-image: var(--checker);
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+  background-size: 16px 16px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75), 0 0 0 2px rgba(255, 255, 255, 0.05);
+  transition: box-shadow 0.16s ease;
+}
+
+.project-row-frame:hover {
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.85), 0 0 0 2px var(--cyan);
+}
+
+.project-row-preview {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.project-row-placeholder {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--ink-faint);
+}
+
+.project-row-dot {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 1;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 8px rgba(69, 224, 229, 0.7);
+  animation: notch-pulse 1.1s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.project-row-dot.is-failed {
+  background: var(--danger);
+  box-shadow: 0 0 8px rgba(226, 86, 79, 0.7);
+  animation: none;
+}
+
+.project-row-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 4px 0;
+  border: none;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-row-name {
+  width: 100%;
+  font-size: 14px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-row-meta {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
+
+.project-row-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.14s ease;
+}
+
+.project-row:hover .project-row-actions,
+.project-row-actions:focus-within {
+  opacity: 1;
+}
+
+.project-row-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  background: rgba(14, 14, 14, 0.88);
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition: background 0.14s ease, color 0.14s ease;
+}
+
+.project-row-btn:hover {
+  background: var(--cyan-wash);
+  color: var(--cyan-bright);
+}
+
+.project-row-btn.is-danger {
+  color: var(--danger);
+}
+
+.project-row-btn.is-danger:hover {
+  background: rgba(226, 86, 79, 0.22);
+  color: #ff7b74;
+}
+
+.project-row-skeleton {
+  height: 66px;
+  margin: 12px 0;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.03) 25%,
+    rgba(255, 255, 255, 0.08) 50%,
+    rgba(255, 255, 255, 0.03) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+
+.project-row-skeleton + .project-row-skeleton {
+  border-top: 1px solid var(--chrome-line);
 }
 
 .session-skeleton {
@@ -2333,6 +2538,15 @@ body.is-resizing-object {
     transform: none;
   }
 
+  .project-row-frame {
+    width: 80px;
+    height: 50px;
+  }
+
+  .project-row-actions {
+    opacity: 1;
+  }
+
   .session-name {
     width: clamp(90px, 30vw, 180px);
   }
@@ -2349,6 +2563,9 @@ body.is-resizing-object {
 /* ── Pipeline debug ──────────────────────────────────────────────────────── */
 
 .dash-header-end {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   margin-left: auto;
 }
 

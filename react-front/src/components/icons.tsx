@@ -29,6 +29,13 @@ export const BackIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
+export const PencilIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <path d="M14.5 4.5l5 5L8 21H3v-5z" />
+    <path d="M13 6l5 5" />
+  </Svg>
+);
+
 export const ScissorsIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>
     <circle cx="6.5" cy="17.5" r="2.6" />
@@ -54,11 +61,13 @@ export const AreaIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
-/** Freehand erase — lasso loop with a gap at the tip. */
+/** Two-tone eraser block, tilted diagonally. */
 export const EraserIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>
-    <path d="M6 18l8-8 4 4-8 8H6v-4z" />
-    <path d="M13 7l3-3 2 2-3 3" />
+    <g transform="rotate(-35 12 12)">
+      <rect x="7.5" y="7" width="9" height="12" rx="2.2" />
+      <path d="M7.5 13.5h9" />
+    </g>
   </Svg>
 );
 

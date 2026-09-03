@@ -196,9 +196,20 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   }, [uid, applyHistoryFlags]);
   const handleMutated = useCallback(() => {
     // A mutation (inpaint, most commonly) can change the canvas the depth/
-    // normal maps were warmed for — forget the "already warm" mark so the
-    // next reentry re-warms instead of skipping a now-stale cache.
+    // normal maps were warmed for — forget the "already warm" mark and
+    // re-warm right away in the background. Deferring the re-warm to the
+    // next session entry (the old behavior) meant the recompute instead blocked
+    // that later entry behind the full-screen "Preparing depth maps" overlay,
+    // which read as "regenerating for no reason" since the edit that actually
+    // invalidated the cache had happened a session ago.
     warmedSessionIds.delete(uid);
+    void warmSessionMaps(uid)
+      .then(() => {
+        warmedSessionIds.add(uid);
+      })
+      .catch((err: unknown) => {
+        console.warn("Background session map re-warm failed (non-fatal).", err);
+      });
     recordLocalMutationRef.current();
     capturePreviewRef.current();
     void refreshHistoryFlags();
@@ -547,7 +558,11 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         x: Math.round(seed.x),
         y: Math.round(seed.y),
       }));
-      setPendingSeeds(seeds);
+      // Clear seeds now that the job is submitted — leaving them set kept the
+      // checkmark armed and Enter/checkmark live, letting either resubmit the
+      // same seeds as a second job, and left the numbered marker on screen
+      // (visible even for a single-point click, which fires through here too).
+      setPendingSeeds([]);
       setCutMode(false);
       jobs.runSegment(rounded[0].x, rounded[0].y, verifyMode, rounded);
     },
@@ -740,7 +755,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       return;
     }
     if (!selectedObject?.uuid) {
-      setError("This object is from an older session and can't be duplicated.");
+      setError("This object is from an older room and can't be duplicated.");
       return;
     }
     void jobs.duplicateObject(jobs.selectedObjectId);
@@ -750,7 +765,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     (objectId: number) => {
       const target = jobs.objects.find((o) => o.objectId === objectId);
       if (!target?.uuid) {
-        setError("This object is from an older session and can't be deleted.");
+        setError("This object is from an older room and can't be deleted.");
         return;
       }
       rotation.setRotateMode(false);
@@ -834,7 +849,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       } catch (nameError) {
         // A 409 here means the name is taken — a real, user-facing conflict,
         // distinct from segment/inpaint concurrency, so it opens the modal.
-        setError(errorMessage(nameError, "Failed to save session name."));
+        setError(errorMessage(nameError, "Failed to save room name."));
       }
     },
     [imageId, sessionName],
@@ -957,10 +972,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         event.preventDefault();
         const collectMode = multiPoint || event.shiftKey;
 
-        if (pendingSeeds.length > 0 && !collectMode) {
-          return;
-        }
-
         if (collectMode) {
           if (pendingSeeds.length >= MAX_SEGMENT_SEEDS) {
             return;
@@ -969,13 +980,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           return;
         }
 
-        if (armedBatch.batchModeRef.current) {
-          armedBatch.appendClicks([natural]);
-          setCutMode(false);
-          return;
-        }
-
-        fireSegmentFromSeeds([natural]);
+        // Single-point mode: stage the seed instead of firing immediately —
+        // shows where the click landed and lets a re-click move it before
+        // the checkmark/Enter actually submits.
+        setPendingSeeds([natural]);
         return;
       }
 
@@ -1032,9 +1040,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       areaMode,
       multiPoint,
       pendingSeeds.length,
-      fireSegmentFromSeeds,
-      armedBatch.appendClicks,
-      armedBatch.batchModeRef,
       jobs.objects,
       jobs.selectedObjectId,
       rotation.rotateMode,
@@ -1522,7 +1527,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                     }}
                   >
                     <span className="stage-pick-marker-ring" />
-                    <span className="stage-pick-marker-label">{index + 1}</span>
+                    {pendingSeeds.length > 1 ? (
+                      <span className="stage-pick-marker-label">{index + 1}</span>
+                    ) : null}
                   </span>
                 ))}
               </div>
@@ -1634,7 +1641,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         ) : (
           <div className="stage-message">
             {mapsWarming ? <span className="stage-warm-spinner tool-spinner" aria-hidden="true" /> : null}
-            <p className="stage-message-line">Opening the session</p>
+            <p className="stage-message-line">Opening the room</p>
           </div>
         )}
 
@@ -1776,7 +1783,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             onDuplicateObject={(objectId) => {
               const target = jobs.objects.find((o) => o.objectId === objectId);
               if (!target?.uuid) {
-                setError("This object is from an older session and can't be duplicated.");
+                setError("This object is from an older room and can't be duplicated.");
                 return;
               }
               void jobs.duplicateObject(objectId);

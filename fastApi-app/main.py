@@ -17,6 +17,7 @@ from api.model_3d import router as model_3d_router
 from api.novel_view import router as novel_view_router
 from api.debug_vision import router as debug_vision_router
 from api.jobs import router as jobs_router
+from api.projects import router as projects_router
 from core.auth.jwt_backend import ensure_configured as ensure_jwt_configured
 from core.inference_pool.client import init_inference_client, shutdown_inference_client
 from core.inference_pool.pool import InferencePool
@@ -103,6 +104,7 @@ app.include_router(novel_view_router)
 app.include_router(debug_vision_router)
 app.include_router(jobs_router)
 app.include_router(auth_router)
+app.include_router(projects_router)
 
 # Serve the built React SPA from this same app, when a build is present.
 #

@@ -6,9 +6,13 @@ The product language for the room the user edits, the objects in it, and the act
 
 ### Places
 
+**Project Selector**:
+The home screen. A list of Projects.
+_Avoid_: Dashboard, Room Selector
+
 **Room Selector**:
-The home screen. A list of rooms.
-_Avoid_: Dashboard
+The screen listing one Project's rooms. Entered by opening a Project from Project Selector.
+_Avoid_: Dashboard, Project Selector
 
 **Room Upload**:
 The file-intake screen between Room Selector and Room Workspace. Creates a room.
@@ -54,9 +58,13 @@ _Avoid_: position, location, shifted
 
 ### Nouns
 
+**Project**:
+A named group of Rooms, owned by a user. Its Project Selector card shows its most recently edited Room's Preview.
+_Avoid_: Session, folder, workspace
+
 **Room**:
-One Origin Photo plus every object and background change made to it.
-_Avoid_: Session, uid, image_id, project
+One Origin Photo plus every object and background change made to it. Belongs to exactly one Project.
+_Avoid_: Session, uid, image_id, project (lowercase; capitalized Project is the group above it)
 
 **Origin Photo**:
 The original uploaded picture. Immutable.
@@ -183,7 +191,7 @@ Toggle whether an object is drawn. Not delete.
 _Avoid_: delete, remove
 
 **Rename**:
-Change the display name of a room or an object.
+Change the display name of a project, a room, or an object.
 _Avoid_: label, title (as the verb)
 
 **Rotate**:

@@ -53,7 +53,7 @@ export const AuthScreen: React.FC = () => {
           <h1 className="auth-title">{mode === "login" ? "Welcome back" : "Create an account"}</h1>
           <p className="auth-sub">
             {mode === "login"
-              ? "Sign in to reach your sessions."
+              ? "Sign in to reach your rooms."
               : "A room and everything cut out of it belongs to you alone."}
           </p>
 

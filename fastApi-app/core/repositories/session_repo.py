@@ -16,6 +16,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core.auth.single_user import get_default_user_id
+from core.repositories.project_repo import get_or_create_default_project
 from db.models import SessionRow, User
 from db.session import session_scope
 
@@ -38,8 +39,8 @@ def _get_session_row_or_raise(db: Session, uid: str) -> SessionRow:
     return row
 
 
-def register_uid(uid: str, user_id: str | None = None) -> None:
-    """Register a session uid, creating its row (owned by *user_id*) if absent.
+def register_uid(uid: str, user_id: str | None = None, project_id: str | None = None) -> None:
+    """Register a session uid, creating its row (owned by *user_id*/*project_id*) if absent.
 
     The only creation path left in this module -- `touch_session` and
     `set_session_name` used to also create on a miss (via the old
@@ -64,13 +65,29 @@ def register_uid(uid: str, user_id: str | None = None) -> None:
     regardless of what a `jwt`-mode env happens to be set to.
     `api/routes.py`'s upload handler -- the one place a uid is actually born
     under a real caller -- passes its own resolved `user_id` explicitly.
+
+    `project_id` follows the identical convention: `None` resolves to the
+    caller's "My Rooms" project via `get_or_create_default_project`, so every
+    off-request caller above needs no change. `api/routes.py`'s upload
+    handler passes its own resolved `project_id` when the client supplied one.
     """
     with session_scope() as db:
         row = db.get(SessionRow, uid)
         if row is not None:
             return
         resolved_user_id = user_id if user_id is not None else get_default_user_id(db)
-        db.add(SessionRow(id=uid, user_id=resolved_user_id, name=None, last_changed=None))
+        resolved_project_id = (
+            project_id if project_id is not None else get_or_create_default_project(db, resolved_user_id)
+        )
+        db.add(
+            SessionRow(
+                id=uid,
+                user_id=resolved_user_id,
+                project_id=resolved_project_id,
+                name=None,
+                last_changed=None,
+            )
+        )
 
 
 def is_session_registered(uid: str) -> bool:
@@ -108,8 +125,10 @@ def get_session_name(uid: str) -> str | None:
 def set_session_name(uid: str, name: str) -> None:
     """Persist a human-readable name for a session uid.
 
-    Names are unique per user. Raises ValueError if `name` is already
-    assigned to a *different* session so the caller can surface a 409.
+    Names are unique per project (not per user -- two different projects may
+    each have a room named "Living room"). Raises ValueError if `name` is
+    already assigned to a *different* session in the same project so the
+    caller can surface a 409.
 
     Raises:
         SessionNotFoundError: When no session row exists for *uid*.
@@ -119,7 +138,7 @@ def set_session_name(uid: str, name: str) -> None:
 
         existing = db.execute(
             select(SessionRow.id).where(
-                SessionRow.user_id == row.user_id,
+                SessionRow.project_id == row.project_id,
                 SessionRow.name == name,
                 SessionRow.id != uid,
             )
@@ -222,20 +241,22 @@ def get_session_notify_target(uid: str) -> tuple[str, str] | None:
         return (name or uid, email)
 
 
-def list_sessions_with_names(user_id: str) -> list[tuple[str, str | None, str | None]]:
+def list_sessions_with_names(
+    user_id: str, project_id: str | None = None
+) -> list[tuple[str, str | None, str | None]]:
     """Return `(uid, name, last_changed_iso)` for *user_id*'s sessions, oldest first.
 
     Single round trip for `GET /images/sessions`, avoiding the old
     load_session_uids + load_names + per-uid get_session_last_changed
     N+1 pattern. Scoped to `user_id` so one caller never sees another's
-    sessions in the list.
+    sessions in the list; `project_id`, when given, further scopes to one
+    project's rooms (the Rooms dashboard's normal case).
     """
     with session_scope() as db:
-        rows = db.execute(
-            select(SessionRow)
-            .where(SessionRow.user_id == user_id)
-            .order_by(SessionRow.created_at)
-        ).scalars().all()
+        query = select(SessionRow).where(SessionRow.user_id == user_id)
+        if project_id is not None:
+            query = query.where(SessionRow.project_id == project_id)
+        rows = db.execute(query.order_by(SessionRow.created_at)).scalars().all()
         return [
             (row.id, row.name, row.last_changed.isoformat() if row.last_changed else None)
             for row in rows

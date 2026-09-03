@@ -192,8 +192,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         value={sessionName}
         onChange={(event) => onSessionNameChange(event.target.value)}
         onKeyDown={onSessionNameKeyDown}
-        placeholder="Untitled session"
-        aria-label="Session name"
+        placeholder="Untitled room"
+        aria-label="Room name"
         spellCheck={false}
       />
 
@@ -225,16 +225,18 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         </span>
       </button>
 
-      <button
-        type="button"
-        className="tool-btn"
-        data-tip="Remove last seed"
-        aria-label="Remove last seed"
-        disabled={!hasPendingSegmentSeeds}
-        onClick={onUndoLastSeed}
-      >
-        <RevertIcon size={15} />
-      </button>
+      {multiPoint ? (
+        <button
+          type="button"
+          className="tool-btn"
+          data-tip="Remove last seed"
+          aria-label="Remove last seed"
+          disabled={!hasPendingSegmentSeeds}
+          onClick={onUndoLastSeed}
+        >
+          <RevertIcon size={15} />
+        </button>
+      ) : null}
 
       <button
         type="button"

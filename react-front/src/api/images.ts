@@ -86,7 +86,7 @@ async function extractErrorDetail(response: Response): Promise<string> {
   return text;
 }
 
-async function throwApiError(response: Response): Promise<never> {
+export async function throwApiError(response: Response): Promise<never> {
   const detail = await extractErrorDetail(response);
   throw new ApiError(response.status, detail);
 }
@@ -101,9 +101,17 @@ export async function handleJsonResponse<T>(response: Response): Promise<T> {
   return (await response.json()) as T;
 }
 
-export async function uploadImage(file: File): Promise<ImageUploadResponse> {
+export async function uploadImage(
+  file: File,
+  projectId: string,
+  skipValidation = false,
+): Promise<ImageUploadResponse> {
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("project_id", projectId);
+  if (skipValidation) {
+    formData.append("skip_validation", "true");
+  }
 
   const response = await authedFetch(`${API_BASE_URL}/images/upload`, {
     method: "POST",
@@ -129,8 +137,10 @@ export async function submitGenerate3D(uid: string, objectId: number): Promise<s
   return body.job_id;
 }
 
-export async function getSessions(): Promise<SessionInfo[]> {
-  const response = await fetchWithTimeout(`${API_BASE_URL}/images/sessions`);
+export async function getSessions(projectId: string): Promise<SessionInfo[]> {
+  const response = await fetchWithTimeout(
+    `${API_BASE_URL}/images/sessions?project_id=${encodeURIComponent(projectId)}`,
+  );
   return handleJsonResponse<SessionInfo[]>(response);
 }
 

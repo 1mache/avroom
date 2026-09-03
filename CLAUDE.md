@@ -115,13 +115,13 @@ Reuse these instead of re-implementing them per module:
 
 Session and object metadata (previously four JSON sidecars — `sessions.json`, `names.json`, `session_timestamps.json`, `object_index.json` — plus one `{uid}_{id}_meta.json` per object) now lives in Postgres. Blob artifacts (cutout PNGs, GLBs, novel-view caches) are unaffected and still live on local disk under `core/object_storage.py`'s path helpers — only *metadata* moved.
 
-- **`db/models.py`** — `User`, `SessionRow` (table `sessions`, the `uid` used everywhere else), `ObjectRow` (table `objects`). `db/session.py` exposes `get_engine()` (per-process lazy singleton) and `session_scope()`.
+- **`db/models.py`** — `User`, `ProjectRow` (table `projects` — see "Projects" below), `SessionRow` (table `sessions`, the `uid` used everywhere else), `ObjectRow` (table `objects`). `db/session.py` exposes `get_engine()` (per-process lazy singleton) and `session_scope()`.
 - **`core/repositories/session_repo.py`** — replaces the old sidecar functions 1:1 by name (`register_uid`, `touch_session`, `set_session_name`, `evaluate_session_sync`, `SessionNotFoundError`, `delete_session`, …), now DB-backed.
 - **`core/object_metadata.py`** — same public functions as before (`save_object_metadata`, `get_object_by_uuid`, `list_object_ids`, `build_clone_metadata`, …) but each opens its own short DB session instead of reading/writing a JSON file; `base_dir`/`storage_dir` parameters were dropped since metadata no longer lives under the image storage dir. `list_object_ids` / `next_object_id` moved here from `core/object_storage.py` (they used to scan the filesystem; now they query the `objects` table — the real fix for a `next_object_id` dir-scan race described below).
 - **Local dev user**: `AUTH_MODE=single_user` (the default — see `settings.get_auth_mode()`) auto-provisions one fixed user (`local@avroom.dev`, `core/auth/single_user.py::LOCAL_USER_ID`) that every session is attached to. No login, no token, identical UX to before. `AUTH_MODE=jwt` is now implemented — see "Session Ownership & Login" below.
 - **Local Postgres runs via `docker-compose.yml`** (repo root): `docker compose up -d db`. Host port is **5433**, not 5432 — a native Postgres install may already own 5432 on the host (this bit us during development on Windows). `DATABASE_URL` defaults to `postgresql+psycopg://avroom:avroom@localhost:5433/avroom` accordingly (`settings.get_database_url()`).
 - **Schema is managed by Alembic**, not `Base.metadata.create_all()` in application code — run `alembic upgrade head` from `fastApi-app/` after `docker compose up -d db` (both locally and once hosted against RDS) before starting the app. `alembic/env.py` resolves its target DB from `settings.get_database_url()`, the same URL the app itself uses, so there is exactly one place that decides which database this points at. `fastApi-app/tests/conftest.py`'s `_clean_database` fixture is the one exception: it calls `Base.metadata.create_all()` directly and truncates every table before each test, since tests want a schema-matches-models guarantee and per-test isolation, not migration history.
-- **Tests never run against the dev database.** `conftest.py`'s `_use_test_database()` runs at import time (before any test module or `db.session.get_engine()` can execute) and repoints `DATABASE_URL` at `<dbname>_test` (e.g. `avroom_test`), creating that database via a maintenance connection if it doesn't exist yet. This exists because `_clean_database` truncates `objects`/`sessions`/`users` before every test, and `settings.get_database_url()`'s default is otherwise identical between app and test process — without the swap, running `pytest` against a normal local setup wipes live session data. Gotcha if touching this: `str(sqlalchemy.engine.URL)` masks the password as `***`; building the env var string requires `url.render_as_string(hide_password=False)`.
+- **Tests never run against the dev database.** `conftest.py`'s `_use_test_database()` runs at import time (before any test module or `db.session.get_engine()` can execute) and repoints `DATABASE_URL` at `<dbname>_test` (e.g. `avroom_test`), creating that database via a maintenance connection if it doesn't exist yet. This exists because `_clean_database` truncates `objects`/`sessions`/`projects`/`users` before every test, and `settings.get_database_url()`'s default is otherwise identical between app and test process — without the swap, running `pytest` against a normal local setup wipes live session data. Gotcha if touching this: `str(sqlalchemy.engine.URL)` masks the password as `***`; building the env var string requires `url.render_as_string(hide_password=False)`.
 - `save_object_metadata` auto-provisions its session row (owned by the local dev user, via `register_uid`'s default — see "Session Ownership & Login" below) if the session hasn't been registered yet, matching the old sidecars' decoupled behavior where object metadata and session registration were independent files. In practice this never fires on a real request path: an object is only ever created for a session that upload already registered under its real owner.
 
 Three races the old filesystem/JSON approach had are now closed: `next_object_id` (used to be a dir-scan max, now a DB query — still relies on the existing canvas-writer lock to serialize concurrent inpaint/duplicate per session on a single instance, see `docs/backend/concurrency.md`, rather than a row lock); `count_clones_of_root` (used to be an O(n) per-file JSON read, now `COUNT(*)`); `PATCH /images/objects/{uuid}` (still a read-then-write, but against one row under the object's own uuid rather than a shared JSON file).
@@ -134,8 +134,74 @@ Two seams close the gap between "the schema has always had a real `user_id` FK o
 - **`core/auth/identity.py::current_user_id`** — branches on `settings.get_auth_mode()`. `single_user` (default): always the fixed local user, auto-provisioning its row. `jwt`: reads `Authorization: Bearer <token>`, decodes it via `core/auth/jwt_backend.py` (PyJWT, HS256, `JWT_SECRET`/`JWT_EXPIRE_MINUTES`), 401 on anything missing/invalid/expired. Every route needing caller identity already depended on this via `Depends(current_user_id)`; adding the mandatory `request: Request` parameter touched none of those call sites (FastAPI injects it automatically) — it only broke the one place `session_repo.py` used to call it bare, off any request (see below).
 - **`core/auth/jwt_backend.py`** — `hash_password`/`verify_password` (raw `bcrypt`, not `passlib[bcrypt]`: passlib 1.7.4 probes `bcrypt.__about__.__version__`, gone since bcrypt ≥4.1, and raises `ValueError: password cannot be longer than 72 bytes` on every hash call regardless of length), `issue_token`/`decode_token`, `AuthError`. No `fastapi.security` usage (matching the rest of the repo) — `HTTPBearer`'s `auto_error=True` default raises 403 not 401, and this module wants 401 throughout, so `identity.py` reads the header itself.
 - **`api/auth.py`** — `POST /auth/signup` (open registration, 201 + token), `POST /auth/login` (one 401 for wrong-password/unknown-email/inactive-account, no user-enumeration oracle), `GET /auth/me`. Not session-scoped, so no ownership dependency; must work with zero token. Exists and issues real tokens even in `single_user` mode, where nothing else checks them.
-- **No new column, no migration.** `users.password_hash` (nullable `String(255)`) and the unique `ix_users_email` index already existed (`alembic/versions/0001_initial.py`) — a bcrypt hash is 60 bytes. Alembic head stays `0006_session_history`.
+- **No new column, no migration.** `users.password_hash` (nullable `String(255)`) and the unique `ix_users_email` index already existed (`alembic/versions/0001_initial.py`) — a bcrypt hash is 60 bytes.
 - **`session_repo.register_uid(uid, user_id=None)`** is now the *only* creation path for a `SessionRow` — `touch_session`/`set_session_name` became lookup-or-raise (`SessionNotFoundError`) instead of create-on-miss. The old create-on-miss silently resurrected a ghost session row owned by whichever fixed identity a bare `current_user_id()` call resolved to (always the local user, off-request) — e.g. deleting a session while a queued job targeting it was still in flight. That bare call is also what the `request`-requiring `current_user_id` broke; `register_uid`'s `user_id` defaults to the fixed local dev user (auto-provisioning that row too) so every off-request/test caller that only ever ran under `single_user` needs no change, while `api/routes.py`'s upload handler — the one place a uid is actually born under a real caller — passes its own resolved `user_id` explicitly.
+
+## Projects
+
+A grouping layer sits above sessions: `User -> Project -> Room` (a "Room" is a `SessionRow`, per
+`CONTEXT.md`). A project holds many rooms; uploading a photo always creates a room inside some
+project. Introduced in `alembic/versions/0008_projects.py`, the current Alembic head — it adds
+`ProjectRow` (table `projects`) and a `NOT NULL` `sessions.project_id` FK (`ondelete="CASCADE"`),
+backfilling one **"My Rooms"** project per existing `sessions.user_id` (and one for the fixed
+local dev user even with zero sessions, mirroring `0007`'s handling of that same row) so no room
+is ever project-less. Room-name uniqueness moved from per-user (`uq_sessions_user_id_name`) to
+per-project (`uq_sessions_project_id_name`) — two different projects may each have a room called
+"Living room".
+
+- **`core/repositories/project_repo.py`** — mirrors `session_repo.py`'s convention (every
+  function opens its own `session_scope()`): `create_project`, `get_project_owner`,
+  `set_project_name`, `list_projects` (returns `ProjectSummary` — `room_count`, and
+  `last_changed`/`preview_uid` computed as the **most recently edited room** in that project, since
+  a project has no preview blob of its own), `get_project`, `list_project_session_ids`,
+  `delete_project_row`. The one exception to the "opens its own session" convention is
+  `get_or_create_default_project(db, user_id)` — it takes an existing `Session` (like
+  `core.auth.single_user.get_default_user_id(db)` does) so `session_repo.register_uid` can resolve
+  a brand-new user's "My Rooms" project inside the same transaction that creates their first room.
+- **`session_repo.register_uid(uid, user_id=None, project_id=None)`** — `project_id=None` resolves
+  through `get_or_create_default_project`, the same optional-with-a-fallback convention `user_id`
+  already used. Every off-request caller (tests, the sidecar migration script,
+  `object_metadata`'s defensive re-registration) needs no change.
+- **`core/session_teardown.py::delete_session_and_files(uid) -> int`** — the room-deletion body
+  (DB row cascade + every on-disk blob: cutouts, GLBs, caches, preview), extracted out of
+  `api/sessions.py::delete_session` so `DELETE /projects/{id}` can loop it over every room in the
+  project without leaking blobs — a project delete that skipped this would cascade the `SessionRow`
+  rows via the FK but leave their files on disk.
+- **`api/projects.py`** — `GET /projects`, `POST /projects` (409 on duplicate name),
+  `POST /projects/{id}/name` (409 on duplicate), `DELETE /projects/{id}` (204; loops
+  `delete_session_and_files` over `list_project_session_ids`, then deletes the project row —
+  cascade delete, not a "must be empty first" guard).
+- **`core/auth/ownership.py::require_project_owner`** — a second router-level dependency next to
+  `require_session_owner`, same shape: reads path `project_id`, 404s (never 403) on a
+  caller/owner mismatch with the same detail an unknown id produces. `GET`/`POST /projects` carry
+  no `project_id` path param and pass through unchecked, like `GET /images/sessions` today.
+  `tests/test_route_guard_coverage.py::test_every_project_scoped_route_is_guarded` is the matching
+  anti-fail-open check for this router, alongside the existing session one.
+- **`POST /images/upload`** takes an optional `project_id` form field — supplied, it must be one
+  of the caller's own projects (404 otherwise, checked inline in the handler since the route has
+  no `uid` yet for `require_session_owner` to key off); omitted, `register_uid`'s "My Rooms"
+  fallback applies. `GET /images/sessions` takes a matching optional `project_id` query filter.
+- **`GET /jobs/active`**'s `JobInfo` carries a `project_id` (joined from `sessions` in
+  `job_repo.list_active_jobs`) so the Project Selector's per-card busy/failed dot can filter the
+  same job list the Room Selector already polls — every other `JobInfo` producer leaves it `None`.
+- **Frontend**: `ProjectsScreen` (home) lists projects via `ProjectCard` (a `SessionCard` variant —
+  preview borrowed from `preview_uid`, caption adds a room count, a rename pencil next to the
+  trash since projects have no workspace toolbar to rename from). Opening one shows
+  `DashboardScreen` (unchanged look, now project-scoped: `getSessions(projectId)`, a back arrow
+  instead of the flask/logout buttons, which moved up to `ProjectsScreen`'s header). `App.tsx`'s
+  `Route` union grew `"projects" | "rooms" | "upload" | "workspace" | "debug"` — `"rooms"` and
+  `"workspace"` both carry `projectId`/`projectName` so a room's back arrow returns to the rooms
+  screen it came from, not to the top. Still no router library.
+
+## Admin Users
+
+`users.is_admin` (`db/models.py`, added by `alembic/versions/0007_user_is_admin.py`, Alembic head) gates two developer-only tools: the `/debug` router and the upload endpoint's `skip_validation` flag. There is **no admin UI and no grant API** — the flag is flipped by hand in SQL (`UPDATE users SET is_admin = true WHERE email = '...';`). The migration defaults every existing row to `false` except the fixed `single_user` local dev user (`core/auth/single_user.py::LOCAL_USER_ID`), which it re-grants — `get_or_create_default_user` also provisions fresh rows as admin, so a machine that creates the local user after this migration still gets both tools locally.
+
+- **`core/auth/admin.py`** — `require_admin` (a router-level `Depends`, mirroring `require_session_owner`'s placement) 403s a non-admin caller; `is_admin(user_id) -> bool` is the plain-boolean form for call sites that need to branch rather than hard-gate.
+- **`api/debug_vision.py`**'s router carries `dependencies=[Depends(require_admin)]` — every `/debug/*` route 403s for a non-admin caller.
+- **`POST /images/upload`**'s `skip_validation` form field (default `false`) bypasses `ImageValidator`/content validation for that one upload; supplying it as a non-admin is a 403, not a silent no-op — the flag has no effect for anyone it's not meant for.
+- **`GET /auth/me`** returns `is_admin` on `MeResponse`; the frontend's `AuthContext`/`useAuth().user.is_admin` is what the two UI affordances below key off of.
+- **Frontend**: `ProjectsScreen`'s flask button (Debug Dashboard — moved here from `DashboardScreen` when the Projects layer landed, see "Projects" above) and `UploadScreen`'s "Skip validation" switch (styled like `Toolbar.tsx`'s existing `role="switch"` controls) both render only when `user?.is_admin` is true.
 
 ## Durable Job Queue
 
@@ -190,13 +256,13 @@ Uploaded images are stored in `fastApi-app/tmp/images/{uuid}.ext`. Debug overlay
 1. **Technical** — `fastApi-app/core/image_validation/` (`ImageValidator`): format/MIME, size, decode, resolution, blur, exposure, alpha emptiness, uniform scene. Env thresholds via `UPLOAD_*` in `settings.py`. Fail → HTTP 422, no disk write.
 2. **Content** — `ContentImageValidator` + `ContentValidationFacade` (CLIP zero-shot default) via inference pool job `VALIDATE_CONTENT`. Fail → HTTP 422, no disk write.
 
-Set `VALIDATE=false` before starting the server to skip both stages (default: `VALIDATE=true`).
+Set `VALIDATE=false` before starting the server to skip both stages (default: `VALIDATE=true`). An individual upload can also skip both stages via the `skip_validation` form field — admin-only (403 for anyone else); see "Admin Users" above.
 
 Not wired into segment/inpaint/removal pipelines.
 
 ### Debug vision endpoints
 
-`POST /debug/validate`, `POST /debug/depth-map`, `POST /debug/normal-map`, and `POST /debug/sam-everything` (`fastApi-app/api/debug_vision.py`) are test/inspection tools, not production flow — no session, no disk writes. They accept a multipart `file` upload and are gated by `DEBUG_ENDPOINTS` (`settings.get_debug_endpoints_enabled`, default enabled; `false` → 404). The React frontend has a dedicated screen for these — see `DebugScreen` under Frontend Notes below.
+`POST /debug/validate`, `POST /debug/depth-map`, `POST /debug/normal-map`, and `POST /debug/sam-everything` (`fastApi-app/api/debug_vision.py`) are test/inspection tools, not production flow — no session, no disk writes. They accept a multipart `file` upload and are gated by `DEBUG_ENDPOINTS` (`settings.get_debug_endpoints_enabled`, default enabled; `false` → 404) **and** by `require_admin` (403 for a non-admin caller; see "Admin Users" above). The React frontend has a dedicated screen for these — see `DebugScreen` under Frontend Notes below.
 
 - `/debug/validate` runs the **full** validation scoreboard (`ImageValidator.validate_all` — every technical check plus the CLIP content checks, never stopping at the first failure, unlike `POST /images/upload`'s `validate()`) and always returns 200 JSON (`DebugValidationResponse`) — a failed check is data, not an error.
 - `/debug/depth-map?strategy=anything|blended|enhanced_edge&model=...&colormap=none|inferno|magma|turbo|jet` renders one of three depth strategies as a PNG via `avroom_object_removal.utils.colorize_depth`. `strategy=anything` is `DepthAnythingMappingStrategy(model)` (the only one honoring `model`); `blended`/`enhanced_edge` are the actual multi-checkpoint strategies production uses (`NearFarBlendedDepthMappingStrategy` / `EnhancedEdgeDepthMappingStrategy`, production's true default).
@@ -255,7 +321,7 @@ before this change.
 
 ## Frontend Notes
 
-The product has four screens: **Room Selector** (`DashboardScreen`), **Room Upload** (`UploadScreen`), **Room Workspace** (`WorkspaceScreen`), and **Debug Dashboard** (`DebugScreen` — Origin Photo in, validation/depth/SAM out; no Room created; see "Debug vision endpoints" above). `App.tsx` switches between them with a local discriminated-union `Route` state (`{screen:"dashboard"} | {screen:"upload"} | {screen:"workspace", uid} | {screen:"debug"}`) — no router library, no auth. Room Selector is home (`App` boots into it); `WorkspaceScreen` is mounted `key={uid}` so switching rooms remounts it cleanly rather than reusing state. The Toolbar's back arrow calls `onExit`, which routes back to Room Selector — it is enabled, not disabled. `DashboardScreen`'s header carries a right-aligned flask-icon button (`onOpenDebug`) that routes to Debug Dashboard, always visible regardless of whether the backend's `DEBUG_ENDPOINTS` is on (a disabled backend surfaces as a 404 inside each panel, not a hidden button).
+The product has five screens: **Project Selector** (`ProjectsScreen`), **Room Selector** (`DashboardScreen`), **Room Upload** (`UploadScreen`), **Room Workspace** (`WorkspaceScreen`), and **Debug Dashboard** (`DebugScreen` — Origin Photo in, validation/depth/SAM out; no Room created; see "Debug vision endpoints" above). `App.tsx` switches between them with a local discriminated-union `Route` state (`{screen:"projects"} | {screen:"rooms", projectId, projectName} | {screen:"upload", projectId, projectName} | {screen:"workspace", uid, projectId, projectName} | {screen:"debug"}`) — no router library. Auth exists (`context/AuthContext.tsx`, `api/auth.ts`) and gates the whole app: `AppShell` shows `AuthScreen` while `status === "anon"` and only mounts the `Route` switch once `status === "authed"` (`GET /auth/me` always succeeds under the backend's default `single_user` mode, so local dev never actually sees the login screen). Project Selector is home (`App` boots into it, see "Projects" above for the `User -> Project -> Room` hierarchy this reflects); opening a project shows Room Selector, scoped to that project (`getSessions(projectId)`); `WorkspaceScreen` is mounted `key={uid}` so switching rooms remounts it cleanly rather than reusing state. The Toolbar's back arrow calls `onExit`, which routes back to the Room Selector the workspace was opened from (carrying that project's id/name along) — it is enabled, not disabled. Room Selector's own back arrow (`onBack`) returns to Project Selector. `ProjectsScreen`'s header carries a right-aligned flask-icon button (`onOpenDebug`) that routes to Debug Dashboard — visible only when `useAuth().user?.is_admin` is true (see "Admin Users" above); a non-admin never sees it, regardless of whether the backend's `DEBUG_ENDPOINTS` is on.
 
 - API base URL defaults to `http://127.0.0.1:8000`; override with `VITE_API_BASE_URL` env var. `DashboardScreen`'s session-list fetch shows an offline state with a retry action on failure; `WorkspaceScreen`'s own session boot shows a plain "Opening the session" placeholder on the stage while loading and falls back to `sessionName = uid` if the cache-status fetch fails (no dedicated offline UI there).
 - Click coordinates are translated from display-space to natural image-space before sending to the API. All the contain-fit ↔ natural-pixel conversions live in `src/utils/stageGeometry.ts` (`getContainedImageRect`, `toNaturalPoint`, `clampCutoutOffset`, `getBoundsStageRect`, `buildHitTestOrder`, `compositePreviewOntoCanvas`) — reuse them rather than re-deriving the math.

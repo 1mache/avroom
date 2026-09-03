@@ -33,14 +33,14 @@ export const SessionCard: React.FC<SessionCardProps> = ({
 }) => {
   const [previewFailed, setPreviewFailed] = useState(false);
   const editedAgo = formatEditedAgo(lastChanged);
-  const label = name ?? "Untitled session";
+  const label = name ?? "Untitled room";
 
   return (
     <div className="session-card">
       {isFailed || isBusy ? (
         <span
           className={`session-card-dot${isFailed ? " is-failed" : " is-busy"}`}
-          aria-label={isFailed ? "A job in this session failed" : "This session has work in progress"}
+          aria-label={isFailed ? "A job in this room failed" : "This room has work in progress"}
           data-tip={isFailed ? "A job failed" : "Working…"}
         />
       ) : null}
@@ -72,7 +72,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
         className="session-card-delete"
         onClick={() => onRequestDelete(uid)}
         aria-label={`Delete ${label}`}
-        data-tip="Delete session"
+        data-tip="Delete room"
       >
         <TrashIcon size={15} />
       </button>

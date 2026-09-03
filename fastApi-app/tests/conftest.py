@@ -71,7 +71,7 @@ def _clean_database() -> Iterator[None]:
     engine = get_engine()
     Base.metadata.create_all(engine)
     with engine.begin() as conn:
-        conn.execute(text("TRUNCATE TABLE objects, sessions, users RESTART IDENTITY CASCADE"))
+        conn.execute(text("TRUNCATE TABLE objects, sessions, projects, users RESTART IDENTITY CASCADE"))
     yield
 
 
@@ -86,13 +86,17 @@ def other_users_session() -> str:
     authenticated as the default local user must 404 against this uid exactly
     like an unknown one.
     """
-    from db.models import SessionRow, User
+    from db.models import ProjectRow, SessionRow, User
     from db.session import session_scope
 
     uid = "sess-not-yours"
+    project_id = "proj-not-yours"
     with session_scope() as db:
         db.add(User(id=OTHER_USER_ID, email="other@example.com", is_active=True))
-        db.add(SessionRow(id=uid, user_id=OTHER_USER_ID, name=None, last_changed=None))
+        db.add(ProjectRow(id=project_id, user_id=OTHER_USER_ID, name="My Rooms"))
+        db.add(
+            SessionRow(id=uid, user_id=OTHER_USER_ID, project_id=project_id, name=None, last_changed=None)
+        )
     return uid
 
 

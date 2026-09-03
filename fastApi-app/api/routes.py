@@ -19,9 +19,10 @@ from typing import Annotated
 import uuid
 import logging
 
-from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pathlib import Path
 
+from core.auth.admin import is_admin
 from core.auth.identity import current_user_id
 from core.auth.ownership import require_session_owner
 from core.image_validation import ImageValidator
@@ -66,6 +67,7 @@ from core.object_storage import (
     resolve_object_cutout_path,
 )
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes, scale_cutout_bounds
+from core.repositories.project_repo import get_project_owner
 from core.repositories.session_repo import is_session_registered, register_uid, touch_session
 from settings import (
     get_3d_storage_dir,
@@ -82,6 +84,13 @@ logger = logging.getLogger(__name__)
 @router.post("/upload", response_model=ImageUploadResponse)
 async def upload_image(
     file: Annotated[UploadFile, File(..., description="Image file to be stored on the server.")],
+    project_id: Annotated[
+        str | None,
+        Form(description="Project to create the room in. Omitted falls back to \"My Rooms\"."),
+    ] = None,
+    skip_validation: Annotated[
+        bool, Form(description="Admin-only: bypass technical + content validation.")
+    ] = False,
     user_id: str = Depends(current_user_id),
 ) -> ImageUploadResponse:
     """Upload an image and persist it to disk.
@@ -89,7 +98,21 @@ async def upload_image(
     The server assigns a new `image_id` and saves the file under the configured
     image storage directory. The returned `image_id` is later used by the click
     endpoint to reference this stored image.
+
+    `skip_validation` is admin-only -- rejected with 403 for anyone else, so
+    the flag can't be used to silently bypass the validation gate.
+
+    `project_id`, when supplied, must be one of the caller's own projects
+    (404 otherwise -- same not-found-vs-not-yours ambiguity every other
+    ownership check in this codebase uses); omitted, `register_uid`'s default
+    project ("My Rooms") is used instead. This route carries no `uid` yet
+    (the whole point of upload is creating one), so `require_session_owner`
+    cannot check this uid-not-yet-born -- the ownership check here is
+    deliberate, standalone code, not a gap in that guard.
     """
+    if project_id is not None and get_project_owner(project_id) != user_id:
+        logger.warning("Upload rejected: project_id=%s not owned by user_id=%s", project_id, user_id)
+        raise HTTPException(status_code=404, detail=f"Project not found for id='{project_id}'")
 
     logger.info(
         "Upload received: filename=%s content_type=%s",
@@ -115,7 +138,11 @@ async def upload_image(
         logger.exception("Upload read failed: image_id=%s", image_id)
         raise HTTPException(status_code=500, detail=f"Upload failed: {exc}") from exc
 
-    if get_upload_validation_enabled():
+    if skip_validation and not is_admin(user_id):
+        logger.warning("Upload rejected: non-admin requested skip_validation user_id=%s", user_id)
+        raise HTTPException(status_code=403, detail="Only admins can skip upload validation.")
+
+    if get_upload_validation_enabled() and not skip_validation:
         # ImageValidationError is itself a ValueError; both mean "rejected".
         try:
             ImageValidator().validate(
@@ -141,7 +168,11 @@ async def upload_image(
             )
             raise HTTPException(status_code=422, detail=detail)
     else:
-        logger.info("Upload validation skipped: VALIDATE=false filename=%s", original_filename)
+        logger.info(
+            "Upload validation skipped: VALIDATE=false skip_validation=%s filename=%s",
+            skip_validation,
+            original_filename,
+        )
 
     try:
         image_path.write_bytes(file_bytes)
@@ -156,7 +187,7 @@ async def upload_image(
         len(file_bytes),
     )
 
-    register_uid(image_id, user_id)
+    register_uid(image_id, user_id, project_id)
     last_changed = touch_session(image_id)
 
     write_upload_preview(storage_dir, image_id, file_bytes)

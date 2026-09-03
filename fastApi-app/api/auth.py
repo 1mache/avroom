@@ -80,4 +80,4 @@ def get_me(user_id: str = Depends(current_user_id), db: Session = Depends(get_db
         # deleted -- decode_token doesn't re-check the users table (the
         # signature is the proof; see core/auth/identity.py).
         raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return MeResponse(user_id=user.id, email=user.email)
+    return MeResponse(user_id=user.id, email=user.email, is_admin=user.is_admin)

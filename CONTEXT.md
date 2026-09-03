@@ -94,6 +94,10 @@ _Avoid_: Seed, click, drag, erase loop
 One queued unit of server work: segment, inpaint, erase, or build 3D.
 _Avoid_: spinner, toolbar mode, "in flight" as a noun
 
+**Batch**:
+A local list of armed jobs in Room Workspace. Nothing in a Batch hits the server until Approve.
+_Avoid_: queue (as the product noun), pending work
+
 **Copy**:
 An object created from another object in the same room. Also the action that creates it.
 _Avoid_: Clone, Duplicate
@@ -149,6 +153,10 @@ _Avoid_: remove, segment (as the user action), click-to-remove
 **Erase**:
 Fill lassoed background pixels without creating an object.
 _Avoid_: cut out, delete
+
+**Batch**:
+Arm cutouts, erases, area boxes, and 3D builds into a local list, reorder and edit them, then Approve to send. Seeds on one armed cut out are one object.
+_Avoid_: queue (as the product verb), submit
 
 **Select**:
 Make an object the selected object, from the stage or the Object Selector.

@@ -4,6 +4,14 @@ export interface SessionInfo {
   last_changed: string | null;
 }
 
+export interface ProjectInfo {
+  id: string;
+  name: string;
+  room_count: number;
+  last_changed: string | null;
+  preview_uid: string | null;
+}
+
 export interface ImageUploadResponse {
   image_id: string;
   original_filename?: string | null;
@@ -19,6 +27,8 @@ export type JobStatus = "queued" | "running" | "done" | "failed" | "conflict";
 export interface JobInfo {
   job_id: string;
   session_id: string;
+  /** Set only by GET /jobs/active (the Projects dashboard's per-card dot). */
+  project_id?: string | null;
   kind: JobKind;
   status: JobStatus;
   error?: string | null;

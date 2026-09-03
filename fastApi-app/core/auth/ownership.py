@@ -22,6 +22,7 @@ from fastapi import Depends, HTTPException, Request
 
 from core.auth.identity import current_user_id
 from core.object_metadata import get_object_by_uuid
+from core.repositories.project_repo import get_project_owner
 from core.repositories.session_repo import get_session_owner
 
 logger = logging.getLogger(__name__)
@@ -100,3 +101,22 @@ async def require_session_owner(request: Request, user_id: str = Depends(current
             "Session ownership check failed: uid=%s caller=%s owner=%s", uid, user_id, owner
         )
         raise HTTPException(status_code=404, detail=not_found_detail)
+
+
+async def require_project_owner(request: Request, user_id: str = Depends(current_user_id)) -> None:
+    """404 (never 403) when the resolved project isn't owned by the caller.
+
+    Mirrors `require_session_owner` at the project layer: the only identifier
+    a project-scoped route carries is the `project_id` path param (`GET`/
+    `POST /projects` have none and pass through unchecked, same as
+    `GET /images/sessions` and `POST /images/upload` today).
+    """
+    project_id = request.path_params.get("project_id")
+    if project_id is None:
+        return
+    owner = get_project_owner(project_id)
+    if owner != user_id:
+        logger.warning(
+            "Project ownership check failed: project_id=%s caller=%s owner=%s", project_id, user_id, owner
+        )
+        raise HTTPException(status_code=404, detail=f"Project not found for id='{project_id}'")

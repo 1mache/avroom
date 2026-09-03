@@ -702,7 +702,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       return;
     }
     if (!selectedObject?.uuid) {
-      setError("This object is from an older session and can't be duplicated.");
+      setError("This object is from an older room and can't be duplicated.");
       return;
     }
     void jobs.duplicateObject(jobs.selectedObjectId);
@@ -712,7 +712,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     (objectId: number) => {
       const target = jobs.objects.find((o) => o.objectId === objectId);
       if (!target?.uuid) {
-        setError("This object is from an older session and can't be deleted.");
+        setError("This object is from an older room and can't be deleted.");
         return;
       }
       rotation.setRotateMode(false);
@@ -796,7 +796,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       } catch (nameError) {
         // A 409 here means the name is taken — a real, user-facing conflict,
         // distinct from segment/inpaint concurrency, so it opens the modal.
-        setError(errorMessage(nameError, "Failed to save session name."));
+        setError(errorMessage(nameError, "Failed to save room name."));
       }
     },
     [imageId, sessionName],
@@ -1479,7 +1479,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         ) : (
           <div className="stage-message">
             {mapsWarming ? <span className="stage-warm-spinner tool-spinner" aria-hidden="true" /> : null}
-            <p className="stage-message-line">Opening the session</p>
+            <p className="stage-message-line">Opening the room</p>
           </div>
         )}
 
@@ -1579,7 +1579,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             onDuplicateObject={(objectId) => {
               const target = jobs.objects.find((o) => o.objectId === objectId);
               if (!target?.uuid) {
-                setError("This object is from an older session and can't be duplicated.");
+                setError("This object is from an older room and can't be duplicated.");
                 return;
               }
               void jobs.duplicateObject(objectId);

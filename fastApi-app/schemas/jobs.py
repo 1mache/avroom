@@ -15,6 +15,16 @@ class JobInfo(BaseModel):
 
     job_id: Annotated[str, Field(description="Server-generated job id.")]
     session_id: Annotated[str, Field(description="Session UID this job belongs to.")]
+    project_id: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "Project this job's session belongs to. Populated only by GET /jobs/active "
+                "(the Projects dashboard's per-card busy/failed dot); None elsewhere."
+            ),
+        ),
+    ]
     kind: Annotated[JobKind, Field(description="What kind of work this job runs.")]
     status: Annotated[JobStatus, Field(description="Current lifecycle state.")]
     error: Annotated[

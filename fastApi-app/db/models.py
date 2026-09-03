@@ -38,17 +38,45 @@ class User(Base):
     is_admin: Mapped[bool] = mapped_column(default=False, nullable=False)
 
     sessions: Mapped[list["SessionRow"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    projects: Mapped[list["ProjectRow"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+
+class ProjectRow(Base):
+    """A named group of rooms (sessions), owned by a user.
+
+    Sits between `User` and `SessionRow`: `POST /images/upload` always lands
+    a new session under some project (explicit, or `get_or_create_default_project`'s
+    "My Rooms" fallback -- see `core/repositories/project_repo.py`). Deleting
+    a project cascades to every session under it (and, transitively, every
+    object) via the FK below.
+    """
+
+    __tablename__ = "projects"
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_projects_user_id_name"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_new_uuid_str)
+    user_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now_utc, nullable=False)
+
+    user: Mapped[User] = relationship(back_populates="projects")
+    sessions: Mapped[list["SessionRow"]] = relationship(back_populates="project")
 
 
 class SessionRow(Base):
-    """One editing session (the `uid` used throughout the API), owned by a user."""
+    """One editing session (the `uid` used throughout the API), owned by a user and a project."""
 
     __tablename__ = "sessions"
-    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_sessions_user_id_name"),)
+    __table_args__ = (UniqueConstraint("project_id", "name", name="uq_sessions_project_id_name"),)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     user_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    project_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_changed: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -58,6 +86,7 @@ class SessionRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now_utc, nullable=False)
 
     user: Mapped[User] = relationship(back_populates="sessions")
+    project: Mapped[ProjectRow] = relationship(back_populates="sessions")
     objects: Mapped[list["ObjectRow"]] = relationship(back_populates="session", cascade="all, delete-orphan")
 
 

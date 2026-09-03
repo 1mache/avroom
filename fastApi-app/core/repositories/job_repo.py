@@ -18,7 +18,7 @@ from typing import Any, Literal
 
 from sqlalchemy import select
 
-from db.models import JobRow
+from db.models import JobRow, SessionRow
 from db.session import session_scope
 from schemas.jobs import JobInfo, JobKind, JobStatus
 
@@ -63,10 +63,11 @@ def _row_to_record(row: JobRow) -> JobRecord:
     )
 
 
-def _row_to_info(row: JobRow) -> JobInfo:
+def _row_to_info(row: JobRow, project_id: str | None = None) -> JobInfo:
     return JobInfo(
         job_id=row.id,
         session_id=row.session_id,
+        project_id=project_id,
         kind=row.kind,  # type: ignore[arg-type]
         status=row.status,  # type: ignore[arg-type]
         error=row.error,
@@ -193,14 +194,19 @@ def list_active_jobs(user_id: str) -> list[JobInfo]:
     dashboard should show a badge for. Finished segment results (`done`) are
     session-scoped work the user consumes inside the workspace, not
     dashboard-level noise.
+
+    Joins `sessions` for `project_id` -- the Projects dashboard filters this
+    same list by project to light up one project card's busy/failed dot, so
+    a job started in a room stays visible after backing out to that screen.
     """
     with session_scope() as db:
         rows = db.execute(
-            select(JobRow)
+            select(JobRow, SessionRow.project_id)
+            .join(SessionRow, SessionRow.id == JobRow.session_id)
             .where(JobRow.user_id == user_id, JobRow.status != "done")
             .order_by(JobRow.created_at)
-        ).scalars().all()
-        return [_row_to_info(row) for row in rows]
+        ).all()
+        return [_row_to_info(row, project_id) for row, project_id in rows]
 
 
 def reserved_mask_ids(session_id: str) -> set[str]:

@@ -16,10 +16,11 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pathlib import Path
 
+from core.session_teardown import delete_session_and_files
+
 from core.image_codec import to_base64_ascii
 from core.image_processing import (
     canvas_shape_from_bytes,
-    debug_click_image_path,
     decode_erase_mask_png,
     load_canvas_bytes,
     split_mask_components,
@@ -28,12 +29,8 @@ from core.auth.identity import current_user_id
 from core.auth.ownership import require_session_owner
 from core.inference_pool.client import get_inference_client
 from core.inference_pool.session_runtime import SessionConflictError, acquire_canvas_writer, release_canvas_writer
-from core.mask_cache import delete_candidates, save_refined_mask_only
+from core.mask_cache import save_refined_mask_only
 from core.repositories.job_repo import create_job, delete_job, get_job, list_session_jobs
-from core.depth_cache import delete_session_depth_maps
-from core.normal_cache import delete_session_normal_maps
-from core.camera_calib_cache import delete_session_camera_calib
-from core.object_metadata import list_object_ids
 from schemas.batch import BatchRequest, BatchResponse
 from schemas.image import ClickRequest, ClickResultResponse, SegmentRequest
 from schemas.jobs import JobSubmitResponse, SubmitEraseRequest, SubmitInpaintRequest
@@ -43,20 +40,10 @@ from schemas.sessions import (
     SessionSyncCheckResponse,
     SetNameRequest,
 )
-from core.object_storage import (
-    current_background_path,
-    delete_session_background_history,
-    legacy_object_cutout_path,
-    legacy_object_glb_path,
-    object_cutout_path,
-    object_glb_path,
-    remove_file,
-    session_preview_path,
-)
+from core.object_storage import legacy_object_cutout_path
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.repositories.session_repo import (
     SessionNotFoundError,
-    delete_session as delete_session_row,
     evaluate_session_sync,
     is_session_registered,
     list_sessions_with_names,
@@ -70,19 +57,26 @@ from core.session_history import (
     redo_background,
     undo_background,
 )
-from settings import get_3d_storage_dir, get_image_storage_dir
+from settings import get_image_storage_dir
 
 router = APIRouter(prefix="/images", tags=["images"], dependencies=[Depends(require_session_owner)])
 logger = logging.getLogger(__name__)
 
 
 @router.get("/sessions")
-async def get_sessions(user_id: str = Depends(current_user_id)) -> list[SessionInfo]:
-    """Return the caller's image UIDs registered via upload, with optional human-readable names."""
-    logger.info("Sessions list requested: user_id=%s", user_id)
+async def get_sessions(
+    project_id: str | None = None, user_id: str = Depends(current_user_id)
+) -> list[SessionInfo]:
+    """Return the caller's rooms, with optional human-readable names.
+
+    `project_id`, when given, scopes the list to one project's rooms (the
+    Rooms dashboard's normal case); omitted, every room the caller owns is
+    returned regardless of project.
+    """
+    logger.info("Sessions list requested: user_id=%s project_id=%s", user_id, project_id)
     result = [
         SessionInfo(uid=uid, name=name, last_changed=last_changed)
-        for uid, name, last_changed in list_sessions_with_names(user_id)
+        for uid, name, last_changed in list_sessions_with_names(user_id, project_id)
     ]
     logger.info("Sessions list returned: count=%d", len(result))
     return result
@@ -297,42 +291,8 @@ async def delete_session(uid: str) -> Response:
     the endpoint is safe to call more than once.
     """
     logger.info("Session delete requested: uid=%s", uid)
-    storage_dir = get_image_storage_dir()
-    removed = 0
-
     try:
-        # Snapshot object ids before the DB delete cascades them away.
-        obj_ids = list_object_ids(uid)
-        delete_session_row(uid)
-
-        for path in storage_dir.glob(f"{uid}.*"):
-            path.unlink(missing_ok=True)
-            removed += 1
-
-        three_d_dir = get_3d_storage_dir()
-        for path in (
-            current_background_path(storage_dir, uid),
-            legacy_object_cutout_path(storage_dir, uid),
-            session_preview_path(storage_dir, uid),
-            debug_click_image_path(storage_dir, uid),
-            # Legacy single GLB (written by earlier backend versions).
-            legacy_object_glb_path(three_d_dir, uid),
-        ):
-            removed += remove_file(path)
-
-        delete_candidates(storage_dir, uid)
-
-        # Remove all numbered per-object cutouts and GLB files (metadata rows
-        # already gone via the session-delete cascade above).
-        for oid in obj_ids:
-            removed += remove_file(object_cutout_path(storage_dir, uid, oid))
-            removed += remove_file(object_glb_path(three_d_dir, uid, oid))
-
-        removed += delete_session_depth_maps(storage_dir, uid)
-        removed += delete_session_normal_maps(storage_dir, uid)
-        removed += delete_session_camera_calib(storage_dir, uid)
-        removed += delete_session_background_history(storage_dir, uid)
-
+        removed = delete_session_and_files(uid)
     except Exception as exc:
         logger.error("Session delete failed: uid=%s error=%s", uid, exc)
         raise HTTPException(status_code=500, detail=f"Session delete failed: {exc}") from exc

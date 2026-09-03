@@ -11,6 +11,7 @@ const ACCEPTED_TYPES = ["image/jpeg", "image/png", "image/webp"];
 const MAX_BYTES = 25 * 1024 * 1024;
 
 export interface UploadScreenProps {
+  projectId: string;
   onCancel: () => void;
   onUploaded: (uid: string) => void;
 }
@@ -26,7 +27,7 @@ const formatSize = (bytes: number): string =>
  * here is a normal outcome and gets explained in place rather than thrown into
  * an error dialog.
  */
-export const UploadScreen: React.FC<UploadScreenProps> = ({ onCancel, onUploaded }) => {
+export const UploadScreen: React.FC<UploadScreenProps> = ({ projectId, onCancel, onUploaded }) => {
   const { user } = useAuth();
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -103,7 +104,7 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ onCancel, onUploaded
     setRejection(null);
 
     try {
-      const response = await uploadImage(file, skipValidation);
+      const response = await uploadImage(file, projectId, skipValidation);
       onUploaded(response.image_id);
     } catch (uploadError) {
       // 422 is the validation gate turning the photo down — a normal answer,
@@ -117,7 +118,7 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ onCancel, onUploaded
       }
       setPhase("rejected");
     }
-  }, [file, onUploaded, skipValidation]);
+  }, [file, projectId, onUploaded, skipValidation]);
 
   const busy = phase === "checking";
 
@@ -134,7 +135,7 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ onCancel, onUploaded
         >
           <BackIcon />
         </button>
-        <span className="dash-wordmark">New session</span>
+        <span className="dash-wordmark">New room</span>
       </header>
 
       <main className="dash-main is-narrow">
@@ -222,7 +223,7 @@ export const UploadScreen: React.FC<UploadScreenProps> = ({ onCancel, onUploaded
             onClick={() => void handleStart()}
             disabled={!file || busy}
           >
-            {busy ? "Checking…" : "Start session"}
+            {busy ? "Checking…" : "Start room"}
           </button>
         </div>
 

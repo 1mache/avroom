@@ -3,25 +3,31 @@ import React, { useCallback, useState } from "react";
 import { AuthScreen } from "./components/layout/AuthScreen";
 import { DashboardScreen } from "./components/layout/DashboardScreen";
 import { DebugScreen } from "./components/layout/DebugScreen";
+import { ProjectsScreen } from "./components/layout/ProjectsScreen";
 import { UploadScreen } from "./components/layout/UploadScreen";
 import { WorkspaceScreen } from "./components/layout/WorkspaceScreen";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import type { ProjectInfo } from "./types/api";
 
-// Two screens, the upload step, and the pipeline debug screen. Not enough
-// surface to justify a router: the dashboard is home, and every other screen
-// is always entered from it.
+// Projects dashboard is home; a project opens its rooms dashboard; a room
+// opens the workspace. Not enough surface to justify a router: every screen
+// below Projects is always entered from the one above it.
 type Route =
-  | { screen: "dashboard" }
-  | { screen: "upload" }
-  | { screen: "workspace"; uid: string }
+  | { screen: "projects" }
+  | { screen: "rooms"; projectId: string; projectName: string }
+  | { screen: "upload"; projectId: string; projectName: string }
+  | { screen: "workspace"; uid: string; projectId: string; projectName: string }
   | { screen: "debug" };
 
 const AppShell: React.FC = () => {
   const { status } = useAuth();
-  const [route, setRoute] = useState<Route>({ screen: "dashboard" });
+  const [route, setRoute] = useState<Route>({ screen: "projects" });
 
-  const openSession = useCallback((uid: string) => setRoute({ screen: "workspace", uid }), []);
-  const goToDashboard = useCallback(() => setRoute({ screen: "dashboard" }), []);
+  const openProject = useCallback(
+    (project: ProjectInfo) => setRoute({ screen: "rooms", projectId: project.id, projectName: project.name }),
+    [],
+  );
+  const goToProjects = useCallback(() => setRoute({ screen: "projects" }), []);
 
   // "checking" resolves near-instantly (one GET /auth/me) — no spinner is
   // worth the flash it would add.
@@ -34,26 +40,48 @@ const AppShell: React.FC = () => {
   }
 
   if (route.screen === "workspace") {
+    const { projectId, projectName, uid } = route;
     // Keyed by uid so switching sessions remounts the workspace rather than
     // leaving one session's objects, geometry and in-flight jobs behind.
-    return <WorkspaceScreen key={route.uid} uid={route.uid} onExit={goToDashboard} />;
+    return (
+      <WorkspaceScreen
+        key={uid}
+        uid={uid}
+        onExit={() => setRoute({ screen: "rooms", projectId, projectName })}
+      />
+    );
   }
 
   if (route.screen === "upload") {
-    return <UploadScreen onCancel={goToDashboard} onUploaded={openSession} />;
+    const { projectId, projectName } = route;
+    return (
+      <UploadScreen
+        projectId={projectId}
+        onCancel={() => setRoute({ screen: "rooms", projectId, projectName })}
+        onUploaded={(uid) => setRoute({ screen: "workspace", uid, projectId, projectName })}
+      />
+    );
   }
 
   if (route.screen === "debug") {
-    return <DebugScreen onExit={goToDashboard} />;
+    return <DebugScreen onExit={goToProjects} />;
   }
 
-  return (
-    <DashboardScreen
-      onOpenSession={openSession}
-      onNewSession={() => setRoute({ screen: "upload" })}
-      onOpenDebug={() => setRoute({ screen: "debug" })}
-    />
-  );
+  if (route.screen === "rooms") {
+    const { projectId, projectName } = route;
+    return (
+      <DashboardScreen
+        key={projectId}
+        projectId={projectId}
+        projectName={projectName}
+        onOpenSession={(uid) => setRoute({ screen: "workspace", uid, projectId, projectName })}
+        onNewSession={() => setRoute({ screen: "upload", projectId, projectName })}
+        onBack={goToProjects}
+      />
+    );
+  }
+
+  return <ProjectsScreen onOpenProject={openProject} onOpenDebug={() => setRoute({ screen: "debug" })} />;
 };
 
 export const App: React.FC = () => (

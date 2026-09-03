@@ -1,12 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
 
 import { deleteSession, getActiveJobs, getSessions } from "../../api/images";
-import avroomLogo from "../../assets/avroom.png";
-import { useAuth } from "../../context/AuthContext";
 import type { JobInfo, SessionInfo } from "../../types/api";
 import { byMostRecentlyEdited } from "../../utils/time";
 import { SessionCard } from "../dashboard/SessionCard";
-import { FlaskIcon, LogoutIcon, PlusIcon } from "../icons";
+import { BackIcon, PlusIcon } from "../icons";
 import { ConfirmDialog } from "../widgets/ConfirmDialog";
 
 // How often the dashboard re-checks which sessions have queued/running or
@@ -16,23 +14,27 @@ import { ConfirmDialog } from "../widgets/ConfirmDialog";
 const JOBS_POLL_INTERVAL_MS = 5000;
 
 export interface DashboardScreenProps {
+  projectId: string;
+  projectName: string;
   onOpenSession: (uid: string) => void;
   onNewSession: () => void;
-  onOpenDebug: () => void;
+  onBack: () => void;
 }
 
 type LoadState = "loading" | "ready" | "offline";
 
 /**
- * Home screen: everything that owns a session as a whole — starting one,
- * reopening one, deleting one. Editing lives in the workspace.
+ * Rooms dashboard: one project's rooms — starting one, reopening one,
+ * deleting one. Editing lives in the workspace; project-level actions
+ * (rename/delete the project itself) live one screen up, in ProjectsScreen.
  */
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
+  projectId,
+  projectName,
   onOpenSession,
   onNewSession,
-  onOpenDebug,
+  onBack,
 }) => {
-  const { user, logout } = useAuth();
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [pendingDeleteUid, setPendingDeleteUid] = useState<string | null>(null);
@@ -42,13 +44,13 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   const load = useCallback(async () => {
     try {
-      const list = await getSessions();
+      const list = await getSessions(projectId);
       setSessions([...list].sort(byMostRecentlyEdited));
       setLoadState("ready");
     } catch {
       setLoadState("offline");
     }
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
     void load();
@@ -91,7 +93,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       setPendingDeleteUid(null);
     } catch (deleteError) {
       setError(
-        deleteError instanceof Error ? deleteError.message : "Failed to delete the session.",
+        deleteError instanceof Error ? deleteError.message : "Failed to delete the room.",
       );
     } finally {
       setIsDeleting(false);
@@ -101,24 +103,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   return (
     <div className="dashboard">
       <header className="dash-header">
-        <img src={avroomLogo} alt="" className="dash-logo" />
-        <span className="dash-wordmark">AVRoom</span>
-        <div className="dash-header-end">
-          {user?.is_admin && (
-            <button
-              type="button"
-              className="tool-btn"
-              onClick={onOpenDebug}
-              aria-label="Pipeline debug"
-              data-tip="Pipeline debug"
-            >
-              <FlaskIcon />
-            </button>
-          )}
-          <button type="button" className="tool-btn" onClick={logout} aria-label="Sign out" data-tip="Sign out">
-            <LogoutIcon />
-          </button>
-        </div>
+        <button type="button" className="tool-btn" onClick={onBack} aria-label="Back to projects" data-tip="Back to projects">
+          <BackIcon />
+        </button>
+        <span className="dash-wordmark">{projectName}</span>
       </header>
 
       <main className="dash-main">
@@ -126,12 +114,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           <span className="new-session-mark">
             <PlusIcon size={22} />
           </span>
-          <span className="new-session-label">New session</span>
+          <span className="new-session-label">New room</span>
           <span className="new-session-hint">JPG, PNG or WebP · 640×480 and up</span>
         </button>
 
         <div className="dash-eyebrow">
-          <span className="dash-eyebrow-title">Past sessions</span>
+          <span className="dash-eyebrow-title">Rooms</span>
           {loadState === "ready" && sessions.length > 0 ? (
             <span className="dash-eyebrow-count">{String(sessions.length).padStart(2, "0")}</span>
           ) : null}
@@ -157,7 +145,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             <div className="dash-note">
               <p className="dash-note-line">Nothing here yet</p>
               <p className="dash-note-hint">
-                Start a session with a room photo and it will show up here.
+                Start a room with a photo and it will show up here.
               </p>
             </div>
           ) : (
@@ -184,14 +172,14 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
       {pendingDelete ? (
         <ConfirmDialog
-          title="Delete this session?"
+          title="Delete this room?"
           body={
             <>
-              <strong>{pendingDelete.name ?? "Untitled session"}</strong> and everything cut out of
+              <strong>{pendingDelete.name ?? "Untitled room"}</strong> and everything cut out of
               it will be removed. This can&rsquo;t be undone.
             </>
           }
-          confirmLabel="Delete session"
+          confirmLabel="Delete room"
           destructive
           busy={isDeleting}
           onConfirm={() => void handleConfirmDelete()}

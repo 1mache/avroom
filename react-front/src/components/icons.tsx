@@ -29,6 +29,13 @@ export const BackIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
+export const PencilIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <path d="M14.5 4.5l5 5L8 21H3v-5z" />
+    <path d="M13 6l5 5" />
+  </Svg>
+);
+
 export const ScissorsIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>
     <circle cx="6.5" cy="17.5" r="2.6" />

@@ -20,11 +20,12 @@ if str(_APP_ROOT) not in sys.path:
 
 from fastapi.routing import APIRoute  # noqa: E402
 
-from core.auth.ownership import require_session_owner  # noqa: E402
+from core.auth.ownership import require_project_owner, require_session_owner  # noqa: E402
 from main import app  # noqa: E402
 
 _UID_PATH_PARAMS = {"uid", "object_uuid"}
 _UID_BODY_FIELDS = {"uid", "image_id", "session_id"}
+_PROJECT_PATH_PARAMS = {"project_id"}
 
 # Routes deliberately exempt from the guard, reviewed and justified below.
 # Keep this present-but-empty: any addition must be a visible diff.
@@ -39,6 +40,10 @@ def _is_session_scoped(route: APIRoute) -> bool:
         if fields and _UID_BODY_FIELDS & set(fields):
             return True
     return False
+
+
+def _is_project_scoped(route: APIRoute) -> bool:
+    return bool(_PROJECT_PATH_PARAMS & set(route.param_convertors))
 
 
 def test_every_session_scoped_route_is_guarded() -> None:
@@ -56,6 +61,29 @@ def test_every_session_scoped_route_is_guarded() -> None:
             unguarded.append(key)
 
     assert not unguarded, f"session-scoped routes missing the ownership guard: {unguarded}"
+
+
+def test_every_project_scoped_route_is_guarded() -> None:
+    """Same anti-fail-open check as above, for the `/projects` router.
+
+    A brand new router (like `api/projects.py`) is exactly the hole
+    `require_session_owner`'s router-level dependency can't close on its
+    own -- this walks the live route table so a future project-scoped route
+    added without the guard fails loudly here instead of silently trusting
+    a caller-supplied `project_id`.
+    """
+    unguarded: list[tuple[str, str]] = []
+    for route in app.routes:
+        if not isinstance(route, APIRoute):
+            continue
+        if not _is_project_scoped(route):
+            continue
+        key = (sorted(route.methods)[0], route.path)
+        calls = {dep.call for dep in route.dependant.dependencies}
+        if require_project_owner not in calls:
+            unguarded.append(key)
+
+    assert not unguarded, f"project-scoped routes missing the ownership guard: {unguarded}"
 
 
 def test_multipart_routes_never_resolve_uid_from_body() -> None:

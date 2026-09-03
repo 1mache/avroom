@@ -180,8 +180,8 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         value={sessionName}
         onChange={(event) => onSessionNameChange(event.target.value)}
         onKeyDown={onSessionNameKeyDown}
-        placeholder="Untitled session"
-        aria-label="Session name"
+        placeholder="Untitled room"
+        aria-label="Room name"
         spellCheck={false}
       />
 

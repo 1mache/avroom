@@ -13,6 +13,7 @@ import {
   warmSessionMaps,
 } from "../../api/images";
 import { boxBoundsFromDraft, useAreaSelect } from "../../hooks/useAreaSelect";
+import { useArmedBatch } from "../../hooks/useArmedBatch";
 import { useLassoSelect, type LassoDraft } from "../../hooks/useLassoSelect";
 import { useConflictNotices, type ConflictContext } from "../../hooks/useConflictNotices";
 import { useDashboardPreview } from "../../hooks/useDashboardPreview";
@@ -23,6 +24,7 @@ import { useRotationController } from "../../hooks/useRotationController";
 import { useSessionJobs, type JobErrorContext } from "../../hooks/useSessionJobs";
 import { useSessionSync } from "../../hooks/useSessionSync";
 import type { BatchSource, VerifyMode } from "../../types/api";
+import type { ArmedJobSource } from "../../types/armedBatch";
 import {
   effectiveCutoutBounds,
   effectiveCutoutSrc,
@@ -56,6 +58,7 @@ import { rasterizeEraseMask } from "../../utils/lassoMask";
 import { ConfirmDialog } from "../widgets/ConfirmDialog";
 import { MaskPickerModal } from "../widgets/MaskPickerModal";
 import { MODEL_3D_FRAME_PADDING, Model3DFrame } from "../widgets/Model3DFrame";
+import { BatchQueuePanel } from "../workspace/BatchQueuePanel";
 import { ObjectRail } from "../workspace/ObjectRail";
 import { Toolbar } from "../workspace/Toolbar";
 
@@ -233,6 +236,14 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     onMutated: handleMutated,
     onConflict: handleJobConflict,
     autoGenerate3d,
+  });
+
+  const armedBatch = useArmedBatch({
+    imageId,
+    naturalSize,
+    autoGenerate3d,
+    onMutated: handleMutated,
+    onError: handleJobError,
   });
 
   const sync = useSessionSync({
@@ -537,6 +548,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       if (seeds.length === 0) {
         return;
       }
+      if (armedBatch.batchModeRef.current) {
+        armedBatch.appendClicks(seeds);
+        setPendingSeeds([]);
+        setCutMode(false);
+        return;
+      }
       const rounded = seeds.map((seed) => ({
         x: Math.round(seed.x),
         y: Math.round(seed.y),
@@ -549,7 +566,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       setCutMode(false);
       jobs.runSegment(rounded[0].x, rounded[0].y, verifyMode, rounded);
     },
-    [jobs.runSegment, verifyMode],
+    [armedBatch.appendClicks, armedBatch.batchModeRef, jobs.runSegment, verifyMode],
   );
 
   const handleCut = useCallback(() => {
@@ -558,16 +575,20 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     setEraserMode(false);
     setLassoDraft(null);
     setPendingEraseRegions([]);
-    setPendingBatchSource(null);
+    if (!armedBatch.batchMode) {
+      setPendingBatchSource(null);
+    }
     setPendingSeeds([]);
     setCutMode((armed) => !armed);
-  }, [rotation.setRotateMode]);
+  }, [armedBatch.batchMode, rotation.setRotateMode]);
 
   const handleEraser = useCallback(() => {
     rotation.setRotateMode(false);
     setCutMode(false);
     setAreaMode(false);
-    setPendingBatchSource(null);
+    if (!armedBatch.batchMode) {
+      setPendingBatchSource(null);
+    }
     setPendingSeeds([]);
     setEraserMode((armed) => {
       if (armed) {
@@ -576,7 +597,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       }
       return !armed;
     });
-  }, [rotation.setRotateMode]);
+  }, [armedBatch.batchMode, rotation.setRotateMode]);
 
   const handleArea = useCallback(() => {
     rotation.setRotateMode(false);
@@ -588,6 +609,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     setAreaMode((armed) => !armed);
   }, [rotation.setRotateMode]);
 
+  const handleToggleBatchMode = useCallback(() => {
+    armedBatch.setBatchMode((on) => !on);
+  }, [armedBatch.setBatchMode]);
+
   const handleToggleMultiPoint = useCallback(() => {
     setMultiPoint((on) => !on);
   }, []);
@@ -596,13 +621,26 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     setPendingSeeds((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
   }, []);
 
-  const handleBoxReady = useCallback((source: BatchSource) => {
-    setPendingBatchSource(source);
-  }, []);
+  const handleBoxReady = useCallback(
+    (source: BatchSource) => {
+      if (armedBatch.batchModeRef.current && source.kind === "box") {
+        armedBatch.appendJob(source);
+        return;
+      }
+      setPendingBatchSource(source);
+    },
+    [armedBatch.appendJob, armedBatch.batchModeRef],
+  );
 
   const submitEraseRegions = useCallback(
     (regions: ClickPosition[][]) => {
       if (!naturalSize || regions.length === 0) {
+        return;
+      }
+      if (armedBatch.batchModeRef.current) {
+        armedBatch.appendJob({ kind: "lasso", regions });
+        setPendingEraseRegions([]);
+        setEraserMode(false);
         return;
       }
       const maskB64 = rasterizeEraseMask(naturalSize.width, naturalSize.height, regions);
@@ -613,11 +651,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       setEraserMode(false);
       jobs.runErase(maskB64);
     },
-    [jobs.runErase, naturalSize],
+    [armedBatch.appendJob, armedBatch.batchModeRef, jobs.runErase, naturalSize],
   );
 
   const handleLassoComplete = useCallback(
     (polygon: ClickPosition[], shiftKey: boolean) => {
+      if (armedBatch.batchModeRef.current) {
+        armedBatch.appendJob({ kind: "lasso", regions: [polygon] });
+        return;
+      }
       if (shiftKey) {
         setPendingEraseRegions((prev) => [...prev, polygon]);
         return;
@@ -626,10 +668,18 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         pendingEraseRegions.length > 0 ? [...pendingEraseRegions, polygon] : [polygon];
       submitEraseRegions(regions);
     },
-    [pendingEraseRegions, submitEraseRegions],
+    [armedBatch.appendJob, armedBatch.batchModeRef, pendingEraseRegions, submitEraseRegions],
   );
 
   const handleSubmitPendingBatch = useCallback(() => {
+    if (armedBatch.batchModeRef.current) {
+      if (pendingSeeds.length > 0) {
+        armedBatch.appendClicks(pendingSeeds);
+        setPendingSeeds([]);
+      }
+      void armedBatch.approve();
+      return;
+    }
     if (pendingEraseRegions.length > 0) {
       submitEraseRegions(pendingEraseRegions);
       return;
@@ -645,12 +695,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     setPendingBatchSource(null);
     void jobs.runBatch(source);
   }, [
+    armedBatch.appendClicks,
+    armedBatch.approve,
+    armedBatch.batchModeRef,
     fireSegmentFromSeeds,
     jobs.isBatching,
     jobs.runBatch,
     pendingBatchSource,
     pendingEraseRegions,
-    pendingSeeds.length,
+    pendingSeeds,
     submitEraseRegions,
   ]);
 
@@ -846,7 +899,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         submitEraseRegions(pendingEraseRegions);
       } else if (event.key === "Enter" && pendingSeeds.length > 0) {
         event.preventDefault();
-        fireSegmentFromSeeds(pendingSeeds);
+        if (armedBatch.batchModeRef.current) {
+          armedBatch.appendClicks(pendingSeeds);
+          setPendingSeeds([]);
+        } else {
+          fireSegmentFromSeeds(pendingSeeds);
+        }
       }
     };
 
@@ -863,6 +921,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     pendingEraseRegions,
     fireSegmentFromSeeds,
     submitEraseRegions,
+    armedBatch.appendClicks,
+    armedBatch.batchModeRef,
     rotation.commitCurrentRotation,
     rotation.setRotateMode,
   ]);
@@ -980,7 +1040,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       areaMode,
       multiPoint,
       pendingSeeds.length,
-      fireSegmentFromSeeds,
       jobs.objects,
       jobs.selectedObjectId,
       rotation.rotateMode,
@@ -1096,13 +1155,75 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       : null;
   const batchBoxIsPending = displayedBatchBox !== null && pendingBatchSource !== null && !areaDraft;
 
+  const armedBoxes = useMemo(() => {
+    const boxes: {
+      id: string;
+      box: Extract<ArmedJobSource, { kind: "box" }>;
+      selected: boolean;
+    }[] = [];
+    for (const job of armedBatch.jobs) {
+      if (job.source.kind === "box") {
+        boxes.push({
+          id: job.id,
+          box: job.source,
+          selected: job.id === armedBatch.selectedJobId,
+        });
+      }
+    }
+    return boxes;
+  }, [armedBatch.jobs, armedBatch.selectedJobId]);
+
+  const armedLassos = useMemo(() => {
+    const lassos: {
+      id: string;
+      polygon: ClickPosition[];
+      selected: boolean;
+    }[] = [];
+    for (const job of armedBatch.jobs) {
+      if (job.source.kind !== "lasso") {
+        continue;
+      }
+      job.source.regions.forEach((polygon, index) => {
+        lassos.push({
+          id: `${job.id}-${index}`,
+          polygon,
+          selected: job.id === armedBatch.selectedJobId,
+        });
+      });
+    }
+    return lassos;
+  }, [armedBatch.jobs, armedBatch.selectedJobId]);
+
+  const armedSeeds = useMemo(() => {
+    const seeds: {
+      id: string;
+      point: ClickPosition;
+      selected: boolean;
+    }[] = [];
+    for (const job of armedBatch.jobs) {
+      if (job.source.kind !== "clicks") {
+        continue;
+      }
+      job.source.points.forEach((point, index) => {
+        seeds.push({
+          id: `${job.id}-${index}`,
+          point,
+          selected: job.id === armedBatch.selectedJobId,
+        });
+      });
+    }
+    return seeds;
+  }, [armedBatch.jobs, armedBatch.selectedJobId]);
+
   const activeJobs = jobs.jobs.filter((job) => job.status === "queued" || job.status === "running");
   const segmentingCount = activeJobs.filter((job) => job.kind === "segment").length;
   const removingCount = activeJobs.filter((job) => job.kind === "inpaint").length;
   const erasingCount = activeJobs.filter((job) => job.kind === "erase").length;
   const canvasWorkCount = removingCount + erasingCount;
 
-  const status = jobs.isBatching
+  const status = armedBatch.isApproving
+    ? "approving batch"
+    : jobs.isBatching
     ? "batch cutting"
     : objectDrag.isSmartPasting
       ? "smart pasting"
@@ -1289,11 +1410,18 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         eraserMode={eraserMode}
         onEraser={handleEraser}
         hasPendingEraseRegions={pendingEraseRegions.length > 0}
-        batchBusy={jobs.isBatching}
+        batchMode={armedBatch.batchMode}
+        onToggleBatchMode={handleToggleBatchMode}
+        armedQueueCount={armedBatch.jobs.length}
+        queuePanelOpen={armedBatch.panelOpen}
+        onToggleQueuePanel={() => armedBatch.setPanelOpen((open) => !open)}
+        batchBusy={jobs.isBatching || armedBatch.isApproving}
         hasPendingBatch={
-          pendingBatchSource !== null ||
-          pendingSeeds.length > 0 ||
-          pendingEraseRegions.length > 0
+          armedBatch.batchMode
+            ? armedBatch.jobs.length > 0 || pendingSeeds.length > 0
+            : pendingBatchSource !== null ||
+              pendingSeeds.length > 0 ||
+              pendingEraseRegions.length > 0
         }
         onSubmitBatch={handleSubmitPendingBatch}
         verifyMode={verifyMode}
@@ -1377,6 +1505,16 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
               />
             ) : null}
 
+            {renderedRect && naturalSize
+              ? armedBoxes.map(({ id, box, selected }) => (
+                  <div
+                    key={id}
+                    className={`stage-area-box is-pending${selected ? " is-selected" : ""}`}
+                    style={batchBoxStageStyle(box, renderedRect, naturalSize)}
+                  />
+                ))
+              : null}
+
             {pendingSeeds.length > 0 && renderedRect && naturalSize ? (
               <div className="stage-seed-markers" aria-hidden="true">
                 {pendingSeeds.map((seed, index) => (
@@ -1397,8 +1535,32 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
               </div>
             ) : null}
 
-            {renderedRect && naturalSize && (lassoDraft || pendingEraseRegions.length > 0) ? (
+            {renderedRect && naturalSize && armedSeeds.length > 0 ? (
+              <div className="stage-seed-markers" aria-hidden="true">
+                {armedSeeds.map((seed) => (
+                  <span
+                    key={seed.id}
+                    className={`stage-pick-marker is-pending${seed.selected ? " is-selected" : ""}`}
+                    style={{
+                      left: `${renderedRect.x + (seed.point.x / naturalSize.width) * renderedRect.width}px`,
+                      top: `${renderedRect.y + (seed.point.y / naturalSize.height) * renderedRect.height}px`,
+                    }}
+                  >
+                    <span className="stage-pick-marker-ring" />
+                  </span>
+                ))}
+              </div>
+            ) : null}
+
+            {renderedRect && naturalSize && (lassoDraft || pendingEraseRegions.length > 0 || armedLassos.length > 0) ? (
               <svg className="stage-lasso-layer" aria-hidden="true">
+                {armedLassos.map((lasso) => (
+                  <polygon
+                    key={lasso.id}
+                    className={`stage-lasso-path is-pending${lasso.selected ? " is-selected" : ""}`}
+                    points={lassoPolygonStagePoints(lasso.polygon, renderedRect, naturalSize)}
+                  />
+                ))}
                 {pendingEraseRegions.map((polygon, index) => (
                   <polygon
                     key={`pending-erase-${index}`}
@@ -1499,25 +1661,62 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           <p className="stage-hint">Drag to orbit · Enter applies · Esc cancels</p>
         ) : eraserMode ? (
           <p className="stage-hint">
-            {pendingEraseRegions.length > 0
-              ? `${pendingEraseRegions.length} region${pendingEraseRegions.length === 1 ? "" : "s"} · Shift-drag adds · Enter or checkmark runs · Esc cancels`
-              : "Drag a loop to erase · Shift-drag stages · Esc cancels"}
+            {armedBatch.batchMode
+              ? "Drag a loop to arm erase · Esc cancels"
+              : pendingEraseRegions.length > 0
+                ? `${pendingEraseRegions.length} region${pendingEraseRegions.length === 1 ? "" : "s"} · Shift-drag adds · Enter or checkmark runs · Esc cancels`
+                : "Drag a loop to erase · Shift-drag stages · Esc cancels"}
           </p>
         ) : areaMode ? (
-          <p className="stage-hint">Drag a box around the furniture · Esc cancels</p>
+          <p className="stage-hint">
+            {armedBatch.batchMode
+              ? "Drag a box to arm cut · Esc cancels"
+              : "Drag a box around the furniture · Esc cancels"}
+          </p>
         ) : pendingBatchSource ? (
           <p className="stage-hint">Submit batch cut (checkmark) · Esc clears box</p>
         ) : pendingSeeds.length > 0 ? (
           <p className="stage-hint">
-            {pendingSeeds.length} seed{pendingSeeds.length === 1 ? "" : "s"} placed · Shift+click adds · Enter or
-            checkmark runs · Esc clears
+            {armedBatch.batchMode
+              ? `${pendingSeeds.length} seed${pendingSeeds.length === 1 ? "" : "s"} · Enter or checkmark arms · Esc clears`
+              : `${pendingSeeds.length} seed${pendingSeeds.length === 1 ? "" : "s"} placed · Shift+click adds · Enter or checkmark runs · Esc clears`}
           </p>
         ) : cutMode ? (
           <p className="stage-hint">
-            {multiPoint
-              ? "Click to add seeds · Enter or checkmark runs · Esc cancels"
-              : "Click the object · Shift+click adds seeds · Esc cancels"}
+            {armedBatch.batchMode
+              ? multiPoint
+                ? "Click to add seeds · Enter or checkmark arms · Esc cancels"
+                : "Click to arm cutout · Shift+click adds seeds · Esc cancels"
+              : multiPoint
+                ? "Click to add seeds · Enter or checkmark runs · Esc cancels"
+                : "Click the object · Shift+click adds seeds · Esc cancels"}
           </p>
+        ) : armedBatch.batchMode && armedBatch.jobs.length > 0 ? (
+          <p className="stage-hint">
+            {armedBatch.jobs.length} armed · checkmark approves · queue button to edit
+          </p>
+        ) : null}
+
+        {armedBatch.panelOpen ? (
+          <BatchQueuePanel
+            jobs={armedBatch.jobs}
+            selectedJobId={armedBatch.selectedJobId}
+            busy={armedBatch.isApproving || jobs.isBatching}
+            onSelectJob={armedBatch.setSelectedJobId}
+            onActionChange={armedBatch.setJobAction}
+            onMoveUp={(id) => armedBatch.moveJob(id, "up")}
+            onMoveDown={(id) => armedBatch.moveJob(id, "down")}
+            onRemove={armedBatch.removeJob}
+            onApprove={() => {
+              if (pendingSeeds.length > 0) {
+                armedBatch.appendClicks(pendingSeeds);
+                setPendingSeeds([]);
+              }
+              void armedBatch.approve();
+            }}
+            onClear={armedBatch.clearJobs}
+            onClose={() => armedBatch.setPanelOpen(false)}
+          />
         ) : null}
 
         {conflictNotices.notices.length > 0 ? (
@@ -1569,10 +1768,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                 }
               }
               if (uuids.length > 0) {
+                if (armedBatch.batchModeRef.current) {
+                  armedBatch.appendJob({ kind: "objects", uuids });
+                  setBatchUuids(new Set());
+                  return;
+                }
                 void jobs.runBatch({ kind: "objects", uuids });
               }
             }}
-            generate3DDisabled={jobs.isBatching}
+            generate3DDisabled={jobs.isBatching || armedBatch.isApproving}
             onToggleHidden={handleToggleHidden}
             onToggleShowOriginal={handleToggleShowOriginal}
             onRenameObject={handleRenameObject}
@@ -1590,7 +1794,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             onImportObject={(file) => {
               void jobs.importObject(file);
             }}
-            importDisabled={rotation.isPreparing3D || jobs.isImporting || jobs.isBatching}
+            importDisabled={rotation.isPreparing3D || jobs.isImporting || jobs.isBatching || armedBatch.isApproving}
             onDismissJob={handleDismissJob}
           />
         ) : null}

@@ -25,7 +25,7 @@ class BatchClickPoint(BaseModel):
 
 
 class BatchClicksSource(BaseModel):
-    """Auto-segment each click; skip points that yield no viable mask."""
+    """One auto-segment: all clicks are extra points on a single object."""
 
     kind: Literal["clicks"] = "clicks"
     points: Annotated[list[BatchClickPoint], Field(min_length=1)]

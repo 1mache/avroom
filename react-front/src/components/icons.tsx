@@ -133,6 +133,21 @@ export const CheckIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
+/** Stacked layers — batch compose mode. */
+export const BatchIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <rect x="5" y="9" width="14" height="10" rx="1.5" />
+    <path d="M7 6.5h10M8.5 4h7" />
+  </Svg>
+);
+
+/** List — open the armed batch queue. */
+export const QueueIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <path d="M6 7h12M6 12h12M6 17h8" />
+  </Svg>
+);
+
 export const EyeIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>
     <path d="M2.6 12S6.2 5.9 12 5.9 21.4 12 21.4 12 17.8 18.1 12 18.1 2.6 12 2.6 12z" />

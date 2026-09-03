@@ -151,30 +151,34 @@ def _discover_mask_jobs(
     base_dir: Path,
 ) -> list[dict[str, object]]:
     if isinstance(source, BatchClicksSource):
-        jobs: list[dict[str, object]] = []
-        for point in source.points:
-            try:
-                candidates = get_inference_client().run_segment(
-                    image_id=image_id,
-                    base_dir=base_dir,
-                    x=point.x,
-                    y=point.y,
-                    exclude_mask_ids=frozenset(pinned_mask_ids(image_id)),
-                    verify="auto",
-                )
-            except (InferenceJobError, ValueError, SessionConflictError) as exc:
-                logger.error("Batch click skipped: x=%s y=%s error=%s", point.x, point.y, exc)
-                continue
-            if not candidates:
-                continue
-            mask_id, _cutout = candidates[0]
-            jobs.append(
-                {
-                    "mask_id": mask_id,
-                    "mask": load_refined_mask(base_dir, image_id, mask_id),
-                }
+        first = source.points[0]
+        segment_points = tuple((point.x, point.y) for point in source.points)
+        try:
+            candidates = get_inference_client().run_segment(
+                image_id=image_id,
+                base_dir=base_dir,
+                x=first.x,
+                y=first.y,
+                points=segment_points,
+                exclude_mask_ids=frozenset(pinned_mask_ids(image_id)),
+                verify="auto",
             )
-        return jobs
+        except (InferenceJobError, ValueError, SessionConflictError) as exc:
+            logger.error(
+                "Batch clicks skipped: points=%d error=%s",
+                len(source.points),
+                exc,
+            )
+            return []
+        if not candidates:
+            return []
+        mask_id, _cutout = candidates[0]
+        return [
+            {
+                "mask_id": mask_id,
+                "mask": load_refined_mask(base_dir, image_id, mask_id),
+            }
+        ]
 
     image_bytes = load_canvas_bytes(image_id, base_dir)
     bgr = _decode_bgr(image_bytes)

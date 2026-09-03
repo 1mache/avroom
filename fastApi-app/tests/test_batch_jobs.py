@@ -13,7 +13,14 @@ _APP_ROOT = Path(__file__).resolve().parents[1]
 if str(_APP_ROOT) not in sys.path:
     sys.path.insert(0, str(_APP_ROOT))
 
-from schemas.batch import BatchBoxSource, BatchGlbResult, BatchObjectsSource, BatchRequest  # noqa: E402
+from schemas.batch import (  # noqa: E402
+    BatchBoxSource,
+    BatchClickPoint,
+    BatchClicksSource,
+    BatchGlbResult,
+    BatchObjectsSource,
+    BatchRequest,
+)
 
 
 def _write_session_png(base_dir: Path, image_id: str, width: int = 40, height: int = 40) -> None:
@@ -202,3 +209,31 @@ def test_objects_source_skips_inpaint(tmp_path: Path) -> None:
     discover.assert_not_called()
     assert result.objects[0].status == "glb_only"
     assert result.glbs[0].ok is True
+
+
+def test_clicks_source_segments_once_with_all_points(tmp_path: Path) -> None:
+    from core.batch_jobs import _discover_mask_jobs
+
+    mask = np.zeros((40, 40), dtype=np.uint8)
+    mask[5:20, 5:20] = 255
+    client = MagicMock()
+    client.run_segment.return_value = [("0", b"cutout")]
+
+    source = BatchClicksSource(
+        points=[BatchClickPoint(x=10, y=20), BatchClickPoint(x=30, y=40)]
+    )
+    with (
+        patch("core.batch_jobs.get_inference_client", return_value=client),
+        patch("core.batch_jobs.pinned_mask_ids", return_value=frozenset()),
+        patch("core.batch_jobs.load_refined_mask", return_value=mask),
+    ):
+        jobs = _discover_mask_jobs("sid", source, tmp_path)
+
+    assert len(jobs) == 1
+    assert jobs[0]["mask_id"] == "0"
+    client.run_segment.assert_called_once()
+    kwargs = client.run_segment.call_args.kwargs
+    assert kwargs["x"] == 10
+    assert kwargs["y"] == 20
+    assert kwargs["points"] == ((10, 20), (30, 40))
+    assert kwargs["verify"] == "auto"

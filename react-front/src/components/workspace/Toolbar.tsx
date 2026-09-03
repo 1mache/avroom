@@ -5,12 +5,14 @@ import {
   AreaIcon,
   BackIcon,
   BacktrackIcon,
+  BatchIcon,
   CheckIcon,
   CopyIcon,
   DownloadIcon,
   EraserIcon,
   ForwardIcon,
   MultiPointIcon,
+  QueueIcon,
   RevertIcon,
   RotateIcon,
   ScissorsIcon,
@@ -37,6 +39,11 @@ export interface ToolbarProps {
   eraserMode: boolean;
   onEraser: () => void;
   hasPendingEraseRegions: boolean;
+  batchMode: boolean;
+  onToggleBatchMode: () => void;
+  armedQueueCount: number;
+  queuePanelOpen: boolean;
+  onToggleQueuePanel: () => void;
   batchBusy: boolean;
   /** A box batch or multi-point seeds are staged and waiting for submit. */
   hasPendingBatch: boolean;
@@ -94,6 +101,11 @@ export const Toolbar: React.FC<ToolbarProps> = ({
   eraserMode,
   onEraser,
   hasPendingEraseRegions,
+  batchMode,
+  onToggleBatchMode,
+  armedQueueCount,
+  queuePanelOpen,
+  onToggleQueuePanel,
   batchBusy,
   hasPendingBatch,
   onSubmitBatch,
@@ -238,17 +250,50 @@ export const Toolbar: React.FC<ToolbarProps> = ({
 
       <button
         type="button"
+        className={`tool-btn${batchMode ? " is-armed" : ""}`}
+        data-tip={batchMode ? "Batch on — jobs arm until approved" : "Batch mode"}
+        aria-label="Batch mode"
+        aria-pressed={batchMode}
+        disabled={batchBusy}
+        onClick={onToggleBatchMode}
+      >
+        <BatchIcon />
+      </button>
+
+      <button
+        type="button"
+        className={`tool-btn has-badge${queuePanelOpen ? " is-armed" : ""}`}
+        data-tip="Armed batch queue"
+        aria-label="Armed batch queue"
+        aria-pressed={queuePanelOpen}
+        disabled={armedQueueCount === 0 && !batchMode}
+        onClick={onToggleQueuePanel}
+      >
+        <QueueIcon />
+        {armedQueueCount > 0 ? (
+          <span className="tool-btn-badge">{armedQueueCount > 9 ? "9+" : armedQueueCount}</span>
+        ) : null}
+      </button>
+
+      <button
+        type="button"
         className={`tool-btn${hasPendingBatch ? " is-armed" : ""}`}
         data-tip={
-          hasPendingEraseRegions
-            ? "Run staged erase regions"
-            : hasPendingSegmentSeeds
-              ? "Run multi-point cut"
+          batchMode
+            ? hasPendingSegmentSeeds
+              ? "Approve batch (flush seeds first)"
               : hasPendingBatch
-                ? "Run batch cut in the box"
-                : "Stage seeds, a box, or erase regions first"
+                ? "Approve batch queue"
+                : "Arm jobs first"
+            : hasPendingEraseRegions
+              ? "Run staged erase regions"
+              : hasPendingSegmentSeeds
+                ? "Run multi-point cut"
+                : hasPendingBatch
+                  ? "Run batch cut in the box"
+                  : "Stage seeds, a box, or erase regions first"
         }
-        aria-label="Submit pending work"
+        aria-label={batchMode ? "Approve batch" : "Submit pending work"}
         disabled={!hasPendingBatch || batchBusy}
         onClick={onSubmitBatch}
       >

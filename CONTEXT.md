@@ -183,8 +183,16 @@ Open the 3D angle picker on the selected object and commit a new 2D view. The So
 _Avoid_: orbit (the gesture is part of rotate, not a separate product verb)
 
 **Smart-paste**:
-Place the selected object at a drop point and rescale it to that depth.
+Place the selected object at a drop point. When armed, runs only the steps enabled in toolbar settings: scale by POV (depth-proportional rescale) and smart rotate (infer mesh pose from surface normals).
 _Avoid_: drag (when this extra step runs)
+
+**Scale by POV**:
+Smart-paste step that rescales the object to match depth at the drop point.
+_Avoid_: rescale (as the product verb alone)
+
+**Smart rotate**:
+Smart-paste step that infers a mesh-orbit pose from normals at the source cutout center vs the drop point.
+_Avoid_: auto-rotate (as the product verb)
 
 **Backtrack**:
 Restore the previous background stage of the room. Later objects are hidden.
@@ -213,7 +221,7 @@ Obtain a 3D render, orbit, commit a novel view. The Source Cutout stays.
 _Avoid_: 3D preview (as the product)
 
 **Place**:
-Drag to change offset. With smart-paste armed, the drop also rescales.
+Drag to change offset. With smart-paste armed, the drop also runs whichever smart-paste steps are on in settings (scale by POV, smart rotate).
 _Avoid_: move, position
 
 **History**:

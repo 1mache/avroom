@@ -49,7 +49,7 @@ def run_session_batch(image_id: str, request: BatchRequest, base_dir: Path) -> B
     """Discover, peel with auto-verify, then optional GLB. Failures are per-object."""
 
     batch_id = str(uuid.uuid4())
-    then = request.then or ["inpaint", "generate_3d"]
+    then = request.then or ["inpaint"]
     logger.info(
         "Batch starting: image_id=%s batch_id=%s source=%s then=%s",
         image_id,

@@ -140,6 +140,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const [showOriginalIds, setShowOriginalIds] = useState<ReadonlySet<number>>(new Set());
 
   const [smartPaste, setSmartPaste] = useState(false);
+  const [scaleByPov, setScaleByPov] = useState(true);
+  const [smartRotate, setSmartRotate] = useState(true);
+  const [autoGenerate3d, setAutoGenerate3d] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [historyBusy, setHistoryBusy] = useState(false);
@@ -229,6 +232,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     onError: handleJobError,
     onMutated: handleMutated,
     onConflict: handleJobConflict,
+    autoGenerate3d,
   });
 
   const sync = useSessionSync({
@@ -310,6 +314,20 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       return next;
     });
   }, [startMapsWarm]);
+
+  const handleToggleScaleByPov = useCallback(() => {
+    setScaleByPov((on) => !on);
+  }, []);
+
+  const handleToggleSmartRotate = useCallback(() => {
+    setSmartRotate((on) => !on);
+  }, []);
+
+  const runSmartPasteAfterDrag = useCallback(
+    (objectId: number, x: number, y: number) =>
+      jobs.runSmartPasteAfterDrag(objectId, x, y, { scaleByPov, smartRotate }),
+    [jobs.runSmartPasteAfterDrag, scaleByPov, smartRotate],
+  );
 
   // --- session load -------------------------------------------------------
 
@@ -449,7 +467,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     showOriginalIds,
     smartPasteEnabled: smartPaste,
     updateOffset: jobs.updateOffset,
-    runSmartPasteAfterDrag: jobs.runSmartPasteAfterDrag,
+    runSmartPasteAfterDrag,
     onSettled: capturePreview,
   });
 
@@ -1287,6 +1305,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         onCopy={handleCopy}
         smartPaste={smartPaste}
         onToggleSmartPaste={handleToggleSmartPaste}
+        scaleByPov={scaleByPov}
+        onToggleScaleByPov={handleToggleScaleByPov}
+        smartRotate={smartRotate}
+        onToggleSmartRotate={handleToggleSmartRotate}
+        autoGenerate3d={autoGenerate3d}
+        onToggleAutoGenerate3d={() => setAutoGenerate3d((on) => !on)}
         isDeleting={jobs.isDeleting}
         onDeleteObject={handleDeleteObject}
         canUndo={canUndo}

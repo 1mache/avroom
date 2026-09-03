@@ -47,7 +47,7 @@ class BatchRequest(BaseModel):
     ]
     then: Annotated[
         list[Literal["inpaint", "generate_3d"]],
-        Field(default_factory=lambda: ["inpaint", "generate_3d"]),
+        Field(default_factory=lambda: ["inpaint"]),
     ]
     verify: Annotated[
         VerifyMode,

@@ -128,11 +128,14 @@ def _execute_impl(job: JobRequest) -> JobResult:
         from core.image_processing import run_smart_paste
 
         assert job.object_uuid is not None and job.x is not None and job.y is not None
+        paste_options = job.options or {}
         paste_result = run_smart_paste(
             base_dir=base_dir,
             object_uuid=job.object_uuid,
             x=job.x,
             y=job.y,
+            scale_by_pov=bool(paste_options.get("scale_by_pov", True)),
+            smart_rotate=bool(paste_options.get("smart_rotate", True)),
         )
         return JobResult(
             job_id=job.job_id,

@@ -25,7 +25,6 @@ import type {
   CutoutBounds,
   JobInfo,
   ObjectInfo,
-  SmartPasteResponse,
   VerifyMode,
 } from "../types/api";
 import type {
@@ -95,6 +94,8 @@ interface UseSessionJobsOptions {
    * overlapped an in-flight removal). Fired once per job; the job row is
    * then dismissed automatically since the caller has already been told. */
   onConflict?: (job: JobInfo) => void;
+  /** When true, queue 3D generation after each cut-out (inpaint or batch). */
+  autoGenerate3d?: boolean;
 }
 
 /**
@@ -108,7 +109,7 @@ interface UseSessionJobsOptions {
  * the next sync tick) picks it back up.
  */
 export function useSessionJobs(imageId: string | null, options: UseSessionJobsOptions) {
-  const { onError, onMutated, onConflict } = options;
+  const { onError, onMutated, onConflict, autoGenerate3d = false } = options;
 
   const [objects, setObjects] = useState<CutoutObject[]>([]);
   const [selectedObjectId, setSelectedObjectId] = useState<number | null>(null);
@@ -137,6 +138,11 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   useEffect(() => {
     jobsRef.current = jobs;
   }, [jobs]);
+
+  const autoGenerate3dRef = useRef(autoGenerate3d);
+  useEffect(() => {
+    autoGenerate3dRef.current = autoGenerate3d;
+  }, [autoGenerate3d]);
 
   useEffect(() => {
     segmentChoosingJobIdRef.current =
@@ -333,7 +339,13 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       batchingRef.current = true;
       setIsBatching(true);
       try {
-        await runSessionBatch(currentImageId, { source, verify: "auto" });
+        const then: BatchRequest["then"] =
+          source.kind === "objects"
+            ? ["generate_3d"]
+            : autoGenerate3dRef.current
+              ? ["inpaint", "generate_3d"]
+              : ["inpaint"];
+        await runSessionBatch(currentImageId, { source, verify: "auto", then });
         if (imageIdRef.current === currentImageId) {
           onMutated?.();
         }
@@ -449,7 +461,12 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         return;
       }
 
-      inpaintMask({ image_id: currentImageId, mask_id: maskId, from_job_id: jobId })
+      inpaintMask({
+        image_id: currentImageId,
+        mask_id: maskId,
+        from_job_id: jobId,
+        generate_3d: autoGenerate3dRef.current,
+      })
         .then(() => onMutated?.())
         .catch((err) => {
           if (imageIdRef.current === currentImageId) {
@@ -848,44 +865,57 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [isImporting, onError, onMutated],
   );
 
-  const applySmartPasteResult = useCallback(
-    (objectId: number, result: SmartPasteResponse) => {
-      setObjects((prev) =>
-        prev.map((o) =>
-          o.objectId === objectId
-            ? {
-                ...o,
-                displayScale: result.display_scale,
-                rotation: null,
-              }
-            : o,
-        ),
-      );
-      onMutated?.();
-    },
-    [onMutated],
-  );
-
   const runSmartPasteAfterDrag = useCallback(
-    (objectId: number, x: number, y: number) => {
+    (
+      objectId: number,
+      x: number,
+      y: number,
+      options: { scaleByPov?: boolean; smartRotate?: boolean } = {},
+    ) => {
+      const scaleByPov = options.scaleByPov ?? true;
+      const smartRotate = options.smartRotate ?? true;
+      if (!scaleByPov && !smartRotate) {
+        return Promise.resolve(false);
+      }
+
       const currentImageId = imageIdRef.current;
       const target = objectsRef.current.find((o) => o.objectId === objectId);
       if (!currentImageId || !target?.uuid) {
         return Promise.resolve(false);
       }
 
-      return smartPasteObject(target.uuid, x, y)
+      return smartPasteObject(target.uuid, x, y, { scaleByPov, smartRotate })
         .then(async (result) => {
           if (imageIdRef.current !== currentImageId) {
             return false;
           }
-          applySmartPasteResult(objectId, result);
-          if (result.azimuth_deg != null && result.relative_elevation_deg != null) {
+
+          if (scaleByPov) {
+            setObjects((prev) =>
+              prev.map((o) =>
+                o.objectId === objectId
+                  ? {
+                      ...o,
+                      displayScale: result.display_scale,
+                      rotation: smartRotate ? null : o.rotation,
+                    }
+                  : o,
+              ),
+            );
+            onMutated?.();
+          }
+
+          if (
+            smartRotate &&
+            result.azimuth_deg != null &&
+            result.relative_elevation_deg != null
+          ) {
             await applyInferredRotation(objectId, {
               azimuthDeg: result.azimuth_deg,
               relativeElevationDeg: result.relative_elevation_deg,
             });
           }
+
           return true;
         })
         .catch((err) => {
@@ -895,7 +925,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           return false;
         });
     },
-    [applyInferredRotation, applySmartPasteResult, onError],
+    [applyInferredRotation, onError, onMutated],
   );
 
   return {

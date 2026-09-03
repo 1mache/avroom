@@ -103,6 +103,13 @@ class SubmitInpaintRequest(BaseModel):
             description="Id of the segment job this mask came from, so its row is consumed atomically.",
         ),
     ]
+    generate_3d: Annotated[
+        bool,
+        Field(
+            default=False,
+            description="When true, queue 3D generation for the new object after cutout completes.",
+        ),
+    ]
 
 
 class SubmitEraseRequest(BaseModel):

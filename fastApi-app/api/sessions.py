@@ -198,13 +198,19 @@ async def inpaint_mask(
     new inpaint job is now itself in `reserved_mask_ids` until it runs.
     """
     logger.info(
-        "Inpainting queued: image_id=%s mask_id=%s from_job_id=%s user_id=%s",
+        "Inpainting queued: image_id=%s mask_id=%s from_job_id=%s generate_3d=%s user_id=%s",
         request.image_id,
         request.mask_id,
         request.from_job_id,
+        request.generate_3d,
         user_id,
     )
-    job = create_job(user_id, request.image_id, "inpaint", {"mask_id": request.mask_id})
+    job = create_job(
+        user_id,
+        request.image_id,
+        "inpaint",
+        {"mask_id": request.mask_id, "generate_3d": request.generate_3d},
+    )
 
     if request.from_job_id is not None:
         source = get_job(user_id, request.from_job_id)

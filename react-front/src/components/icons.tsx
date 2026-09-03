@@ -112,6 +112,14 @@ export const MoreIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
+/** Gear — workspace settings trigger. */
+export const SettingsIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <circle cx="12" cy="12" r="2.4" />
+    <path d="M12 3.2v2.1M12 18.7v2.1M3.2 12h2.1M18.7 12h2.1M5.4 5.4l1.5 1.5M17.1 17.1l1.5 1.5M5.4 18.6l1.5-1.5M17.1 6.9l1.5-1.5" />
+  </Svg>
+);
+
 export const CheckIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>
     <path d="M4.5 12.6l4.8 4.7L19.5 6.9" />

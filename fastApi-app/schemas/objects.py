@@ -220,7 +220,7 @@ class ImportObjectResponse(BaseModel):
 
 
 class PlacementRequest(BaseModel):
-    """Request payload for a placement-point operation (rescale-by-depth, smart-paste)."""
+    """Request payload for rescale-by-depth."""
 
     x: Annotated[
         int,
@@ -230,6 +230,25 @@ class PlacementRequest(BaseModel):
         int,
         Field(ge=0, description="Placement Y coordinate in natural-image pixels."),
     ]
+
+
+class SmartPasteRequest(PlacementRequest):
+    """Request payload for smart-paste at a placement point."""
+
+    scale_by_pov: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Depth-proportional rescale at the drop point.",
+        ),
+    ] = True
+    smart_rotate: Annotated[
+        bool,
+        Field(
+            default=True,
+            description="Infer mesh-orbit pose from surface normals at source vs drop.",
+        ),
+    ] = True
 
 
 class PlacementResponse(BaseModel):

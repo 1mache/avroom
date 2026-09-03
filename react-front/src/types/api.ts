@@ -49,6 +49,7 @@ export interface SubmitInpaintRequest {
   image_id: string;
   mask_id: string;
   from_job_id?: string | null;
+  generate_3d?: boolean;
 }
 
 export interface SubmitEraseRequest {
@@ -180,6 +181,8 @@ export interface RescaleByDepthResponse {
 export interface SmartPasteRequest {
   x: number;
   y: number;
+  scale_by_pov?: boolean;
+  smart_rotate?: boolean;
 }
 
 export interface SmartPasteResponse {

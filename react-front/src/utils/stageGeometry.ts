@@ -299,6 +299,34 @@ export const buildHitTestOrder = <
   return [selected, ...topmostFirst];
 };
 
+/** Default hold-Control magnification on the stage (CSS scale). */
+export const STAGE_FOCUS_ZOOM = 2.5;
+/** Scroll-wheel floor / ceiling while focus-zoom is armed. */
+export const STAGE_FOCUS_ZOOM_MIN = 1.25;
+export const STAGE_FOCUS_ZOOM_MAX = 6;
+
+export const clampStageFocusZoom = (scale: number): number =>
+  Math.min(STAGE_FOCUS_ZOOM_MAX, Math.max(STAGE_FOCUS_ZOOM_MIN, scale));
+
+/**
+ * Maps a stage-local pointer through an active CSS zoom back to unzoomed
+ * stage-local coordinates. Origin is the frozen transform-origin; scale is
+ * the CSS scale factor (1 = identity).
+ */
+export const unzoomStagePoint = (
+  local: ClickPosition,
+  origin: ClickPosition,
+  scale: number,
+): ClickPosition => {
+  if (scale === 1) {
+    return local;
+  }
+  return {
+    x: origin.x + (local.x - origin.x) / scale,
+    y: origin.y + (local.y - origin.y) / scale,
+  };
+};
+
 /**
  * Converts a pointer event on the stage into natural-image coordinates, or
  * null when the pointer is on the letterbox rather than the photo.

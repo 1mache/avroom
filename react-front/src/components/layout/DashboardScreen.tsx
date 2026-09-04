@@ -1,6 +1,12 @@
 import React, { useCallback, useEffect, useState } from "react";
 
-import { deleteSession, getActiveJobs, getSessions } from "../../api/images";
+import {
+  copySession,
+  deleteSession,
+  getActiveJobs,
+  getSessions,
+  setSessionName,
+} from "../../api/images";
 import type { JobInfo, SessionInfo } from "../../types/api";
 import { byMostRecentlyEdited } from "../../utils/time";
 import { SessionCard } from "../dashboard/SessionCard";
@@ -24,9 +30,9 @@ export interface DashboardScreenProps {
 type LoadState = "loading" | "ready" | "offline";
 
 /**
- * Rooms dashboard: one project's rooms — starting one, reopening one,
- * deleting one. Editing lives in the workspace; project-level actions
- * (rename/delete the project itself) live one screen up, in ProjectsScreen.
+ * Rooms dashboard: one project's rooms — starting, reopening, renaming,
+ * copying, deleting. Object editing lives in the workspace; project-level
+ * actions live one screen up, in ProjectsScreen.
  */
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   projectId,
@@ -39,6 +45,10 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [pendingDeleteUid, setPendingDeleteUid] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [copyingUid, setCopyingUid] = useState<string | null>(null);
+  const [renameTarget, setRenameTarget] = useState<SessionInfo | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameBusy, setRenameBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeJobs, setActiveJobs] = useState<JobInfo[]>([]);
 
@@ -100,6 +110,49 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     }
   }, [pendingDeleteUid]);
 
+  const handleCopyRoom = useCallback(
+    async (uid: string) => {
+      setCopyingUid(uid);
+      try {
+        await copySession(uid);
+        await load();
+      } catch (copyError) {
+        setError(copyError instanceof Error ? copyError.message : "Failed to copy the room.");
+      } finally {
+        setCopyingUid(null);
+      }
+    },
+    [load],
+  );
+
+  const openRename = useCallback((uid: string) => {
+    const session = sessions.find((s) => s.uid === uid) ?? null;
+    if (!session) {
+      return;
+    }
+    setRenameTarget(session);
+    setRenameName(session.name ?? "");
+  }, [sessions]);
+
+  const handleRename = useCallback(async () => {
+    const name = renameName.trim();
+    if (!renameTarget || !name) {
+      return;
+    }
+    setRenameBusy(true);
+    try {
+      const updated = await setSessionName(renameTarget.uid, name);
+      setSessions((prev) =>
+        [...prev.map((s) => (s.uid === updated.uid ? updated : s))].sort(byMostRecentlyEdited),
+      );
+      setRenameTarget(null);
+    } catch (renameError) {
+      setError(renameError instanceof Error ? renameError.message : "Failed to rename the room.");
+    } finally {
+      setRenameBusy(false);
+    }
+  }, [renameName, renameTarget]);
+
   return (
     <div className="dashboard">
       <header className="dash-header">
@@ -160,8 +213,11 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                     lastChanged={session.last_changed}
                     isBusy={sessionJobs.some((job) => job.status === "queued" || job.status === "running")}
                     isFailed={sessionJobs.some((job) => job.status === "failed" || job.status === "conflict")}
+                    isCopying={copyingUid === session.uid}
                     onOpen={onOpenSession}
                     onRequestDelete={setPendingDeleteUid}
+                    onRequestCopy={(uid) => void handleCopyRoom(uid)}
+                    onRequestRename={openRename}
                   />
                 );
               })}
@@ -169,6 +225,29 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           )}
         </div>
       </main>
+
+      {renameTarget ? (
+        <ConfirmDialog
+          title="Rename room"
+          body={
+            <input
+              type="text"
+              className="session-name"
+              value={renameName}
+              onChange={(event) => setRenameName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void handleRename();
+              }}
+              placeholder="Untitled room"
+              autoFocus
+            />
+          }
+          confirmLabel="Rename"
+          busy={renameBusy}
+          onConfirm={() => void handleRename()}
+          onCancel={() => setRenameTarget(null)}
+        />
+      ) : null}
 
       {pendingDelete ? (
         <ConfirmDialog

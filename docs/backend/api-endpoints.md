@@ -261,6 +261,10 @@ Behavior:
 
 Names are unique across all sessions. Renaming a uid to its current name is a no-op (allowed).
 
+## `POST /images/{uid}/copy`
+
+Clones a room into the same project: Origin Photo, live Background, Preview, and every currently-visible object (cutout + optional GLB). Named like object copies (`Living room-copy`, then `-copy1`). Skips undo history, jobs, mask candidates, and depth caches. Returns `SessionInfo` for the new room. **409** if the canvas writer is busy; **404** if the session or Origin Photo is missing.
+
 ## `POST /images/{uid}/sync-check`
 
 Compares a client-held session timestamp against server truth so the frontend can detect stale local state.
@@ -316,6 +320,7 @@ Client-visible durable mutations bump `last_changed` through `touch_session` in 
 | `POST /images/click` | `api/routes.py` |
 | `POST /images/inpaint` | `api/routes.py` |
 | `POST /images/{uid}/name` | `api/routes.py` |
+| `POST /images/{uid}/copy` | `api/sessions.py` |
 | `PATCH /images/objects/{object_uuid}` | `api/routes.py` |
 | `POST /images/objects/{object_uuid}/duplicate` | `api/routes.py` |
 | `DELETE /images/objects/{object_uuid}` | `api/routes.py` |

@@ -1,9 +1,8 @@
 import { useEffect, useRef } from "react";
-import type { Dispatch, RefObject, SetStateAction } from "react";
+import type { Dispatch, SetStateAction } from "react";
 
 import type { ClickPosition } from "../types/session";
 import { isLassoLargeEnough } from "../utils/lassoMask";
-import { toNaturalPoint, type Rect, type Size } from "../utils/stageGeometry";
 
 export interface LassoDraft {
   points: ClickPosition[];
@@ -12,9 +11,8 @@ export interface LassoDraft {
 interface UseLassoSelectOptions {
   lassoDraft: LassoDraft | null;
   setLassoDraft: Dispatch<SetStateAction<LassoDraft | null>>;
-  naturalSize: Size | null;
-  renderedRect: Rect | null;
-  stageRef: RefObject<HTMLElement | null>;
+  /** Client → natural-image (must apply any active stage zoom). */
+  clientToNatural: (clientX: number, clientY: number) => ClickPosition | null;
   /** Called once on pointer-up when the lasso is large enough. */
   onLassoComplete: (polygon: ClickPosition[], shiftKey: boolean) => void;
 }
@@ -26,31 +24,21 @@ interface UseLassoSelectOptions {
 export function useLassoSelect({
   lassoDraft,
   setLassoDraft,
-  naturalSize,
-  renderedRect,
-  stageRef,
+  clientToNatural,
   onLassoComplete,
 }: UseLassoSelectOptions) {
   const lassoDraftRef = useRef(lassoDraft);
   lassoDraftRef.current = lassoDraft;
+  const clientToNaturalRef = useRef(clientToNatural);
+  clientToNaturalRef.current = clientToNatural;
 
   useEffect(() => {
-    if (!lassoDraft || !naturalSize || !renderedRect) {
+    if (!lassoDraft) {
       return;
     }
 
     const handleMove = (event: PointerEvent) => {
-      const stage = stageRef.current;
-      if (!stage) {
-        return;
-      }
-      const stageRect = stage.getBoundingClientRect();
-      const natural = toNaturalPoint(
-        event.clientX - stageRect.left,
-        event.clientY - stageRect.top,
-        renderedRect,
-        naturalSize,
-      );
+      const natural = clientToNaturalRef.current(event.clientX, event.clientY);
       if (!natural) {
         return;
       }
@@ -83,12 +71,5 @@ export function useLassoSelect({
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
     };
-  }, [
-    lassoDraft,
-    naturalSize,
-    renderedRect,
-    stageRef,
-    onLassoComplete,
-    setLassoDraft,
-  ]);
+  }, [lassoDraft, onLassoComplete, setLassoDraft]);
 }

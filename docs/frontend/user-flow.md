@@ -61,6 +61,8 @@ sequenceDiagram
 
 Because `selectMask` fires the inpaint request detached, the user can immediately click a new point and start a second segment/inpaint while the first is still running — the backend's per-session canvas-writer lock and region leases (`docs/backend/concurrency.md`) make this safe, and `useConflictNotices` surfaces any resulting 409 as a dismissible inline notice rather than a hard error.
 
+**Hold Control to zoom**: while the pointer is over the photo, holding Control (not Cmd) magnifies the stage around the cursor after a short delay (default ~2.5×; scroll wheel adjusts between 1.25× and 6×) so a small detail is easier to seed. Release Control to return to 1×. Clicks while zoomed still map to the same natural-image pixel. Zoom is off during rotate mode, text fields, and object drag/resize; Ctrl+Z / Ctrl+Y still undo/redo without flashing the zoom.
+
 ## Batch area cut and bulk 3D
 
 The toolbar area tool arms a box drag on the stage (always `verify=auto`). Mouse-up calls `POST /images/{uid}/batch` with `source.kind=box`. Ctrl/Cmd-click Object Selector thumbs plus the Object Selector **3D** button send `source.kind=objects`. One batch at a time on the client. Results land through `useSessionSync` after `onMutated`.
@@ -72,6 +74,7 @@ All of a Room's objects stay composited on the inpainted Background simultaneous
 - **Select**: click an object's row in the Object Selector (`ObjectRail`), or click/drag it directly on the stage (alpha-precise hit-testing — see [components.md](components.md)). Hiding the selected object clears selection; a newly created object auto-selects.
 - **Drag**: pointer-down on a hit object starts a drag; position updates locally on every `pointermove` (clamped to the object's visible bounds), and the final offset is persisted with one `PATCH` (`setObjectOffset`) on `pointerup` — not on every move.
 - **Copy**: the toolbar's copy button (disabled without a selection, while copying, or while rotating) calls `useSessionJobs.duplicateObject`, which copies the object server-side (`POST /images/objects/{uuid}/duplicate`), fetches the Copy's full metadata, and selects it. The Copy lands nudged ~15% of its own width to one side of the source, not exactly on top of it (server-computed, see `backend/api-endpoints.md`).
+- **Copy room**: Room Selector card 3-dot menu, or Workspace Options → **Copy room**, calls `POST /images/{uid}/copy`. Creates a same-project clone named `…-copy` / `…-copy1`; stays on the current screen (does not open the copy).
 - **Delete**: the toolbar's trash button opens a `ConfirmDialog`; confirming calls `useSessionJobs.deleteObject`, which requires the object to have a `uuid` (pre-UUID legacy objects can't be deleted) and permanently removes its cutout, 3D render, and novel-view caches server-side. The Background keeps the object's inpainted hole — deletion never repaints it.
 - **Backtrack / Forward**: toolbar buttons (and Ctrl/Cmd+Z / Ctrl+Shift+Z / Ctrl/Cmd+Y) call `POST /images/{uid}/history/undo` and `.../redo`. Backtrack restores the previous Background stage and hides objects created after that stage; Forward brings them back. Making a new inpaint/erase after backtracking dumps the forward branch. Up to four prior stages are kept server-side.
 - Both copy and delete trigger a debounced Preview re-capture (`WorkspaceScreen`'s `onMutated` wiring).

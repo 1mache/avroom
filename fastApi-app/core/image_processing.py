@@ -23,6 +23,7 @@ from core.object_storage import current_background_path, object_cutout_path, res
 from core.depth_cache import (
     compute_average_depth_over_mask,
     get_or_compute_depth,
+    load_depth_map,
     memory_image_key,
 )
 from core.normal_cache import get_or_compute_normals
@@ -572,7 +573,11 @@ def build_object_metadata_for_inpaint(
     object_id: int,
     base_dir: Path,
 ) -> ObjectMetadata:
-    """Compute average mask depth and build metadata before canvas is overwritten.
+    """Compute reference depth and build metadata before canvas is overwritten.
+
+    ``average_depth`` is the depth at the cutout alpha-bbox feet (bottom-center)
+    — floor contact, not object body. Smart paste samples the same creation
+    depth map, so a drop back on the original footprint keeps scale 1.0.
 
     Uses the current canvas bytes and depth cache. Expects a cache hit when
     segmentation ran on the same canvas state immediately before inpaint.
@@ -587,7 +592,21 @@ def build_object_metadata_for_inpaint(
             segmentor.depth.map_depth,
         )
         refined_mask = load_refined_mask(base_dir, image_id, mask_id)
-        average_depth = compute_average_depth_over_mask(depth_map, refined_mask)
+        plane = depth_map[:, :, 0] if depth_map.ndim == 3 else depth_map
+        cutout_bytes = load_cutout_bytes(base_dir, image_id, mask_id)
+        bounds = extract_cutout_bounds_from_png_bytes(cutout_bytes)
+        if bounds is not None:
+            origin_depth_sample_point = load_avroom_attr(
+                "origin_depth_sample_point",
+                "avroom_object_removal.core.cutout_rescaler",
+            )
+            cx, cy = origin_depth_sample_point(
+                bounds.left, bounds.top, bounds.right, bounds.bottom
+            )
+            h, w = plane.shape[:2]
+            average_depth = float(plane[max(0, min(cy, h - 1)), max(0, min(cx, w - 1))])
+        else:
+            average_depth = compute_average_depth_over_mask(depth_map, refined_mask)
 
         calib_payload = load_camera_calib(base_dir, image_id)
         calibration = (
@@ -696,7 +715,27 @@ def _load_object_metadata_for_rescale(base_dir: Path, object_uuid: str) -> Objec
     return metadata
 
 
-def _compute_session_depth_map(base_dir: Path, session_id: str) -> np.ndarray:
+def _compute_session_depth_map(
+    base_dir: Path,
+    session_id: str,
+    *,
+    content_hash: str | None = None,
+) -> np.ndarray:
+    """Return the depth map used for POV scale.
+
+    Prefers the object's creation-canvas cache (``content_hash``) so source and
+    target are sampled on the same map. Current-canvas depth is the inpainted
+    hole — same pixel, different surface — and would resize a same-place drop.
+    """
+    if content_hash:
+        cached = load_depth_map(base_dir, session_id, content_hash)
+        if cached is not None:
+            return cached
+        logger.warning(
+            "Creation depth cache miss, falling back to current canvas: session_id=%s hash=%s",
+            session_id,
+            content_hash[:12],
+        )
     image_bytes = load_canvas_bytes(image_id=session_id, base_dir=base_dir)
     with inference_session():
         segmentor = load_avroom_attr("ObjectSegmentor")()
@@ -739,7 +778,9 @@ def rescale_cutout_by_depth(
     )
 
     metadata = _load_object_metadata_for_rescale(base_dir, object_uuid)
-    depth_map = _compute_session_depth_map(base_dir, metadata.session_id)
+    depth_map = _compute_session_depth_map(
+        base_dir, metadata.session_id, content_hash=metadata.content_hash
+    )
 
     source_average_depth, target_depth, scale_factor = _compute_depth_rescale(
         source_average_depth=metadata.average_depth,
@@ -827,16 +868,56 @@ def run_smart_paste(
         logger.info("Smart paste auto-rotate skipped: NORMAL_MAP=false object_uuid=%s", object_uuid)
 
     depth_map: np.ndarray | None = None
+    at_origin_footprint = False
+    origin_depth: float | None = None
+    origin_x: int | None = None
+    origin_y: int | None = None
+    scale_x, scale_y = x, y
     if scale_by_pov:
-        depth_map = _compute_session_depth_map(base_dir, metadata.session_id)
+        depth_map = _compute_session_depth_map(
+            base_dir, metadata.session_id, content_hash=metadata.content_hash
+        )
+        if base_bounds is not None and depth_map is not None:
+            drop_is_at_original_footprint = load_avroom_attr(
+                "drop_is_at_original_footprint",
+                "avroom_object_removal.core.cutout_rescaler",
+            )
+            sample_depth_at_point = load_avroom_attr(
+                "sample_depth_at_point",
+                "avroom_object_removal.core.cutout_rescaler",
+            )
+            origin_depth_sample_point = load_avroom_attr(
+                "origin_depth_sample_point",
+                "avroom_object_removal.core.cutout_rescaler",
+            )
+            origin_x, origin_y = origin_depth_sample_point(
+                base_bounds.left,
+                base_bounds.top,
+                base_bounds.right,
+                base_bounds.bottom,
+            )
+            origin_depth = sample_depth_at_point(depth_map, origin_x, origin_y)
+            at_origin_footprint = drop_is_at_original_footprint(
+                left=base_bounds.left,
+                top=base_bounds.top,
+                right=base_bounds.right,
+                bottom=base_bounds.bottom,
+                x=x,
+                y=y,
+                natural_width=base_bounds.natural_width,
+                natural_height=base_bounds.natural_height,
+            )
+            if at_origin_footprint:
+                scale_x, scale_y = origin_x, origin_y
 
+    source_depth = origin_depth if origin_depth is not None else metadata.average_depth
     with inference_session():
         smart_paster = load_avroom_attr("SmartPaster")()
         paste_result = smart_paster.smart_paste(
-            source_average_depth=metadata.average_depth,
+            source_average_depth=source_depth,
             depth_map=depth_map,
-            x=x,
-            y=y,
+            x=scale_x,
+            y=scale_y,
             normal_map=normal_map,
             source_x=source_x,
             source_y=source_y,

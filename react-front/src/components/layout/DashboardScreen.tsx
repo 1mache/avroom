@@ -163,13 +163,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       </header>
 
       <main className="dash-main">
-        <button type="button" className="new-session" onClick={onNewSession}>
-          <span className="new-session-mark">
-            <PlusIcon size={22} />
-          </span>
-          <span className="new-session-label">New room</span>
-          <span className="new-session-hint">JPG, PNG or WebP · 640×480 and up</span>
-        </button>
+        <div className="new-session-row">
+          <button type="button" className="new-session" onClick={onNewSession}>
+            <span className="new-session-mark">
+              <PlusIcon size={22} />
+            </span>
+            <span className="new-session-label">New room</span>
+            <span className="new-session-hint">JPG, PNG or WebP · 640×480 and up</span>
+          </button>
+        </div>
 
         <div className="dash-eyebrow">
           <span className="dash-eyebrow-title">Rooms</span>

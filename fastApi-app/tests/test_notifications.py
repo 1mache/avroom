@@ -155,6 +155,33 @@ def test_notify_pipeline_event_noop_when_disabled(monkeypatch: pytest.MonkeyPatc
     assert called is False
 
 
+def test_request_recipient_verification_noop_on_smtp(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NOTIFY_BACKEND", raising=False)
+    monkeypatch.delenv("STORAGE_BACKEND", raising=False)
+
+    called = False
+
+    def _spy(_email: str) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr("core.notifications.ses_backend.verify_recipient", _spy)
+    notifications.request_recipient_verification("new-user@example.com")
+
+    assert called is False
+
+
+def test_request_recipient_verification_calls_ses_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTIFY_BACKEND", "ses")
+
+    calls: list[str] = []
+    monkeypatch.setattr("core.notifications.ses_backend.verify_recipient", calls.append)
+
+    notifications.request_recipient_verification("new-user@example.com")
+
+    assert calls == ["new-user@example.com"]
+
+
 def test_notify_pipeline_event_noop_when_session_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     called = False
 

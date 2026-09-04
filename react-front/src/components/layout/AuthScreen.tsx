@@ -54,7 +54,7 @@ export const AuthScreen: React.FC = () => {
           <p className="auth-sub">
             {mode === "login"
               ? "Sign in to reach your rooms."
-              : "A room and everything cut out of it belongs to you alone."}
+              : "A room and everything cut out of it belongs to you alone. We'll send a one-time verification email — click it to receive completion notices."}
           </p>
 
           <label className="auth-field">

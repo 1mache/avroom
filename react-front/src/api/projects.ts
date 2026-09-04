@@ -31,3 +31,25 @@ export async function deleteProject(id: string): Promise<void> {
     return throwApiError(response);
   }
 }
+
+// Both of these skip fetchWithTimeout's 15s default — a project's zip can be
+// tens of MB of cutouts/GLBs, and there's no reason to abort a slow-but-live
+// upload/download.
+
+export async function exportProject(id: string): Promise<Blob> {
+  const response = await authedFetch(`${API_BASE_URL}/projects/${id}/export`);
+  if (!response.ok) {
+    return throwApiError(response);
+  }
+  return response.blob();
+}
+
+export async function importProject(file: File): Promise<ProjectInfo> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await authedFetch(`${API_BASE_URL}/projects/import`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleJsonResponse<ProjectInfo>(response);
+}

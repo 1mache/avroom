@@ -107,10 +107,14 @@ def test_multipart_routes_never_resolve_uid_from_body() -> None:
             continue
         if "uid" in route.param_convertors:
             continue
-        if route.path.endswith("/upload") or route.path.startswith("/debug"):
+        if route.path.endswith("/upload") or route.path.startswith("/debug") or route.path == "/projects/import":
             # /images/upload creates the uid; every /debug/* route is a
             # standalone inspection tool with no session concept at all
-            # (see "Debug vision endpoints" in CLAUDE.md).
+            # (see "Debug vision endpoints" in CLAUDE.md). /projects/import
+            # mints a brand-new project (and rooms under it) the same way --
+            # it also lives on the /projects router, which never applies
+            # require_session_owner in the first place (only
+            # require_project_owner, which reads path params, not the body).
             continue
         offenders.append(route.path)
 

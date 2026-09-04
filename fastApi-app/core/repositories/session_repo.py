@@ -9,6 +9,7 @@ only had to drop the module they import from.
 """
 
 import logging
+from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -25,6 +26,24 @@ logger = logging.getLogger(__name__)
 
 class SessionNotFoundError(LookupError):
     """Raised when a sync-check (or other lookup) targets an unknown uid."""
+
+
+@dataclass(frozen=True)
+class SessionState:
+    """Everything about a room that `core.project_archive` must carry across export/import.
+
+    Mirrors the subset of `SessionRow` columns that aren't already covered by
+    a dedicated accessor (`get_session_name`, `get_session_last_changed`) --
+    bundled here so an export doesn't need four round trips per room, and an
+    import can restore all of it atomically with `restore_session_state`.
+    """
+
+    name: str | None
+    created_at: str
+    last_changed: str | None
+    history_min: int
+    history_cursor: int
+    history_head: int
 
 
 def _get_session_row_or_raise(db: Session, uid: str) -> SessionRow:
@@ -239,6 +258,51 @@ def get_session_notify_target(uid: str) -> tuple[str, str] | None:
             return None
         name, email = row
         return (name or uid, email)
+
+
+def get_session_state(uid: str) -> SessionState | None:
+    """Return the full exportable state of one session, or `None` if unregistered."""
+    with session_scope() as db:
+        row = db.get(SessionRow, uid)
+        if row is None:
+            return None
+        return SessionState(
+            name=row.name,
+            created_at=row.created_at.isoformat(),
+            last_changed=row.last_changed.isoformat() if row.last_changed else None,
+            history_min=row.history_min,
+            history_cursor=row.history_cursor,
+            history_head=row.history_head,
+        )
+
+
+def restore_session_state(
+    uid: str,
+    *,
+    name: str | None,
+    last_changed: str | None,
+    history_min: int,
+    history_cursor: int,
+    history_head: int,
+) -> None:
+    """Overwrite an already-registered session row's name/timestamps/history counters.
+
+    Used only by `core.project_archive.restore_project_archive`, right after
+    `register_uid` creates the fresh row -- the history counters are
+    meaningless apart from the matching `{uid}_bg_hist_*.png` files the
+    archive restores in the same pass, so this exists to write them back
+    atomically rather than leaning on the smaller single-field setters above.
+
+    Raises:
+        SessionNotFoundError: When no session row exists for *uid*.
+    """
+    with session_scope() as db:
+        row = _get_session_row_or_raise(db, uid)
+        row.name = name
+        row.last_changed = datetime.fromisoformat(last_changed) if last_changed else None
+        row.history_min = history_min
+        row.history_cursor = history_cursor
+        row.history_head = history_head
 
 
 def list_sessions_with_names(

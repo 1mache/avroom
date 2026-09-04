@@ -112,6 +112,15 @@ export const DownloadIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
+/** Load / import from device — the mirror image of DownloadIcon. */
+export const UploadIcon: React.FC<IconProps> = (props) => (
+  <Svg {...props}>
+    <path d="M12 19.8v-9.8" />
+    <path d="M8.2 11.6L12 7.8l3.8 3.8" />
+    <path d="M5.2 4.2h13.6" />
+  </Svg>
+);
+
 /** Vertical three-dot overflow menu trigger. */
 export const MoreIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>

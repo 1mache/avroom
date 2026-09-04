@@ -8,11 +8,17 @@ rationale.
 from __future__ import annotations
 
 import logging
+import tempfile
+import zipfile
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi.responses import FileResponse
+from starlette.background import BackgroundTask
 
 from core.auth.identity import current_user_id
 from core.auth.ownership import require_project_owner
+from core.project_archive import ArchiveFormatError, build_project_archive, restore_project_archive
 from core.repositories.project_repo import (
     ProjectNotFoundError,
     create_project,
@@ -27,6 +33,12 @@ from schemas.projects import CreateProjectRequest, ProjectInfo, SetProjectNameRe
 
 router = APIRouter(prefix="/projects", tags=["projects"], dependencies=[Depends(require_project_owner)])
 logger = logging.getLogger(__name__)
+
+
+def _archive_filename(project_name: str) -> str:
+    """Sanitize a project name for use as a downloaded zip's filename."""
+    cleaned = "".join(ch if ch not in '<>:"/\\|?*' else "_" for ch in project_name.strip())
+    return f"{cleaned[:80] or 'project'}.avroom.zip"
 
 
 @router.get("")
@@ -60,6 +72,72 @@ async def create_project_endpoint(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     logger.info("Project created: id=%s user_id=%s", project_id, user_id)
     return ProjectInfo(id=project_id, name=request.name, room_count=0, last_changed=None, preview_uid=None)
+
+
+@router.post("/import", status_code=201)
+async def import_project_endpoint(
+    file: UploadFile = File(...), user_id: str = Depends(current_user_id)
+) -> ProjectInfo:
+    """Recreate a project (fresh project/room/object ids) from a previously exported zip.
+
+    Not project-scoped -- there's no `project_id` yet -- so `require_project_owner`
+    passes through unchecked, same as `GET`/`POST /projects` today.
+    """
+    logger.info("Project import requested: user_id=%s filename=%r", user_id, file.filename)
+    file_bytes = await file.read()
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    tmp_path = Path(tmp.name)
+    try:
+        tmp.write(file_bytes)
+        tmp.close()
+        try:
+            project_id = restore_project_archive(tmp_path, user_id)
+        except (ArchiveFormatError, zipfile.BadZipFile) as exc:
+            logger.warning("Project import rejected: user_id=%s reason=%s", user_id, exc)
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    summary = get_project(project_id)
+    assert summary is not None  # restore_project_archive above just created this row
+    logger.info(
+        "Project imported: project_id=%s user_id=%s rooms=%d", project_id, user_id, summary.room_count
+    )
+    return ProjectInfo(
+        id=summary.id,
+        name=summary.name,
+        room_count=summary.room_count,
+        last_changed=summary.last_changed,
+        preview_uid=summary.preview_uid,
+    )
+
+
+@router.get("/{project_id}/export")
+async def export_project_endpoint(project_id: str) -> FileResponse:
+    """Download a project (every room, its metadata, and its blobs) as a zip."""
+    summary = get_project(project_id)
+    if summary is None:
+        raise HTTPException(status_code=404, detail=f"Project not found for id='{project_id}'")
+    logger.info("Project export requested: project_id=%s name=%r", project_id, summary.name)
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    tmp.close()
+    out_path = Path(tmp.name)
+    try:
+        build_project_archive(project_id, out_path)
+    except Exception:
+        out_path.unlink(missing_ok=True)
+        logger.exception("Project export failed: project_id=%s", project_id)
+        raise
+
+    logger.info("Project export ready: project_id=%s bytes=%d", project_id, out_path.stat().st_size)
+    return FileResponse(
+        out_path,
+        media_type="application/zip",
+        filename=_archive_filename(summary.name),
+        background=BackgroundTask(out_path.unlink),
+    )
 
 
 @router.post("/{project_id}/name")

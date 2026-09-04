@@ -1751,9 +1751,39 @@ body.is-resizing-object {
   padding-bottom: 32px;
 }
 
-.new-session {
+.new-session-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.new-session-import-btn {
   flex: 0 0 auto;
-  width: 100%;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 4px;
+  background: var(--chrome-panel);
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.new-session-import-btn:hover:not(:disabled) {
+  border-color: var(--cyan);
+  background: #313131;
+  color: var(--cyan-bright);
+}
+
+.new-session-import-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.new-session {
+  flex: 1 1 auto;
+  width: auto;
   display: flex;
   align-items: center;
   gap: 18px;

@@ -193,6 +193,54 @@ per-project (`uq_sessions_project_id_name`) — two different projects may each 
   `"workspace"` both carry `projectId`/`projectName` so a room's back arrow returns to the rooms
   screen it came from, not to the top. Still no router library.
 
+## Project Export / Import
+
+A project (every room's DB metadata plus its blobs) can be exported to a single self-contained
+zip and imported back on any instance under the caller's own account, with every id minted
+fresh. Built for moving work between machines (laptop ↔ GPU box) or archiving.
+
+- **`core/project_archive.py`** — `build_project_archive(project_id, out_path)` and
+  `restore_project_archive(zip_path, user_id) -> new_project_id`. The archive is
+  `manifest.json` (project name, and per room: name/timestamps/history counters plus every
+  `ObjectMetadata.model_dump()`) alongside `images/<filename>` and `3d/<filename>` entries named
+  exactly as they sit on disk (still `{old_uid}`-prefixed — only the destination filename is
+  rewritten on import). `ZIP_STORED`, not deflate — PNG/JPEG/GLB are already compressed.
+- **Its blob inventory is the photographic negative of `core/session_teardown.py`**: two glob
+  patterns (`{uid}.*`, `{uid}_*`) per storage dir, i.e. anything teardown would delete on room
+  deletion is, by definition, something export carries. Keep the two in sync when either changes.
+  Deliberately excluded: `{uid}_depth_*.npy` / `{uid}_normal_*.npy` (recomputable, and a
+  float32 HxWx3 normal map alone can dwarf every visible file in a room combined) and
+  `{uid}_mask_*` (transient SAM candidates, gone by the time an object is finalized).
+- **Import always creates a new project** — never a merge, never a 409. A name collision
+  auto-suffixes (`"<name> (2)"`, `(3)`, …) by retrying `create_project` until one lands. Every
+  room gets a fresh `uuid4` uid and every object a fresh `uuid4`; `clone_root_uuid` (a plain
+  string with no FK) is remapped through a per-room old→new uuid map in the same pass, or clone
+  lineage (`count_clones_of_root`, `resolve_clone_lineage`) would silently mis-count after import.
+  `history_min/cursor/head` (`core/repositories/session_repo.py::get_session_state` /
+  `restore_session_state`, added for this) move verbatim alongside the `{uid}_bg_hist_*.png`
+  files they describe — the two are meaningless apart from each other.
+- **Zip-slip guard**: an entry only ever matches `^(images|3d)/[^/\\]+$` (one path segment, no
+  `..`); the destination path is always built from a freshly minted uid plus that validated
+  basename, never by joining an archive-supplied path.
+- **Routes** (`api/projects.py`): `GET /projects/{id}/export` (streams a temp-file zip via
+  `FileResponse` with a `BackgroundTask` cleanup, filename `<project name>.avroom.zip`) and
+  `POST /projects/import` (multipart `file`, 201 → `ProjectInfo`, 422 on a malformed/unsupported
+  archive). `/export` is covered by the router's existing `require_project_owner`; `/import` has
+  no `project_id` yet so the guard passes through unchecked, same as `GET`/`POST /projects`
+  today — it's exempted from `test_route_guard_coverage.py`'s multipart-body-uid check the same
+  way `/images/upload` and `/debug/*` are, for the same reason (no existing session to guard).
+- Job rows are never exported — transient, machine-local, and meaningless once the dispatcher
+  that owned them is gone.
+- **Frontend**: `ProjectsScreen` owns both actions (no new `App.tsx` route). Export is a
+  `DownloadIcon` button in `ProjectCard`'s `.project-row-actions` (busy-swaps to
+  `.tool-spinner`, same idiom as `Toolbar.tsx`'s snapshot download) that blob-fetches the zip and
+  triggers a browser download. Import is a mirrored `UploadIcon` button next to "New project"
+  (`.new-session-row` wraps the two so `.new-session` can shrink to `flex: 1` instead of its old
+  `width: 100%`), driving a hidden `<input type="file" accept=".zip">` — same idiom
+  `UploadScreen.tsx` uses for photo picking. A 422 renders inline (`.upload-rejection`, matching
+  the upload-rejection pattern); anything else surfaces through the screen's existing
+  `.modal.is-error` dialog.
+
 ## Admin Users
 
 `users.is_admin` (`db/models.py`, added by `alembic/versions/0007_user_is_admin.py`, Alembic head) gates two developer-only tools: the `/debug` router and the upload endpoint's `skip_validation` flag. There is **no admin UI and no grant API** — the flag is flipped by hand in SQL (`UPDATE users SET is_admin = true WHERE email = '...';`). The migration defaults every existing row to `false` except the fixed `single_user` local dev user (`core/auth/single_user.py::LOCAL_USER_ID`), which it re-grants — `get_or_create_default_user` also provisions fresh rows as admin, so a machine that creates the local user after this migration still gets both tools locally.

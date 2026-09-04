@@ -3,15 +3,17 @@ import React, { useState } from "react";
 import { sessionPreviewUrl } from "../../api/images";
 import type { ProjectInfo } from "../../types/api";
 import { formatEditedAgo } from "../../utils/time";
-import { PencilIcon, PhotoIcon, TrashIcon } from "../icons";
+import { DownloadIcon, PencilIcon, PhotoIcon, TrashIcon } from "../icons";
 
 export interface ProjectCardProps {
   project: ProjectInfo;
   isBusy?: boolean;
   isFailed?: boolean;
+  isExporting?: boolean;
   onOpen: (project: ProjectInfo) => void;
   onRequestRename: (project: ProjectInfo) => void;
   onRequestDelete: (project: ProjectInfo) => void;
+  onRequestExport: (project: ProjectInfo) => void;
 }
 
 /**
@@ -23,9 +25,11 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
   project,
   isBusy = false,
   isFailed = false,
+  isExporting = false,
   onOpen,
   onRequestRename,
   onRequestDelete,
+  onRequestExport,
 }) => {
   const [previewFailed, setPreviewFailed] = useState(false);
   const editedAgo = formatEditedAgo(project.last_changed);
@@ -71,6 +75,16 @@ export const ProjectCard: React.FC<ProjectCardProps> = ({
       </button>
 
       <div className="project-row-actions">
+        <button
+          type="button"
+          className="project-row-btn"
+          onClick={() => onRequestExport(project)}
+          disabled={isExporting}
+          aria-label={`Export ${project.name}`}
+          data-tip="Export project"
+        >
+          {isExporting ? <span className="tool-spinner" /> : <DownloadIcon size={13} />}
+        </button>
         <button
           type="button"
           className="project-row-btn"

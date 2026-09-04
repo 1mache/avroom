@@ -1,14 +1,20 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
-import { getActiveJobs } from "../../api/images";
-import { createProject, deleteProject, getProjects, renameProject } from "../../api/projects";
+import { ApiError, getActiveJobs } from "../../api/images";
+import { createProject, deleteProject, exportProject, getProjects, importProject, renameProject } from "../../api/projects";
 import avroomLogo from "../../assets/avroom.png";
 import { useAuth } from "../../context/AuthContext";
 import type { JobInfo, ProjectInfo } from "../../types/api";
 import { byMostRecentlyEdited } from "../../utils/time";
+import { triggerBlobDownload } from "../../utils/preview";
 import { ProjectCard } from "../dashboard/ProjectCard";
-import { FlaskIcon, LogoutIcon, PlusIcon } from "../icons";
+import { FlaskIcon, LogoutIcon, PlusIcon, UploadIcon } from "../icons";
 import { ConfirmDialog } from "../widgets/ConfirmDialog";
+
+function archiveDownloadFilename(name: string): string {
+  const base = (name.trim() || "project").replace(/[<>:"/\\|?*]/g, "_").slice(0, 80);
+  return `${base}.avroom.zip`;
+}
 
 // Same cadence as the Rooms dashboard's job poll (see DashboardScreen) --
 // cheap, one endpoint for every session regardless of project.
@@ -45,6 +51,11 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({ onOpenProject, o
   const [deleteTarget, setDeleteTarget] = useState<ProjectInfo | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [exportingId, setExportingId] = useState<string | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -117,6 +128,49 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({ onOpenProject, o
     }
   }, [renameName, renameTarget]);
 
+  const handleExport = useCallback(async (project: ProjectInfo) => {
+    setExportingId(project.id);
+    try {
+      const blob = await exportProject(project.id);
+      triggerBlobDownload(blob, archiveDownloadFilename(project.name));
+    } catch (exportErr) {
+      setError(exportErr instanceof Error ? exportErr.message : "Failed to export the project.");
+    } finally {
+      setExportingId(null);
+    }
+  }, []);
+
+  const handleImportFile = useCallback(async (file: File) => {
+    setImportBusy(true);
+    setImportError(null);
+    try {
+      const project = await importProject(file);
+      setProjects((prev) => [...prev, project].sort(byMostRecentlyEdited));
+    } catch (importErr) {
+      // 422 is a malformed/unsupported archive -- a normal answer, same as
+      // UploadScreen's photo-validation rejection. Anything else is a
+      // genuine failure and goes to the shared error dialog instead.
+      if (importErr instanceof ApiError && importErr.status === 422) {
+        setImportError(importErr.detail || "That file isn't a valid AVRoom project export.");
+      } else {
+        setError(importErr instanceof Error ? importErr.message : "Failed to import the project.");
+      }
+    } finally {
+      setImportBusy(false);
+    }
+  }, []);
+
+  const handleImportInputChange: React.ChangeEventHandler<HTMLInputElement> = useCallback(
+    (event) => {
+      const picked = event.target.files?.[0];
+      event.target.value = "";
+      if (picked) {
+        void handleImportFile(picked);
+      }
+    },
+    [handleImportFile],
+  );
+
   const handleConfirmDelete = useCallback(async () => {
     if (!deleteTarget) {
       return;
@@ -157,13 +211,33 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({ onOpenProject, o
       </header>
 
       <main className="dash-main">
-        <button type="button" className="new-session" onClick={() => setIsCreating(true)}>
-          <span className="new-session-mark">
-            <PlusIcon size={22} />
-          </span>
-          <span className="new-session-label">New project</span>
-          <span className="new-session-hint">Groups rooms together</span>
-        </button>
+        <div className="new-session-row">
+          <button type="button" className="new-session" onClick={() => setIsCreating(true)}>
+            <span className="new-session-mark">
+              <PlusIcon size={22} />
+            </span>
+            <span className="new-session-label">New project</span>
+            <span className="new-session-hint">Groups rooms together</span>
+          </button>
+          <button
+            type="button"
+            className="new-session-import-btn"
+            onClick={() => importInputRef.current?.click()}
+            disabled={importBusy}
+            aria-label="Import project"
+            data-tip="Import project from a zip"
+          >
+            {importBusy ? <span className="tool-spinner" /> : <UploadIcon size={18} />}
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".zip"
+            className="file-input"
+            onChange={handleImportInputChange}
+          />
+        </div>
+        {importError ? <p className="upload-rejection">{importError}</p> : null}
 
         <div className="dash-eyebrow">
           <span className="dash-eyebrow-title">Projects</span>
@@ -201,6 +275,7 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({ onOpenProject, o
                     project={project}
                     isBusy={projectJobs.some((job) => job.status === "queued" || job.status === "running")}
                     isFailed={projectJobs.some((job) => job.status === "failed" || job.status === "conflict")}
+                    isExporting={exportingId === project.id}
                     onOpen={onOpenProject}
                     onRequestRename={(target) => {
                       setRenameTarget(target);
@@ -208,6 +283,7 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({ onOpenProject, o
                       setRenameError(null);
                     }}
                     onRequestDelete={setDeleteTarget}
+                    onRequestExport={(target) => void handleExport(target)}
                   />
                 );
               })}

@@ -12,6 +12,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from core.auth.jwt_backend import hash_password
 from db.models import User
 
 logger = logging.getLogger(__name__)
@@ -21,14 +22,30 @@ logger = logging.getLogger(__name__)
 LOCAL_USER_ID = "00000000-0000-0000-0000-000000000001"
 LOCAL_USER_EMAIL = "avroom-team@proton.me"
 
+# Intentionally weak -- this row only exists on local dev / single_user
+# machines, never on a real deploy, and only matters so `AUTH_MODE=jwt` can
+# still log in as it (`POST /auth/login`) instead of the fixed identity being
+# unreachable under `jwt` mode.
+LOCAL_USER_PASSWORD = "admin"
+
 
 def get_or_create_default_user(db: Session) -> User:
-    """Return the fixed local dev user, creating it on first call."""
+    """Return the fixed local dev user, creating it (or backfilling its password) on first call."""
     user = db.get(User, LOCAL_USER_ID)
     if user is not None:
+        if user.password_hash is None:
+            user.password_hash = hash_password(LOCAL_USER_PASSWORD)
+            db.flush()
+            logger.info("Backfilled local dev user password: id=%s", user.id)
         return user
 
-    user = User(id=LOCAL_USER_ID, email=LOCAL_USER_EMAIL, password_hash=None, is_active=True, is_admin=True)
+    user = User(
+        id=LOCAL_USER_ID,
+        email=LOCAL_USER_EMAIL,
+        password_hash=hash_password(LOCAL_USER_PASSWORD),
+        is_active=True,
+        is_admin=True,
+    )
     db.add(user)
     db.flush()
     logger.info("Provisioned local dev user: id=%s email=%s", user.id, user.email)

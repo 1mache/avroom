@@ -550,6 +550,15 @@ input {
     0 18px 48px rgba(0, 0, 0, 0.55);
 }
 
+/* Clips cutouts / selection / 3D to the Origin Photo so hang-off-edge
+   pixels disappear instead of painting the letterbox. */
+.stage-cutout-clip {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
 .stage-cutout {
   position: absolute;
   object-fit: contain;

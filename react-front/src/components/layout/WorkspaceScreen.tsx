@@ -1157,12 +1157,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     const scaleY = renderedRect.height / naturalSize.height;
     const planar = usesPlanarCss3d(obj) && baseBounds;
 
+    // Positions are relative to .stage-cutout-clip (rendered-rect origin),
+    // not the stage — do not add renderedRect.x/y.
     if (planar && baseBounds) {
       const pose = cssPoseOf(obj);
-      const left =
-        renderedRect.x + (obj.offset.x + baseBounds.left) * scaleX;
-      const top =
-        renderedRect.y + (obj.offset.y + baseBounds.top) * scaleY;
+      const left = (obj.offset.x + baseBounds.left) * scaleX;
+      const top = (obj.offset.y + baseBounds.top) * scaleY;
       const width = (baseBounds.right - baseBounds.left) * scaleX;
       const height = (baseBounds.bottom - baseBounds.top) * scaleY;
       return {
@@ -1183,8 +1183,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         : "50% 50%";
 
     return {
-      left: `${renderedRect.x + obj.offset.x * (renderedRect.width / naturalSize.width)}px`,
-      top: `${renderedRect.y + obj.offset.y * (renderedRect.height / naturalSize.height)}px`,
+      left: `${obj.offset.x * scaleX}px`,
+      top: `${obj.offset.y * scaleY}px`,
       width: `${renderedRect.width}px`,
       height: `${renderedRect.height}px`,
       zIndex,
@@ -1231,9 +1231,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     height: `${rect.height}px`,
   });
 
-  // On-stage rect the selected object occupies (alpha bounds + drag offset).
-  // Both the 3D frame and the selection frame are placed against this, so
-  // neither jumps relative to the 2D cutout.
+  // Stage-space rect (includes renderedRect origin) — used by the rotation
+  // slider, which sits outside .stage-cutout-clip.
   const selectedRect =
     naturalSize && renderedRect && selectedObject
       ? getBoundsStageRect(
@@ -1244,9 +1243,20 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         )
       : null;
 
-  const model3DFrameStyle: React.CSSProperties | undefined = selectedRect
+  // Same rect in clip-local coords (origin = photo top-left).
+  const selectedRectInClip =
+    selectedRect && renderedRect
+      ? {
+          left: selectedRect.left - renderedRect.x,
+          top: selectedRect.top - renderedRect.y,
+          width: selectedRect.width,
+          height: selectedRect.height,
+        }
+      : null;
+
+  const model3DFrameStyle: React.CSSProperties | undefined = selectedRectInClip
     ? {
-        ...rectStyle(inflateAroundCenter(selectedRect, MODEL_3D_FRAME_PADDING)),
+        ...rectStyle(inflateAroundCenter(selectedRectInClip, MODEL_3D_FRAME_PADDING)),
         // Above the interaction overlay so OrbitControls receive the pointer.
         zIndex: 200,
         pointerEvents: "auto",
@@ -1650,39 +1660,121 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
               <img src={photoSrc} alt="" className="stage-photo" onLoad={handleImageLoad} />
 
-              {stageObjects.map((obj, index) => {
-                const showOriginal = isShowingOriginal(obj);
-                const zIndex =
-                  obj.objectId === jobs.selectedObjectId ? stageObjects.length + 2 : index + 2;
-                const planar = usesPlanarCss3d(obj);
-                if (planar) {
-                  const imgStyle = planarCutoutImgStyle(obj, showOriginal);
-                  return (
-                    <div
-                      key={obj.objectId}
-                      className="stage-cutout-css3d"
-                      style={cutoutStyle(obj, showOriginal, zIndex)}
-                    >
+              {renderedRect ? (
+                <div
+                  className="stage-cutout-clip"
+                  style={rectStyle({
+                    left: renderedRect.x,
+                    top: renderedRect.y,
+                    width: renderedRect.width,
+                    height: renderedRect.height,
+                  })}
+                >
+                  {stageObjects.map((obj, index) => {
+                    const showOriginal = isShowingOriginal(obj);
+                    const zIndex =
+                      obj.objectId === jobs.selectedObjectId ? stageObjects.length + 2 : index + 2;
+                    const planar = usesPlanarCss3d(obj);
+                    if (planar) {
+                      const imgStyle = planarCutoutImgStyle(obj, showOriginal);
+                      return (
+                        <div
+                          key={obj.objectId}
+                          className="stage-cutout-css3d"
+                          style={cutoutStyle(obj, showOriginal, zIndex)}
+                        >
+                          <img
+                            src={effectiveCutoutSrc(obj, showOriginal)}
+                            alt=""
+                            style={imgStyle}
+                            draggable={false}
+                          />
+                        </div>
+                      );
+                    }
+                    return (
                       <img
+                        key={obj.objectId}
                         src={effectiveCutoutSrc(obj, showOriginal)}
                         alt=""
-                        style={imgStyle}
+                        className="stage-cutout"
+                        style={cutoutStyle(obj, showOriginal, zIndex)}
                         draggable={false}
                       />
+                    );
+                  })}
+
+                  {rotation.rotateMode && rotation.volumetric && rotation.glbData ? (
+                    <Model3DFrame
+                      ref={rotation.model3DFrameRef}
+                      glbData={rotation.glbData}
+                      style={model3DFrameStyle}
+                      enableOrbitDrag
+                      orbitAzimuthDeg={rotation.draftCssPose.rotateYDeg}
+                      orbitElevationDeg={rotation.draftCssPose.rotateXDeg}
+                      orbitRollDeg={rotation.draftCssPose.rotateZDeg}
+                      onOrbitChange={rotation.syncOrbitFromDrag}
+                    />
+                  ) : null}
+
+                  {selectedRectInClip && !rotation.rotateMode ? (
+                    <div className="selection-frame" style={{ ...rectStyle(selectedRectInClip), zIndex: 210 }}>
+                      {canResize ? (
+                        <>
+                          <button
+                            type="button"
+                            className="selection-handle selection-corner tl"
+                            aria-label="Resize top left"
+                            onPointerDown={handleResizePointerDown("tl")}
+                          />
+                          <button
+                            type="button"
+                            className="selection-handle selection-corner tr"
+                            aria-label="Resize top right"
+                            onPointerDown={handleResizePointerDown("tr")}
+                          />
+                          <button
+                            type="button"
+                            className="selection-handle selection-corner bl"
+                            aria-label="Resize bottom left"
+                            onPointerDown={handleResizePointerDown("bl")}
+                          />
+                          <button
+                            type="button"
+                            className="selection-handle selection-corner br"
+                            aria-label="Resize bottom right"
+                            onPointerDown={handleResizePointerDown("br")}
+                          />
+                          <button
+                            type="button"
+                            className="selection-handle selection-edge t"
+                            aria-label="Resize top"
+                            onPointerDown={handleResizePointerDown("t")}
+                          />
+                          <button
+                            type="button"
+                            className="selection-handle selection-edge r"
+                            aria-label="Resize right"
+                            onPointerDown={handleResizePointerDown("r")}
+                          />
+                          <button
+                            type="button"
+                            className="selection-handle selection-edge b"
+                            aria-label="Resize bottom"
+                            onPointerDown={handleResizePointerDown("b")}
+                          />
+                          <button
+                            type="button"
+                            className="selection-handle selection-edge l"
+                            aria-label="Resize left"
+                            onPointerDown={handleResizePointerDown("l")}
+                          />
+                        </>
+                      ) : null}
                     </div>
-                  );
-                }
-                return (
-                  <img
-                    key={obj.objectId}
-                    src={effectiveCutoutSrc(obj, showOriginal)}
-                    alt=""
-                    className="stage-cutout"
-                    style={cutoutStyle(obj, showOriginal, zIndex)}
-                    draggable={false}
-                  />
-                );
-              })}
+                  ) : null}
+                </div>
+              ) : null}
 
               {displayedBatchBox && renderedRect && naturalSize ? (
                 <div
@@ -1763,19 +1855,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                 </svg>
               ) : null}
 
-              {rotation.rotateMode && rotation.volumetric && rotation.glbData ? (
-                <Model3DFrame
-                  ref={rotation.model3DFrameRef}
-                  glbData={rotation.glbData}
-                  style={model3DFrameStyle}
-                  enableOrbitDrag
-                  orbitAzimuthDeg={rotation.draftCssPose.rotateYDeg}
-                  orbitElevationDeg={rotation.draftCssPose.rotateXDeg}
-                  orbitRollDeg={rotation.draftCssPose.rotateZDeg}
-                  onOrbitChange={rotation.syncOrbitFromDrag}
-                />
-              ) : null}
-
               {rotation.rotateMode && rotationSliderPanelStyle ? (
                 <div
                   className="rotation-slider-panel"
@@ -1786,63 +1865,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                     pose={rotation.draftCssPose}
                     onChange={rotation.updateDraftCssPose}
                   />
-                </div>
-              ) : null}
-
-              {selectedRect && !rotation.rotateMode ? (
-                <div className="selection-frame" style={{ ...rectStyle(selectedRect), zIndex: 210 }}>
-                  {canResize ? (
-                    <>
-                      <button
-                        type="button"
-                        className="selection-handle selection-corner tl"
-                        aria-label="Resize top left"
-                        onPointerDown={handleResizePointerDown("tl")}
-                      />
-                      <button
-                        type="button"
-                        className="selection-handle selection-corner tr"
-                        aria-label="Resize top right"
-                        onPointerDown={handleResizePointerDown("tr")}
-                      />
-                      <button
-                        type="button"
-                        className="selection-handle selection-corner bl"
-                        aria-label="Resize bottom left"
-                        onPointerDown={handleResizePointerDown("bl")}
-                      />
-                      <button
-                        type="button"
-                        className="selection-handle selection-corner br"
-                        aria-label="Resize bottom right"
-                        onPointerDown={handleResizePointerDown("br")}
-                      />
-                      <button
-                        type="button"
-                        className="selection-handle selection-edge t"
-                        aria-label="Resize top"
-                        onPointerDown={handleResizePointerDown("t")}
-                      />
-                      <button
-                        type="button"
-                        className="selection-handle selection-edge r"
-                        aria-label="Resize right"
-                        onPointerDown={handleResizePointerDown("r")}
-                      />
-                      <button
-                        type="button"
-                        className="selection-handle selection-edge b"
-                        aria-label="Resize bottom"
-                        onPointerDown={handleResizePointerDown("b")}
-                      />
-                      <button
-                        type="button"
-                        className="selection-handle selection-edge l"
-                        aria-label="Resize left"
-                        onPointerDown={handleResizePointerDown("l")}
-                      />
-                    </>
-                  ) : null}
                 </div>
               ) : null}
             </div>

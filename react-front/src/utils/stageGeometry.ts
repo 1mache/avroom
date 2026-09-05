@@ -110,10 +110,21 @@ export const inflateBounds = (bounds: CutoutAlphaBounds, factor: number): Cutout
   };
 };
 
+/** Minimum opaque-bbox overlap with the Origin Photo (natural-image px). */
+export const MIN_ON_PHOTO_PX = 8;
+
+const clampAxis = (value: number, min: number, max: number): number => {
+  if (min <= max) {
+    return Math.min(Math.max(value, min), max);
+  }
+  // Photo smaller than the required sliver — pin to the only feasible point.
+  return (min + max) / 2;
+};
+
 /**
- * Keeps a dragged object's opaque pixels inside the photo. Offsets live in
- * natural-image pixels and are clamped against the object's visible bounds, so
- * transparent padding may leave the frame while the object itself cannot.
+ * Clamps a dragged cutout's offset so its alpha bbox keeps at least
+ * {@link MIN_ON_PHOTO_PX} of overlap with the Origin Photo. The rest may hang
+ * off the photo edge (clipped in the UI). Offsets are natural-image pixels.
  */
 export const clampCutoutOffset = (
   offset: ClickPosition,
@@ -131,14 +142,16 @@ export const clampCutoutOffset = (
     bottom: imageSize.height,
   };
 
-  const minX = -effectiveBounds.left;
-  const maxX = imageSize.width - effectiveBounds.right;
-  const minY = -effectiveBounds.top;
-  const maxY = imageSize.height - effectiveBounds.bottom;
+  // Drag left until the cutout's right edge sits MIN_ON_PHOTO_PX inside the photo;
+  // drag right until the left edge does the same on the opposite side.
+  const minX = MIN_ON_PHOTO_PX - effectiveBounds.right;
+  const maxX = imageSize.width - MIN_ON_PHOTO_PX - effectiveBounds.left;
+  const minY = MIN_ON_PHOTO_PX - effectiveBounds.bottom;
+  const maxY = imageSize.height - MIN_ON_PHOTO_PX - effectiveBounds.top;
 
   return {
-    x: Math.min(Math.max(offset.x, minX), maxX),
-    y: Math.min(Math.max(offset.y, minY), maxY),
+    x: clampAxis(offset.x, minX, maxX),
+    y: clampAxis(offset.y, minY, maxY),
   };
 };
 

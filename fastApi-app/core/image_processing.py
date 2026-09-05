@@ -939,6 +939,7 @@ def run_smart_paste(
             source_y=source_y,
             scale_by_pov=scale_by_pov,
             smart_rotate=smart_rotate,
+            wall_mount=metadata.is_3d is not False,
         )
 
     if scale_by_pov:

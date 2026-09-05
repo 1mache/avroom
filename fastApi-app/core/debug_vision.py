@@ -347,7 +347,9 @@ def run_auto_mask_pick(image_bytes: bytes, *, x: int, y: int) -> dict[str, Any]:
                 "score": round(score, 4),
                 "reason": reason,
                 "clip_checks": clip_checks,
-                "preview_b64": _png_b64(_cutout_preview_bgr(cutout, (x, y)), f"preview {index}"),
+                "preview_b64": _png_b64(
+                    _cutout_preview_bgr(cutout, ((x, y),)), f"preview {index}"
+                ),
                 "clip_crop_b64": clip_b64,
                 "cutout_b64": _png_b64(cutout, f"cutout {index}"),
             }
@@ -428,7 +430,7 @@ def run_inpaint_verify(
     _cutout_preview_bgr = load_avroom_attr(
         "_cutout_preview_bgr", module="avroom_object_removal.core.cutout_selector"
     )
-    preview_b64 = _png_b64(_cutout_preview_bgr(cutout, (x, y)), f"preview {chosen}")
+    preview_b64 = _png_b64(_cutout_preview_bgr(cutout, ((x, y),)), f"preview {chosen}")
     cutout_b64 = _png_b64(cutout, f"cutout {chosen}")
     if cutout.ndim == 3 and cutout.shape[2] >= 4:
         compose_mask = cutout[:, :, 3]

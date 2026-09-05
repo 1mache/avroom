@@ -1,10 +1,16 @@
 import { useCallback, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 
-import { fetchCached3DModel, submitGenerate3D, waitForJobDone } from "../api/images";
+import { fetchCached3DModel, setObjectCssTransform, submitGenerate3D, waitForJobDone } from "../api/images";
 import { MODEL_3D_FRAME_PADDING, type Model3DFrameHandle } from "../components/widgets/Model3DFrame";
 import type { JobInfo } from "../types/api";
 import type { CutoutObject, RotationPose } from "../types/session";
+import {
+  DEFAULT_CSS_PERSPECTIVE_PX,
+  IDENTITY_CSS_POSE,
+  isVolumetricObject,
+  type Css3dPose,
+} from "../utils/css3dTransform";
 import { compositePreviewOntoCanvas, inflateBounds, type Size } from "../utils/stageGeometry";
 
 interface UseRotationControllerOptions {
@@ -26,13 +32,24 @@ interface UseRotationControllerOptions {
   onError: (error: unknown) => void;
 }
 
+function poseFromObject(obj: CutoutObject | null): Css3dPose {
+  if (!obj) {
+    return { ...IDENTITY_CSS_POSE };
+  }
+  return {
+    rotateXDeg: obj.cssRotateXDeg,
+    rotateYDeg: obj.cssRotateYDeg,
+    rotateZDeg: obj.cssRotateZDeg,
+    perspectivePx: obj.cssPerspectivePx || DEFAULT_CSS_PERSPECTIVE_PX,
+  };
+}
+
 /**
- * Owns the 3D angle-picker lifecycle for the selected object: arming
- * (fetch-or-generate its GLB, then show the picker) and committing (capture
- * the orbit delta plus a viewer snapshot, fire the detached novel-view
- * request via `commitRotation`, close the picker). See CLAUDE.md's
- * "Rotation flow" — the object's `rotation` field itself is the pending-state
- * marker; nothing rotation-specific is duplicated here.
+ * Owns the angle-picker lifecycle for the selected object.
+ *
+ * Volumetric: fetch-or-generate GLB, show Model3DFrame driven by X/Y sliders,
+ * commit via novel-view.
+ * Planar: skip GLB; sliders drive live CSS 3D; commit via PATCH.
  */
 export function useRotationController({
   imageId,
@@ -49,31 +66,64 @@ export function useRotationController({
 }: UseRotationControllerOptions) {
   const [rotateMode, setRotateMode] = useState(false);
   const [isPreparing3D, setIsPreparing3D] = useState(false);
+  const [draftCssPose, setDraftCssPose] = useState<Css3dPose>(IDENTITY_CSS_POSE);
   const model3DFrameRef = useRef<Model3DFrameHandle>(null);
+  /** Snapshot of CSS pose when planar rotate was armed — Escape restores it. */
+  const planarBaselineRef = useRef<Css3dPose>(IDENTITY_CSS_POSE);
 
   const glbData = selectedObject?.glbData ?? null;
+  const volumetric = isVolumetricObject(selectedObject?.is3d ?? null);
 
-  // Commits the current orbit as a rotation request: captures the angle delta
-  // plus a snapshot of the viewer, fires the (detached) novel-view job via
-  // commitRotation, and closes the picker. The object shows the snapshot
-  // immediately and swaps to the synthesized result when the response lands.
   const commitCurrentRotation = useCallback(async () => {
     if (selectedObjectId === null) {
       setRotateMode(false);
       return;
     }
 
-    // Capture synchronously (reads the live WebGL canvas) before closing the
-    // picker — everything after this works from the extracted data URL.
-    const capture = model3DFrameRef.current?.capture();
     const targetObjectId = selectedObjectId;
-    // The snapshot spans the inflated viewer canvas, not the object's tight
-    // rect, so it must be pasted back over that same inflated region.
+    clearShowOriginal(targetObjectId);
+
+    // Planar: persist CSS angles; Source Cutout untouched; no novel-view.
+    if (!isVolumetricObject(selectedObject?.is3d ?? null)) {
+      const uuid = selectedObject?.uuid;
+      setRotateMode(false);
+      if (!uuid) {
+        return;
+      }
+      const pose = draftCssPose;
+      setObjects((prev) =>
+        prev.map((o) =>
+          o.objectId === targetObjectId
+            ? {
+                ...o,
+                cssRotateXDeg: pose.rotateXDeg,
+                cssRotateYDeg: pose.rotateYDeg,
+                cssRotateZDeg: pose.rotateZDeg,
+                cssPerspectivePx: pose.perspectivePx,
+                rotation: null,
+              }
+            : o,
+        ),
+      );
+      try {
+        await setObjectCssTransform(uuid, {
+          css_rotate_x_deg: pose.rotateXDeg,
+          css_rotate_y_deg: pose.rotateYDeg,
+          css_rotate_z_deg: pose.rotateZDeg,
+          css_perspective_px: pose.perspectivePx,
+        });
+      } catch (err) {
+        onError(err);
+      }
+      return;
+    }
+
+    // Volumetric: capture mesh viewer + novel-view as before.
+    const capture = model3DFrameRef.current?.capture();
     const bounds = selectedObject?.cutoutAlphaBounds
       ? inflateBounds(selectedObject.cutoutAlphaBounds, MODEL_3D_FRAME_PADDING)
       : null;
     setRotateMode(false);
-    clearShowOriginal(targetObjectId);
 
     if (!capture) {
       return;
@@ -82,6 +132,7 @@ export function useRotationController({
     const pose = {
       azimuthDeg: capture.azimuthDeg,
       relativeElevationDeg: capture.relativeElevationDeg,
+      rollDeg: draftCssPose.rotateZDeg,
     };
 
     if (naturalSize) {
@@ -90,35 +141,108 @@ export function useRotationController({
         commitRotation(targetObjectId, pose, previewSrc);
         return;
       } catch {
-        // Compositing failed — fall through to the raw (mis-scaled) snapshot
-        // rather than losing the rotation request entirely.
+        // Compositing failed — fall through to the raw snapshot.
       }
     }
 
     commitRotation(targetObjectId, pose, capture.snapshotDataUrl);
-  }, [selectedObjectId, selectedObject, naturalSize, commitRotation, clearShowOriginal]);
+  }, [
+    selectedObjectId,
+    selectedObject,
+    naturalSize,
+    commitRotation,
+    clearShowOriginal,
+    draftCssPose,
+    setObjects,
+    onError,
+  ]);
 
-  // Opens the angle picker for the selected object. Pressing rotate again
-  // while it's open commits instead — this branch only runs the GLB ladder.
+  const cancelRotation = useCallback(() => {
+    if (!rotateMode) {
+      return;
+    }
+    // Planar: restore baseline CSS pose that was present when Rotate was armed.
+    if (!volumetric && selectedObjectId !== null) {
+      const baseline = planarBaselineRef.current;
+      setDraftCssPose(baseline);
+      setObjects((prev) =>
+        prev.map((o) =>
+          o.objectId === selectedObjectId
+            ? {
+                ...o,
+                cssRotateXDeg: baseline.rotateXDeg,
+                cssRotateYDeg: baseline.rotateYDeg,
+                cssRotateZDeg: baseline.rotateZDeg,
+                cssPerspectivePx: baseline.perspectivePx,
+              }
+            : o,
+        ),
+      );
+    }
+    setRotateMode(false);
+  }, [rotateMode, volumetric, selectedObjectId, setObjects]);
+
+  const updateDraftCssPose = useCallback(
+    (next: Css3dPose) => {
+      setDraftCssPose(next);
+      if (!volumetric && selectedObjectId !== null) {
+        // Live preview on the cutout while armed.
+        setObjects((prev) =>
+          prev.map((o) =>
+            o.objectId === selectedObjectId
+              ? {
+                  ...o,
+                  cssRotateXDeg: next.rotateXDeg,
+                  cssRotateYDeg: next.rotateYDeg,
+                  cssRotateZDeg: next.rotateZDeg,
+                  cssPerspectivePx: next.perspectivePx,
+                }
+              : o,
+          ),
+        );
+      }
+    },
+    [volumetric, selectedObjectId, setObjects],
+  );
+
+  /** Sync X/Y draft from mesh grab (OrbitControls); leave Z untouched. */
+  const syncOrbitFromDrag = useCallback((azimuthDeg: number, elevationDeg: number) => {
+    setDraftCssPose((prev) => ({
+      ...prev,
+      rotateYDeg: azimuthDeg,
+      rotateXDeg: elevationDeg,
+    }));
+  }, []);
+
   const handleRotate = useCallback(async () => {
     if (rotateMode) {
       void commitCurrentRotation();
       return;
     }
 
-    if (!imageId || selectedObjectId === null) {
+    if (!imageId || selectedObjectId === null || !selectedObject) {
       return;
     }
 
     disarmOtherTools();
+
+    // Planar: arm sliders immediately — no GLB.
+    if (!isVolumetricObject(selectedObject.is3d)) {
+      const baseline = poseFromObject(selectedObject);
+      planarBaselineRef.current = baseline;
+      setDraftCssPose(baseline);
+      setRotateMode(true);
+      return;
+    }
+
+    // Volumetric: seed draft from zeros (orbit deltas), then GLB ladder.
+    setDraftCssPose({ ...IDENTITY_CSS_POSE });
 
     if (glbData) {
       setRotateMode(true);
       return;
     }
 
-    // Snapshot the target id before any await so the model attaches to the
-    // right object even if selection changes while generation is in flight.
     const targetObjectId = selectedObjectId;
     setIsPreparing3D(true);
 
@@ -126,11 +250,6 @@ export function useRotationController({
       const cached = await fetchCached3DModel(imageId, targetObjectId);
       let buffer = cached;
       if (!buffer) {
-        // Queued now instead of one blocking request: submit, wait for the
-        // dispatcher to finish it, then read the GLB it wrote to disk. If a
-        // generate_3d job for this object is already queued/running (the
-        // user exited mid-generation and clicked Rotate again on return),
-        // attach to that job instead of submitting a duplicate.
         const jobId =
           jobsList.find(
             (job) =>
@@ -149,7 +268,6 @@ export function useRotationController({
           o.objectId === targetObjectId ? { ...o, glbData: buffer, has3d: true } : o,
         ),
       );
-      // Only surface the picker if the user hasn't switched selection away.
       setSelectedObjectId((current) => {
         if (current === targetObjectId) setRotateMode(true);
         return current;
@@ -165,6 +283,7 @@ export function useRotationController({
     commitCurrentRotation,
     imageId,
     selectedObjectId,
+    selectedObject,
     setObjects,
     setSelectedObjectId,
     jobsList,
@@ -173,11 +292,6 @@ export function useRotationController({
     onError,
   ]);
 
-  // Rotate's spinner has to survive exit/return: unlike segment/inpaint,
-  // generate_3d isn't watched through local pending state at all — handleRotate
-  // awaits it directly above — so without this, exiting mid-generation and
-  // coming back shows the button idle even though a generate_3d job is still
-  // queued/running server-side for this object.
   const activeGenerate3DJobId = jobsList.find(
     (job) =>
       (job.status === "queued" || job.status === "running") &&
@@ -193,6 +307,11 @@ export function useRotationController({
     glbData,
     handleRotate,
     commitCurrentRotation,
+    cancelRotation,
+    draftCssPose,
+    updateDraftCssPose,
+    syncOrbitFromDrag,
+    volumetric,
     activeGenerate3DJobId,
   };
 }

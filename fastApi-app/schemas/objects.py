@@ -34,6 +34,36 @@ class ObjectFields(BaseModel):
             description="UI display scale vs original cutout size; cutout PNG stays at original resolution.",
         ),
     ]
+    is_3d: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description=(
+                "True = volumetric (mesh rotate); False = planar (CSS 3D). "
+                "Null on legacy rows — treat as volumetric."
+            ),
+        ),
+    ]
+    css_rotate_x_deg: Annotated[
+        float,
+        Field(default=0.0, description="CSS rotateX degrees for planar objects."),
+    ]
+    css_rotate_y_deg: Annotated[
+        float,
+        Field(default=0.0, description="CSS rotateY degrees for planar objects."),
+    ]
+    css_rotate_z_deg: Annotated[
+        float,
+        Field(default=0.0, description="CSS rotateZ degrees for planar objects."),
+    ]
+    css_perspective_px: Annotated[
+        float,
+        Field(
+            default=800.0,
+            gt=0.0,
+            description="CSS perspective distance in pixels for planar objects.",
+        ),
+    ]
 
 
 class ObjectMetadataResponse(ObjectFields):
@@ -127,6 +157,38 @@ class ObjectInfo(ObjectFields):
             ),
         ),
     ]
+    rotation_azimuth_deg: Annotated[
+        float | None,
+        Field(default=None, description="Persisted novel-view azimuth, if rotated."),
+    ]
+    rotation_relative_elevation_deg: Annotated[
+        float | None,
+        Field(default=None, description="Persisted novel-view relative elevation, if rotated."),
+    ]
+    rotation_roll_deg: Annotated[
+        float | None,
+        Field(default=None, description="Persisted screen-space roll (Z), if rotated."),
+    ]
+    rotated_b64: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Base64 rotated cutout PNG when a novel-view result is persisted.",
+        ),
+    ]
+    rotated_bounds: Annotated[
+        CutoutBounds | None,
+        Field(default=None, description="Tight bounds inside the rotated PNG, if present."),
+    ]
+
+
+class PersistObjectRotationRequest(BaseModel):
+    """Final baked novel-view PNG + pose to persist across room re-entry."""
+
+    image_b64: Annotated[str, Field(description="Base64-encoded RGBA PNG (roll already baked).")]
+    azimuth_deg: Annotated[float, Field(description="Committed azimuth degrees.")]
+    relative_elevation_deg: Annotated[float, Field(description="Committed relative elevation degrees.")]
+    roll_deg: Annotated[float, Field(default=0.0, description="Committed screen-space roll degrees.")]
 
 
 class ObjectListResponse(BaseModel):
@@ -197,6 +259,26 @@ class UpdateObjectRequest(BaseModel):
             default=None,
             gt=0.0,
             description="UI display scale vs original cutout size. Omit to leave unchanged.",
+        ),
+    ]
+    css_rotate_x_deg: Annotated[
+        float | None,
+        Field(default=None, description="CSS rotateX degrees. Omit to leave unchanged."),
+    ]
+    css_rotate_y_deg: Annotated[
+        float | None,
+        Field(default=None, description="CSS rotateY degrees. Omit to leave unchanged."),
+    ]
+    css_rotate_z_deg: Annotated[
+        float | None,
+        Field(default=None, description="CSS rotateZ degrees. Omit to leave unchanged."),
+    ]
+    css_perspective_px: Annotated[
+        float | None,
+        Field(
+            default=None,
+            gt=0.0,
+            description="CSS perspective px. Omit to leave unchanged.",
         ),
     ]
 

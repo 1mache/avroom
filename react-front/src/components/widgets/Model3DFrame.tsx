@@ -72,6 +72,21 @@ interface Props {
   metalness?: number;
   keyLightIntensity?: number;
   cameraFov?: number;
+  /**
+   * When false, OrbitControls drag is disabled and the camera is driven only
+   * by ``orbitAzimuthDeg`` / ``orbitElevationDeg`` / ``orbitRollDeg``.
+   * Workspace rotate leaves this true so the user can grab the mesh; Debug
+   * Dashboard also leaves it unset (true).
+   */
+  enableOrbitDrag?: boolean;
+  /** Azimuth delta in degrees from the viewer's starting pose (Y axis). */
+  orbitAzimuthDeg?: number;
+  /** Elevation delta in degrees from the viewer's starting pose (up = positive). */
+  orbitElevationDeg?: number;
+  /** Screen-space roll (Z) in degrees from the viewer's starting pose. */
+  orbitRollDeg?: number;
+  /** Fired when the user finishes an orbit drag (azimuth / elevation deltas). */
+  onOrbitChange?: (azimuthDeg: number, elevationDeg: number) => void;
   className?: string;
   style?: React.CSSProperties;
 }
@@ -145,6 +160,11 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
     metalness,
     keyLightIntensity = KEY_LIGHT_INTENSITY,
     cameraFov = CAMERA_FOV,
+    enableOrbitDrag = true,
+    orbitAzimuthDeg = 0,
+    orbitElevationDeg = 0,
+    orbitRollDeg = 0,
+    onOrbitChange,
     className,
     style,
   },
@@ -155,6 +175,11 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
   const controlsRef = useRef<OrbitControls | null>(null);
   const initialAzimuthalRef = useRef(0);
   const initialPolarRef = useRef(0);
+  const orbitDraggingRef = useRef(false);
+  const orbitRollDegRef = useRef(orbitRollDeg);
+  const onOrbitChangeRef = useRef(onOrbitChange);
+  orbitRollDegRef.current = orbitRollDeg;
+  onOrbitChangeRef.current = onOrbitChange;
   // Populated by the load effect below; read by the secondary slider-driven
   // effects so a knob tweak can mutate the live scene in place instead of
   // re-parsing the model (glbData/format are the only load-effect deps).
@@ -238,8 +263,10 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
     // below) and panning is disabled so that center can never drift --
     // rotation angles are only meaningful around a fixed pivot.
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
+    // Damping would keep moving after pointer-up and desync the X/Y sliders.
+    controls.enableDamping = false;
     controls.enablePan = false;
+    controls.enableRotate = enableOrbitDrag;
     controls.target.set(0, 0, 0);
     controlsRef.current = controls;
     initialAzimuthalRef.current = controls.getAzimuthalAngle();
@@ -387,12 +414,40 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
     }
 
     let frameId: number;
+    const applyScreenRoll = () => {
+      const roll = orbitRollDegRef.current;
+      if (!roll) {
+        return;
+      }
+      const degToRad = (degrees: number): number => (degrees * Math.PI) / 180;
+      const forward = new THREE.Vector3()
+        .subVectors(controls.target, camera.position)
+        .normalize();
+      camera.up.set(0, 1, 0).applyAxisAngle(forward, degToRad(roll));
+      camera.lookAt(controls.target);
+    };
     const animate = () => {
       frameId = requestAnimationFrame(animate);
       controls.update();
+      applyScreenRoll();
       renderer.render(scene, camera);
     };
     animate();
+
+    const reportOrbit = () => {
+      const azimuthDeg = radToDeg(controls.getAzimuthalAngle() - initialAzimuthalRef.current);
+      const elevationDeg = radToDeg(initialPolarRef.current - controls.getPolarAngle());
+      onOrbitChangeRef.current?.(azimuthDeg, elevationDeg);
+    };
+    const onOrbitStart = () => {
+      orbitDraggingRef.current = true;
+    };
+    const onOrbitEnd = () => {
+      orbitDraggingRef.current = false;
+      reportOrbit();
+    };
+    controls.addEventListener("start", onOrbitStart);
+    controls.addEventListener("end", onOrbitEnd);
 
     const observer = new ResizeObserver(() => {
       const nextWidth = mount.clientWidth;
@@ -407,6 +462,8 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
     return () => {
       cancelAnimationFrame(frameId);
       observer.disconnect();
+      controls.removeEventListener("start", onOrbitStart);
+      controls.removeEventListener("end", onOrbitEnd);
       controls.dispose();
       renderer.dispose();
       rendererRef.current = null;
@@ -420,7 +477,7 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
     // see comment at the top of this effect; the three effects below handle
     // their live updates without re-running this one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [glbData, format]);
+  }, [glbData, format, enableOrbitDrag]);
 
   // Material sliders: mutate every already-loaded mesh's material in place.
   // A no-op if the model hasn't finished loading yet -- settleLoadedObject
@@ -461,6 +518,38 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
     state.camera.updateProjectionMatrix();
     state.fitGroupToView();
   }, [cameraFov]);
+
+  // Drive spherical angles from rotateX/Y drafts + roll from rotateZ.
+  // Skip while the user is mid-drag so OrbitControls owns the camera.
+  useEffect(() => {
+    if (orbitDraggingRef.current) {
+      return;
+    }
+    const controls = controlsRef.current;
+    const renderer = rendererRef.current;
+    if (!controls || !renderer) {
+      return;
+    }
+    const camera = controls.object as THREE.PerspectiveCamera;
+    const degToRad = (degrees: number): number => (degrees * Math.PI) / 180;
+    const offset = new THREE.Vector3().copy(camera.position).sub(controls.target);
+    const spherical = new THREE.Spherical().setFromVector3(offset);
+    spherical.theta = initialAzimuthalRef.current + degToRad(orbitAzimuthDeg);
+    spherical.phi = initialPolarRef.current - degToRad(orbitElevationDeg);
+    spherical.makeSafe();
+    offset.setFromSpherical(spherical);
+    camera.position.copy(controls.target).add(offset);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(controls.target);
+    if (orbitRollDeg !== 0) {
+      const forward = new THREE.Vector3()
+        .subVectors(controls.target, camera.position)
+        .normalize();
+      camera.up.applyAxisAngle(forward, degToRad(orbitRollDeg));
+      camera.lookAt(controls.target);
+    }
+    controls.update();
+  }, [orbitAzimuthDeg, orbitElevationDeg, orbitRollDeg]);
 
   return (
     <div className={`model-3d-frame${className ? ` ${className}` : ""}`} style={style}>

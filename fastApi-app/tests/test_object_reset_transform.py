@@ -20,6 +20,7 @@ from core.object_metadata import (  # noqa: E402
     create_object_metadata,
     get_object_by_uuid,
     save_object_metadata,
+    set_object_css_transform,
     set_object_offset,
     set_object_rescale_state,
 )
@@ -76,6 +77,13 @@ def test_reset_transform_restores_defaults(storage_sandbox: Path) -> None:
     object_uuid = _seed_object(storage_sandbox)
     set_object_offset(object_uuid, 40.0, -20.0)
     set_object_rescale_state(object_uuid, display_scale=1.75)
+    set_object_css_transform(
+        object_uuid,
+        css_rotate_x_deg=12.0,
+        css_rotate_y_deg=-30.0,
+        css_rotate_z_deg=5.0,
+        css_perspective_px=400.0,
+    )
 
     with _build_client() as client:
         response = client.post(f"/images/objects/{object_uuid}/reset-transform")
@@ -85,6 +93,10 @@ def test_reset_transform_restores_defaults(storage_sandbox: Path) -> None:
     assert body["offset_x"] == 0.0
     assert body["offset_y"] == 0.0
     assert body["display_scale"] == 1.0
+    assert body["css_rotate_x_deg"] == 0.0
+    assert body["css_rotate_y_deg"] == 0.0
+    assert body["css_rotate_z_deg"] == 0.0
+    assert body["css_perspective_px"] == 800.0
     assert body["name"] == "Chair"
 
     metadata = get_object_by_uuid(object_uuid)
@@ -92,6 +104,8 @@ def test_reset_transform_restores_defaults(storage_sandbox: Path) -> None:
     assert metadata.offset_x == 0.0
     assert metadata.offset_y == 0.0
     assert metadata.display_scale == 1.0
+    assert metadata.css_rotate_x_deg == 0.0
+    assert metadata.css_perspective_px == 800.0
 
 
 def test_reset_transform_missing_uuid_returns_404(storage_sandbox: Path) -> None:

@@ -11,8 +11,10 @@ import {
   getSessionObjects,
   importObjectCutout,
   inpaintMask,
+  persistObjectRotation,
   runSessionBatch,
   segmentImage,
+  setObjectCssTransform,
   setObjectName,
   resetObjectTransform as resetObjectTransformRequest,
   smartPasteObject,
@@ -34,9 +36,110 @@ import type {
   RotationPose,
   SegmentPickerState,
 } from "../types/session";
+import { DEFAULT_CSS_PERSPECTIVE_PX, isVolumetricObject } from "../utils/css3dTransform";
 
 // Fallback when server metadata is unavailable (legacy sessions).
 const FALLBACK_SOURCE_ELEVATION_DEG = 15;
+
+/** Bake screen-space roll around ``pivot`` (object center). Defaults to image center. */
+function bakeRollIntoDataUrl(
+  src: string,
+  rollDeg: number,
+  pivot?: { cx: number; cy: number },
+): Promise<{ dataUrl: string; bounds: CutoutAlphaBounds | null }> {
+  if (!rollDeg || Math.abs(rollDeg) < 1e-6) {
+    return Promise.resolve({ dataUrl: src, bounds: null });
+  }
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext("2d", { willReadFrequently: true });
+      if (!ctx) {
+        reject(new Error("Failed to create canvas for roll bake"));
+        return;
+      }
+      const cx = pivot?.cx ?? canvas.width / 2;
+      const cy = pivot?.cy ?? canvas.height / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate((rollDeg * Math.PI) / 180);
+      ctx.drawImage(img, -cx, -cy);
+      const bounds = alphaBoundsFromCanvas(ctx, canvas.width, canvas.height);
+      resolve({ dataUrl: canvas.toDataURL("image/png"), bounds });
+    };
+    img.onerror = () => reject(new Error("Failed to decode image for roll bake"));
+    img.src = src;
+  });
+}
+
+/** Inclusive-left / exclusive-right alpha AABB in natural-image pixels. */
+function alphaBoundsFromCanvas(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+): CutoutAlphaBounds | null {
+  const { data } = ctx.getImageData(0, 0, width, height);
+  let left = width;
+  let top = height;
+  let right = 0;
+  let bottom = 0;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (data[(y * width + x) * 4 + 3] === 0) {
+        continue;
+      }
+      if (x < left) left = x;
+      if (y < top) top = y;
+      if (x + 1 > right) right = x + 1;
+      if (y + 1 > bottom) bottom = y + 1;
+    }
+  }
+  if (right <= left || bottom <= top) {
+    return null;
+  }
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    naturalWidth: width,
+    naturalHeight: height,
+  };
+}
+
+function cssFieldsFromInfo(info: ObjectInfo): Pick<
+  CutoutObject,
+  "is3d" | "cssRotateXDeg" | "cssRotateYDeg" | "cssRotateZDeg" | "cssPerspectivePx"
+> {
+  return {
+    is3d: info.is_3d ?? null,
+    cssRotateXDeg: info.css_rotate_x_deg ?? 0,
+    cssRotateYDeg: info.css_rotate_y_deg ?? 0,
+    cssRotateZDeg: info.css_rotate_z_deg ?? 0,
+    cssPerspectivePx: info.css_perspective_px ?? DEFAULT_CSS_PERSPECTIVE_PX,
+  };
+}
+
+/** Rebuild local ObjectRotation from a persisted novel-view PNG on ObjectInfo. */
+export function rotationFromInfo(info: ObjectInfo): CutoutObject["rotation"] {
+  if (!info.rotated_b64 || info.rotation_azimuth_deg == null) {
+    return null;
+  }
+  const src = `data:image/png;base64,${info.rotated_b64}`;
+  return {
+    pose: {
+      azimuthDeg: info.rotation_azimuth_deg,
+      relativeElevationDeg: info.rotation_relative_elevation_deg ?? 0,
+      rollDeg: info.rotation_roll_deg ?? 0,
+    },
+    previewSrc: src,
+    src,
+    bounds: toCutoutAlphaBounds(info.rotated_bounds),
+    status: "ready",
+  };
+}
 
 // Zoom/radius delta is not exposed in the rotate UI -- always request the
 // model's default camera distance.
@@ -290,6 +393,10 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
                   offset: { x: 0, y: 0 },
                   displayScale: 1,
                   rotation: null,
+                  cssRotateXDeg: 0,
+                  cssRotateYDeg: 0,
+                  cssRotateZDeg: 0,
+                  cssPerspectivePx: DEFAULT_CSS_PERSPECTIVE_PX,
                 }
               : o,
           ),
@@ -313,7 +420,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       cutoutAlphaBounds: toCutoutAlphaBounds(info.cutout_bounds),
       normalizedClickPos: null,
       glbData: null,
-      rotation: null,
+      rotation: rotationFromInfo(info),
       hidden: false,
       beyondStage: info.beyond_stage ?? false,
       revealed: false,
@@ -322,6 +429,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       displayScale: info.display_scale ?? 1,
       has3d: info.has_3d ?? false,
       cloneRootUuid: info.clone_root_uuid ?? null,
+      ...cssFieldsFromInfo(info),
     }));
     setObjects(loaded);
     highestCommittedObjectIdRef.current = loaded.reduce(
@@ -345,6 +453,20 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
             : autoGenerate3dRef.current
               ? ["inpaint", "generate_3d"]
               : ["inpaint"];
+        // Planar objects have no mesh path — drop generate_3d when every
+        // selected uuid is planar. Mixed batches still send generate_3d; the
+        // backend skips per-object when is_3d is false after inpaint.
+        if (source.kind === "objects" && then.includes("generate_3d")) {
+          const selected = objectsRef.current.filter(
+            (o) => o.uuid && source.uuids.includes(o.uuid),
+          );
+          if (
+            selected.length > 0 &&
+            selected.every((o) => !isVolumetricObject(o.is3d))
+          ) {
+            return;
+          }
+        }
         await runSessionBatch(currentImageId, { source, verify: "auto", then });
         if (imageIdRef.current === currentImageId) {
           onMutated?.();
@@ -614,7 +736,36 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         relative_elevation_deg: pose.relativeElevationDeg,
         radius: NO_RADIUS_DELTA,
       })
-        .then((result) => {
+        .then(async (result) => {
+          if (imageIdRef.current !== currentImageId) {
+            return;
+          }
+
+          let src = `data:image/${result.format};base64,${result.image_b64}`;
+          let bounds =
+            toCutoutAlphaBounds(result.cutout_bounds) ?? target?.cutoutAlphaBounds ?? null;
+          const rollDeg = pose.rollDeg ?? 0;
+          if (rollDeg) {
+            try {
+              const pivot =
+                bounds != null
+                  ? {
+                      cx: (bounds.left + bounds.right) / 2,
+                      cy: (bounds.top + bounds.bottom) / 2,
+                    }
+                  : undefined;
+              // Canvas 2D positive rotate is opposite screen-roll from the
+              // mesh-preview camera.up roll — flip so 2d-result matches Z.
+              // Pivot at the object center so Z does not slide the cutout.
+              const baked = await bakeRollIntoDataUrl(src, -rollDeg, pivot);
+              src = baked.dataUrl;
+              if (baked.bounds) {
+                bounds = baked.bounds;
+              }
+            } catch {
+              // Keep the unrolled novel-view if canvas bake fails.
+            }
+          }
           if (imageIdRef.current !== currentImageId) {
             return;
           }
@@ -628,10 +779,11 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
                       pose: {
                         azimuthDeg: result.azimuth_deg,
                         relativeElevationDeg: result.relative_elevation_deg,
+                        rollDeg,
                       },
                       previewSrc,
-                      src: `data:image/${result.format};base64,${result.image_b64}`,
-                      bounds: toCutoutAlphaBounds(result.cutout_bounds),
+                      src,
+                      bounds,
                       status: "ready",
                     },
                   }
@@ -639,6 +791,20 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
             ),
           );
           onMutated?.();
+
+          const uuid = target?.uuid;
+          if (uuid && src.startsWith("data:image")) {
+            const imageB64 = src.includes(",") ? src.split(",", 2)[1] : src;
+            void persistObjectRotation(uuid, {
+              image_b64: imageB64,
+              azimuth_deg: result.azimuth_deg,
+              relative_elevation_deg: result.relative_elevation_deg,
+              roll_deg: rollDeg,
+            }).catch(() => {
+              // Non-fatal: local stage already shows the result; next
+              // leave/re-enter would lose it until the user rotates again.
+            });
+          }
         })
         .catch((err) => {
           if (imageIdRef.current !== currentImageId) {
@@ -657,7 +823,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [onError, onMutated],
   );
 
-  /** Ensure this object's GLB exists, then mesh-render at an inferred pose. */
+  /** Ensure this object's GLB exists, then mesh-render at an inferred pose.
+   * Planar objects skip the mesh and PATCH CSS angles instead. */
   const applyInferredRotation = useCallback(
     async (objectId: number, pose: RotationPose) => {
       const currentImageId = imageIdRef.current;
@@ -667,6 +834,44 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
 
       const target = objectsRef.current.find((o) => o.objectId === objectId);
       if (!target) {
+        return;
+      }
+
+      // Planar: map orbit deltas → CSS rotateY / rotateX; no GLB.
+      if (!isVolumetricObject(target.is3d)) {
+        if (!target.uuid) {
+          return;
+        }
+        const cssPose = {
+          cssRotateXDeg: pose.relativeElevationDeg,
+          cssRotateYDeg: pose.azimuthDeg,
+          cssRotateZDeg: 0,
+          cssPerspectivePx: target.cssPerspectivePx || DEFAULT_CSS_PERSPECTIVE_PX,
+        };
+        setObjects((prev) =>
+          prev.map((o) =>
+            o.objectId === objectId
+              ? {
+                  ...o,
+                  ...cssPose,
+                  rotation: null,
+                }
+              : o,
+          ),
+        );
+        try {
+          await setObjectCssTransform(target.uuid, {
+            css_rotate_x_deg: cssPose.cssRotateXDeg,
+            css_rotate_y_deg: cssPose.cssRotateYDeg,
+            css_rotate_z_deg: cssPose.cssRotateZDeg,
+            css_perspective_px: cssPose.cssPerspectivePx,
+          });
+          onMutated?.();
+        } catch (err) {
+          if (imageIdRef.current === currentImageId) {
+            onError(err, "rotate");
+          }
+        }
         return;
       }
 
@@ -704,7 +909,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         }
       }
     },
-    [commitRotation, onError, setObjects],
+    [commitRotation, onError, onMutated, setObjects],
   );
 
   const renameObject = useCallback(
@@ -769,6 +974,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
             info.source_elevation_deg ?? source.sourceElevationDeg ?? FALLBACK_SOURCE_ELEVATION_DEG,
           has3d: info.has_3d ?? source.has3d,
           cloneRootUuid: info.clone_root_uuid ?? source.uuid,
+          ...cssFieldsFromInfo(info),
         };
 
         setObjects((prev) => upsertObject(prev, newObject));
@@ -844,6 +1050,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
           has3d: info.has_3d ?? false,
           cloneRootUuid: info.clone_root_uuid ?? null,
+          ...cssFieldsFromInfo(info),
         };
 
         setObjects((prev) => upsertObject(prev, newObject));

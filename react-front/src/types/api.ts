@@ -135,6 +135,11 @@ export interface ObjectMetadataResponse {
   offset_y: number;
   display_scale: number;
   clone_root_uuid?: string | null;
+  is_3d?: boolean | null;
+  css_rotate_x_deg?: number;
+  css_rotate_y_deg?: number;
+  css_rotate_z_deg?: number;
+  css_perspective_px?: number;
 }
 
 // Every field optional: a caller sends only what it's actually changing
@@ -145,6 +150,10 @@ export interface UpdateObjectRequest {
   offset_x?: number;
   offset_y?: number;
   display_scale?: number;
+  css_rotate_x_deg?: number;
+  css_rotate_y_deg?: number;
+  css_rotate_z_deg?: number;
+  css_perspective_px?: number;
 }
 
 export interface DuplicateObjectResponse {
@@ -223,6 +232,16 @@ export interface ObjectInfo {
   display_scale?: number;
   clone_root_uuid?: string | null;
   beyond_stage?: boolean;
+  is_3d?: boolean | null;
+  css_rotate_x_deg?: number;
+  css_rotate_y_deg?: number;
+  css_rotate_z_deg?: number;
+  css_perspective_px?: number;
+  rotation_azimuth_deg?: number | null;
+  rotation_relative_elevation_deg?: number | null;
+  rotation_roll_deg?: number | null;
+  rotated_b64?: string | null;
+  rotated_bounds?: CutoutBounds | null;
 }
 
 export interface ObjectListResponse {

@@ -44,15 +44,18 @@ from core.object_metadata import (
     remove_object_index_entry,
     reset_object_transform,
     save_object_metadata,
+    set_object_css_transform,
     set_object_name,
     set_object_offset,
     set_object_rescale_state,
+    set_object_rotation_pose,
     to_object_metadata_response,
 )
 from schemas.objects import (
     DuplicateObjectResponse,
     ImportObjectResponse,
     ObjectMetadataResponse,
+    PersistObjectRotationRequest,
     PlacementRequest,
     PlacementResponse,
     SmartPasteRequest,
@@ -64,6 +67,8 @@ from core.object_storage import (
     delete_legacy_object_artifacts,
     delete_object_artifact_files,
     delete_object_glb_files,
+    object_rotated_path,
+    remove_file,
     resolve_object_cutout_path,
 )
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes, scale_cutout_bounds
@@ -305,6 +310,22 @@ async def update_object(object_uuid: str, request: UpdateObjectRequest) -> Objec
     if "display_scale" in fields:
         assert request.display_scale is not None
         metadata = set_object_rescale_state(object_uuid, display_scale=request.display_scale)
+    css_keys = {
+        "css_rotate_x_deg",
+        "css_rotate_y_deg",
+        "css_rotate_z_deg",
+        "css_perspective_px",
+    }
+    if fields & css_keys:
+        metadata = set_object_css_transform(
+            object_uuid,
+            css_rotate_x_deg=request.css_rotate_x_deg if "css_rotate_x_deg" in fields else None,
+            css_rotate_y_deg=request.css_rotate_y_deg if "css_rotate_y_deg" in fields else None,
+            css_rotate_z_deg=request.css_rotate_z_deg if "css_rotate_z_deg" in fields else None,
+            css_perspective_px=(
+                request.css_perspective_px if "css_perspective_px" in fields else None
+            ),
+        )
 
     touch_session(metadata.session_id)
     response = to_object_metadata_response(metadata, storage_dir, get_3d_storage_dir())
@@ -314,7 +335,7 @@ async def update_object(object_uuid: str, request: UpdateObjectRequest) -> Objec
 
 @router.post("/objects/{object_uuid}/reset-transform", response_model=ObjectMetadataResponse)
 def reset_object_transform_route(object_uuid: str) -> ObjectMetadataResponse:
-    """Reset drag offset and display scale to creation defaults; cutout PNG unchanged."""
+    """Reset drag offset, display scale, CSS tilt, and persisted novel-view rotation."""
     logger.info("Object transform reset requested: uuid=%s", object_uuid)
     storage_dir = get_image_storage_dir()
 
@@ -323,6 +344,7 @@ def reset_object_transform_route(object_uuid: str) -> ObjectMetadataResponse:
         logger.warning("Object transform reset failed — not found: uuid=%s", object_uuid)
         raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
 
+    remove_file(object_rotated_path(storage_dir, metadata.session_id, metadata.object_id))
     metadata = reset_object_transform(object_uuid)
     touch_session(metadata.session_id)
     response = to_object_metadata_response(metadata, storage_dir, get_3d_storage_dir())
@@ -331,6 +353,60 @@ def reset_object_transform_route(object_uuid: str) -> ObjectMetadataResponse:
         object_uuid,
         metadata.session_id,
         metadata.object_id,
+    )
+    return response
+
+
+@router.post("/objects/{object_uuid}/rotation", response_model=ObjectMetadataResponse)
+def persist_object_rotation(
+    object_uuid: str,
+    request: PersistObjectRotationRequest,
+) -> ObjectMetadataResponse:
+    """Persist a baked novel-view PNG + pose so rotation survives room re-entry.
+
+    The Source Cutout is never overwritten. Replacing an existing rotation
+    overwrites ``{uid}_{id}_rotated.png`` and the pose columns.
+    """
+    import base64
+    import binascii
+
+    logger.info(
+        "Object rotation persist requested: uuid=%s azimuth=%.1f rel_elev=%.1f roll=%.1f",
+        object_uuid,
+        request.azimuth_deg,
+        request.relative_elevation_deg,
+        request.roll_deg,
+    )
+    storage_dir = get_image_storage_dir()
+    metadata = get_object_by_uuid(object_uuid)
+    if metadata is None:
+        logger.warning("Object rotation persist failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
+
+    try:
+        png_bytes = base64.b64decode(request.image_b64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        logger.error("Object rotation persist failed — bad base64: uuid=%s", object_uuid)
+        raise HTTPException(status_code=422, detail="image_b64 must be valid base64") from exc
+    if not png_bytes.startswith(b"\x89PNG"):
+        logger.error("Object rotation persist failed — not a PNG: uuid=%s", object_uuid)
+        raise HTTPException(status_code=422, detail="image_b64 must decode to a PNG")
+
+    out_path = object_rotated_path(storage_dir, metadata.session_id, metadata.object_id)
+    out_path.write_bytes(png_bytes)
+    metadata = set_object_rotation_pose(
+        object_uuid,
+        azimuth_deg=request.azimuth_deg,
+        relative_elevation_deg=request.relative_elevation_deg,
+        roll_deg=request.roll_deg,
+    )
+    touch_session(metadata.session_id)
+    response = to_object_metadata_response(metadata, storage_dir, get_3d_storage_dir())
+    logger.info(
+        "Object rotation persisted: uuid=%s path=%s bytes=%d",
+        object_uuid,
+        out_path,
+        len(png_bytes),
     )
     return response
 

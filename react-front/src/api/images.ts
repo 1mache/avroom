@@ -395,6 +395,27 @@ export async function resetObjectTransform(
   return handleJsonResponse<ObjectMetadataResponse>(response);
 }
 
+/** Persist the baked novel-view PNG + pose so rotation survives room re-entry. */
+export async function persistObjectRotation(
+  objectUuid: string,
+  payload: {
+    image_b64: string;
+    azimuth_deg: number;
+    relative_elevation_deg: number;
+    roll_deg?: number;
+  },
+): Promise<ObjectMetadataResponse> {
+  const response = await authedFetch(`${API_BASE_URL}/images/objects/${objectUuid}/rotation`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(payload),
+  });
+
+  return handleJsonResponse<ObjectMetadataResponse>(response);
+}
+
 export async function setObjectOffset(
   objectUuid: string,
   offsetX: number,
@@ -426,6 +447,26 @@ export async function setObjectDisplayScale(
     body: JSON.stringify({
       display_scale: displayScale,
     } satisfies UpdateObjectRequest),
+  });
+
+  return handleJsonResponse<ObjectMetadataResponse>(response);
+}
+
+export async function setObjectCssTransform(
+  objectUuid: string,
+  pose: {
+    css_rotate_x_deg: number;
+    css_rotate_y_deg: number;
+    css_rotate_z_deg: number;
+    css_perspective_px: number;
+  },
+): Promise<ObjectMetadataResponse> {
+  const response = await authedFetch(`${API_BASE_URL}/images/objects/${objectUuid}`, {
+    method: "PATCH",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(pose satisfies UpdateObjectRequest),
   });
 
   return handleJsonResponse<ObjectMetadataResponse>(response);

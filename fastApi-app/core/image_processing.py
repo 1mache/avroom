@@ -625,13 +625,28 @@ def build_object_metadata_for_inpaint(
             image_height=depth_map.shape[0],
         )
         source_elevation_deg = elevation_result.elevation_deg
+    is_3d = True
+    try:
+        classify_png = load_avroom_attr(
+            "classify_object_is_3d_from_png_bytes",
+            "avroom_object_removal.core.object_shape_classifier",
+        )
+        is_3d = bool(classify_png(cutout_bytes, scorer=_get_cutout_clip_scorer()))
+    except Exception:
+        logger.exception(
+            "Object shape classify failed; defaulting is_3d=True: image_id=%s object_id=%d",
+            image_id,
+            object_id,
+        )
     logger.info(
-        "Object metadata prepared: image_id=%s object_id=%d mask_id=%s average_depth=%.2f source_elevation=%.2f",
+        "Object metadata prepared: image_id=%s object_id=%d mask_id=%s average_depth=%.2f "
+        "source_elevation=%.2f is_3d=%s",
         image_id,
         object_id,
         mask_id,
         average_depth,
         source_elevation_deg,
+        is_3d,
     )
     return create_object_metadata(
         session_id=image_id,
@@ -639,6 +654,7 @@ def build_object_metadata_for_inpaint(
         average_depth=average_depth,
         content_hash=content_hash,
         source_elevation_deg=source_elevation_deg,
+        is_3d=is_3d,
     )
 
 

@@ -76,6 +76,8 @@ from .core import (
     ObjectSegmentor,
     SmartPaster,
     SmartPasteResult,
+    classify_object_is_3d,
+    classify_object_is_3d_from_png_bytes,
     select_best_cutout,
 )
 from .routing import (
@@ -141,6 +143,8 @@ __all__ = [
     "select_best_cutout",
     "SmartPaster",
     "SmartPasteResult",
+    "classify_object_is_3d",
+    "classify_object_is_3d_from_png_bytes",
     "SamSegmentationStrategy",
     "SegmentationRoutingStrategy",
     "StableDiffusionInpaintingStrategy",

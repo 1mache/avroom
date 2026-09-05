@@ -153,6 +153,88 @@ input {
   white-space: nowrap;
 }
 
+/* Compact rotate knobs parked beside the selected object while Rotate is armed */
+.rotation-slider-panel {
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.rotation-slider-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  background: var(--chrome-panel);
+  border: 1px solid #101010;
+  border-radius: 3px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+.rotation-slider {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 36px 28px;
+  align-items: center;
+  column-gap: 6px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.rotation-slider-label {
+  color: var(--cyan-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rotation-slider input[type="range"] {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  box-sizing: border-box;
+  /* Keep the thumb inside the track box at 0%/100% */
+  padding: 0 7px;
+  accent-color: var(--cyan);
+}
+
+.rotation-slider-value {
+  text-align: right;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.rotation-slider-reset {
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid #101010;
+  border-radius: 2px;
+  background: var(--chrome-bar, #222);
+  color: var(--cyan-bright);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.rotation-slider-reset:hover:not(:disabled) {
+  border-color: var(--cyan);
+  color: var(--ink);
+}
+
+.rotation-slider-reset:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .session-name {
   width: clamp(140px, 22vw, 280px);
   padding: 5px 8px;
@@ -476,6 +558,14 @@ input {
   /* Full-image-sized transparent PNGs would swallow every click, so pointer
      input is owned by .stage-input and hit-tested against real alpha. */
   pointer-events: none;
+}
+
+.stage-cutout-css3d {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+  user-select: none;
+  touch-action: none;
 }
 
 .stage-input {

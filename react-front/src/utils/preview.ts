@@ -2,6 +2,11 @@
 // cutout at its current position — the room exactly as the user left it.
 import { authedFetch } from "../api/authToken";
 import type { ClickPosition } from "../types/session";
+import {
+  css3dTransform,
+  hasCss3dPose,
+  type Css3dPose,
+} from "./css3dTransform";
 import type { Size } from "./stageGeometry";
 
 /** Long edge of the stored dashboard thumbnail. Cards never render larger than this. */
@@ -19,6 +24,8 @@ export interface PreviewLayer {
     right: number;
     bottom: number;
   } | null;
+  /** Planar CSS 3D tilt; when set, the layer is drawn with the same transform. */
+  cssPose?: Css3dPose | null;
 }
 
 // Cutouts are data: URLs, but the background is served from the API on a
@@ -76,13 +83,22 @@ const drawLayer = (
   const offsetX = layer.offset.x * scale;
   const offsetY = layer.offset.y * scale;
   const displayScale = layer.displayScale ?? 1;
+  const pose = layer.cssPose;
+  const hasPose = pose != null && hasCss3dPose(pose);
 
-  if (displayScale !== 1 && layer.bounds) {
+  if ((displayScale !== 1 || hasPose) && layer.bounds) {
     const pivotX = offsetX + ((layer.bounds.left + layer.bounds.right) / 2) * scale;
     const pivotY = offsetY + ((layer.bounds.top + layer.bounds.bottom) / 2) * scale;
     ctx.save();
     ctx.translate(pivotX, pivotY);
-    ctx.scale(displayScale, displayScale);
+    if (hasPose && pose && typeof DOMMatrix !== "undefined") {
+      // Canvas 2D can't do true perspective; DOMMatrix flattens the CSS 3D
+      // string into an affine approximation that still matches the tilt.
+      const matrix = new DOMMatrix(css3dTransform(pose, displayScale));
+      ctx.transform(matrix.a, matrix.b, matrix.c, matrix.d, matrix.e, matrix.f);
+    } else if (displayScale !== 1) {
+      ctx.scale(displayScale, displayScale);
+    }
     ctx.translate(-pivotX, -pivotY);
     ctx.drawImage(image, offsetX, offsetY, canvasWidth, canvasHeight);
     ctx.restore();

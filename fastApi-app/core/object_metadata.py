@@ -28,6 +28,8 @@ from schemas.objects import ObjectFields, ObjectMetadataResponse
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_CSS_PERSPECTIVE_PX = 800.0
+
 
 class ObjectMetadata(ObjectFields):
     """Persistent metadata for one finalized object within a session.
@@ -109,6 +111,21 @@ class ObjectMetadata(ObjectFields):
             description="Background history stage when this object was created.",
         ),
     ]
+    rotation_azimuth_deg: Annotated[
+        float | None,
+        Field(default=None, description="Last committed novel-view azimuth, or null if unrotated."),
+    ]
+    rotation_relative_elevation_deg: Annotated[
+        float | None,
+        Field(
+            default=None,
+            description="Last committed novel-view relative elevation, or null if unrotated.",
+        ),
+    ]
+    rotation_roll_deg: Annotated[
+        float | None,
+        Field(default=None, description="Last committed screen-space roll (Z), or null if unrotated."),
+    ]
 
 
 def _row_to_metadata(row: ObjectRow) -> ObjectMetadata:
@@ -128,6 +145,14 @@ def _row_to_metadata(row: ObjectRow) -> ObjectMetadata:
         offset_y=row.offset_y,
         display_scale=row.display_scale,
         stage_seq=row.stage_seq,
+        is_3d=row.is_3d,
+        css_rotate_x_deg=row.css_rotate_x_deg,
+        css_rotate_y_deg=row.css_rotate_y_deg,
+        css_rotate_z_deg=row.css_rotate_z_deg,
+        css_perspective_px=row.css_perspective_px,
+        rotation_azimuth_deg=row.rotation_azimuth_deg,
+        rotation_relative_elevation_deg=row.rotation_relative_elevation_deg,
+        rotation_roll_deg=row.rotation_roll_deg,
     )
 
 
@@ -160,6 +185,14 @@ def save_object_metadata(metadata: ObjectMetadata) -> None:
                 offset_y=metadata.offset_y,
                 display_scale=metadata.display_scale,
                 stage_seq=metadata.stage_seq,
+                is_3d=metadata.is_3d,
+                css_rotate_x_deg=metadata.css_rotate_x_deg,
+                css_rotate_y_deg=metadata.css_rotate_y_deg,
+                css_rotate_z_deg=metadata.css_rotate_z_deg,
+                css_perspective_px=metadata.css_perspective_px,
+                rotation_azimuth_deg=metadata.rotation_azimuth_deg,
+                rotation_relative_elevation_deg=metadata.rotation_relative_elevation_deg,
+                rotation_roll_deg=metadata.rotation_roll_deg,
             )
         )
     logger.info(
@@ -288,12 +321,81 @@ def set_object_rescale_state(
 
 
 def reset_object_transform(object_uuid: str) -> ObjectMetadata:
-    """Restore creation-default placement: origin offset and unit display scale."""
+    """Restore creation-default placement: origin offset, unit scale, identity CSS tilt.
+
+    Also clears any persisted volumetric novel-view pose (angles → null). Callers
+    must delete the on-disk ``_rotated.png`` separately.
+    """
     updated = _update_object_fields(
         object_uuid,
-        {"offset_x": 0.0, "offset_y": 0.0, "display_scale": 1.0},
+        {
+            "offset_x": 0.0,
+            "offset_y": 0.0,
+            "display_scale": 1.0,
+            "css_rotate_x_deg": 0.0,
+            "css_rotate_y_deg": 0.0,
+            "css_rotate_z_deg": 0.0,
+            "css_perspective_px": DEFAULT_CSS_PERSPECTIVE_PX,
+            "rotation_azimuth_deg": None,
+            "rotation_relative_elevation_deg": None,
+            "rotation_roll_deg": None,
+        },
     )
     logger.info("Reset object transform: uuid=%s", object_uuid)
+    return updated
+
+
+def set_object_rotation_pose(
+    object_uuid: str,
+    *,
+    azimuth_deg: float,
+    relative_elevation_deg: float,
+    roll_deg: float = 0.0,
+) -> ObjectMetadata:
+    """Persist the last committed volumetric novel-view pose angles."""
+    updated = _update_object_fields(
+        object_uuid,
+        {
+            "rotation_azimuth_deg": azimuth_deg,
+            "rotation_relative_elevation_deg": relative_elevation_deg,
+            "rotation_roll_deg": roll_deg,
+        },
+    )
+    logger.info(
+        "Updated object rotation pose: uuid=%s azimuth=%.1f rel_elev=%.1f roll=%.1f",
+        object_uuid,
+        azimuth_deg,
+        relative_elevation_deg,
+        roll_deg,
+    )
+    return updated
+
+
+def set_object_css_transform(
+    object_uuid: str,
+    *,
+    css_rotate_x_deg: float | None = None,
+    css_rotate_y_deg: float | None = None,
+    css_rotate_z_deg: float | None = None,
+    css_perspective_px: float | None = None,
+) -> ObjectMetadata:
+    """Persist planar CSS 3D tilt angles. Only non-None kwargs are written."""
+    updates: dict[str, float] = {}
+    if css_rotate_x_deg is not None:
+        updates["css_rotate_x_deg"] = css_rotate_x_deg
+    if css_rotate_y_deg is not None:
+        updates["css_rotate_y_deg"] = css_rotate_y_deg
+    if css_rotate_z_deg is not None:
+        updates["css_rotate_z_deg"] = css_rotate_z_deg
+    if css_perspective_px is not None:
+        updates["css_perspective_px"] = css_perspective_px
+    if not updates:
+        metadata = get_object_by_uuid(object_uuid)
+        if metadata is None:
+            raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
+        return metadata
+    updated = _update_object_fields(object_uuid, updates)
+    logger.info("Updated object CSS transform: uuid=%s fields=%s", object_uuid, sorted(updates))
     return updated
 
 
@@ -339,6 +441,11 @@ def create_object_metadata(
     offset_y: float = 0.0,
     display_scale: float = 1.0,
     stage_seq: int = 0,
+    is_3d: bool | None = None,
+    css_rotate_x_deg: float = 0.0,
+    css_rotate_y_deg: float = 0.0,
+    css_rotate_z_deg: float = 0.0,
+    css_perspective_px: float = DEFAULT_CSS_PERSPECTIVE_PX,
 ) -> ObjectMetadata:
     """Build a new metadata record with a fresh UUID and timestamp (not persisted)."""
     return ObjectMetadata(
@@ -357,6 +464,11 @@ def create_object_metadata(
         offset_y=offset_y,
         display_scale=display_scale,
         stage_seq=stage_seq,
+        is_3d=is_3d,
+        css_rotate_x_deg=css_rotate_x_deg,
+        css_rotate_y_deg=css_rotate_y_deg,
+        css_rotate_z_deg=css_rotate_z_deg,
+        css_perspective_px=css_perspective_px,
     )
 
 
@@ -475,7 +587,7 @@ def build_clone_metadata(
     root_uuid, root_label, clone_index = resolve_clone_lineage(source)
     clone_name = format_clone_name(root_label, clone_index)
     offset_x, offset_y = _nudge_clone_offset(source, source_bounds)
-    return create_object_metadata(
+    clone = create_object_metadata(
         session_id=source.session_id,
         object_id=new_object_id,
         average_depth=source.average_depth,
@@ -489,6 +601,19 @@ def build_clone_metadata(
         offset_y=offset_y,
         display_scale=source.display_scale,
         stage_seq=get_history_cursor(source.session_id),
+        is_3d=source.is_3d,
+        css_rotate_x_deg=source.css_rotate_x_deg,
+        css_rotate_y_deg=source.css_rotate_y_deg,
+        css_rotate_z_deg=source.css_rotate_z_deg,
+        css_perspective_px=source.css_perspective_px,
+    )
+    # Rotated PNG is copied separately by copy_object_artifacts.
+    return clone.model_copy(
+        update={
+            "rotation_azimuth_deg": source.rotation_azimuth_deg,
+            "rotation_relative_elevation_deg": source.rotation_relative_elevation_deg,
+            "rotation_roll_deg": source.rotation_roll_deg,
+        }
     )
 
 
@@ -523,4 +648,9 @@ def to_object_metadata_response(
         offset_y=metadata.offset_y,
         display_scale=metadata.display_scale,
         clone_root_uuid=metadata.clone_root_uuid,
+        is_3d=metadata.is_3d,
+        css_rotate_x_deg=metadata.css_rotate_x_deg,
+        css_rotate_y_deg=metadata.css_rotate_y_deg,
+        css_rotate_z_deg=metadata.css_rotate_z_deg,
+        css_perspective_px=metadata.css_perspective_px,
     )

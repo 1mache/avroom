@@ -26,6 +26,9 @@ interface ObjectEntry {
   cloneRootUuid: string | null;
   offset: { x: number; y: number };
   displayScale: number;
+  cssRotateXDeg: number;
+  cssRotateYDeg: number;
+  cssRotateZDeg: number;
 }
 
 export interface ObjectRailProps {

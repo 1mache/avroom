@@ -181,6 +181,22 @@ def import_object_cutout(
     content_hash = content_hash_for_bytes(canvas_bytes)
     object_id = next_object_id(session_id)
 
+    is_3d = True
+    try:
+        from core.avroom_package import load_avroom_attr
+        from core.image_processing import _get_cutout_clip_scorer
+
+        classify_png = load_avroom_attr(
+            "classify_object_is_3d_from_png_bytes",
+            "avroom_object_removal.core.object_shape_classifier",
+        )
+        is_3d = bool(classify_png(cutout_bytes, scorer=_get_cutout_clip_scorer()))
+    except Exception:
+        logger.exception(
+            "Object shape classify failed on import; defaulting is_3d=True: session_id=%s",
+            session_id,
+        )
+
     metadata = create_object_metadata(
         session_id=session_id,
         object_id=object_id,
@@ -188,6 +204,7 @@ def import_object_cutout(
         content_hash=content_hash,
         source_elevation_deg=DEFAULT_SOURCE_ELEVATION_DEG,
         stage_seq=get_history_cursor(session_id),
+        is_3d=is_3d,
     )
     object_cutout_path(base_dir, session_id, object_id).write_bytes(cutout_bytes)
     save_object_metadata(metadata)

@@ -20,6 +20,8 @@ export interface CutoutAlphaBounds {
 export interface RotationPose {
   azimuthDeg: number;
   relativeElevationDeg: number;
+  /** Screen-space roll (rotateZ). Applied in the mesh viewer + baked into the result. */
+  rollDeg?: number;
 }
 
 // One requested rotation for an object. `previewSrc` is a snapshot of the 3D
@@ -64,6 +66,16 @@ export interface CutoutObject {
   sourceElevationDeg: number;
   /** Whether a GLB exists on disk for this object. */
   has3d: boolean;
+  /**
+   * True = volumetric (mesh rotate); false = planar (CSS 3D).
+   * Null on legacy rows — treat as volumetric.
+   */
+  is3d: boolean | null;
+  /** Persisted CSS 3D tilt for planar objects (identity when unused). */
+  cssRotateXDeg: number;
+  cssRotateYDeg: number;
+  cssRotateZDeg: number;
+  cssPerspectivePx: number;
   /** UUID of the clone root when this object was duplicated from another. */
   cloneRootUuid: string | null;
 }
@@ -77,12 +89,23 @@ export function isDrawnOnStage(
 
 /** True when *obj* has a non-default canvas transform or a rotation result. */
 export function hasUndoableObjectChanges(
-  obj: Pick<CutoutObject, "offset" | "displayScale" | "rotation">,
+  obj: Pick<
+    CutoutObject,
+    | "offset"
+    | "displayScale"
+    | "rotation"
+    | "cssRotateXDeg"
+    | "cssRotateYDeg"
+    | "cssRotateZDeg"
+  >,
 ): boolean {
   if (obj.rotation !== null) {
     return true;
   }
   if (obj.displayScale !== 1) {
+    return true;
+  }
+  if (obj.cssRotateXDeg !== 0 || obj.cssRotateYDeg !== 0 || obj.cssRotateZDeg !== 0) {
     return true;
   }
   return obj.offset.x !== 0 || obj.offset.y !== 0;

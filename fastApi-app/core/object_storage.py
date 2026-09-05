@@ -45,6 +45,15 @@ def object_cutout_path(base_dir: Path, uid: str, object_id: int) -> Path:
     return base_dir / f"{uid}_{object_id}_cutout.png"
 
 
+def object_rotated_path(base_dir: Path, uid: str, object_id: int) -> Path:
+    """Return the path for a persisted novel-view / rolled cutout PNG.
+
+    ``base_dir / "{uid}_{object_id}_rotated.png"``. Present only after the
+    user has committed a volumetric rotation; the Source Cutout is untouched.
+    """
+    return base_dir / f"{uid}_{object_id}_rotated.png"
+
+
 def legacy_object_cutout_path(base_dir: Path, uid: str) -> Path:
     """Return the pre-numbering cutout path ``{uid}_cutout.png``.
 
@@ -248,6 +257,19 @@ def copy_object_artifacts(
                 dest_glb,
             )
 
+        source_rotated = object_rotated_path(base_dir, uid, source_object_id)
+        if source_rotated.exists():
+            dest_rotated = object_rotated_path(base_dir, uid, dest_object_id)
+            copy_file_preserving_mtime(source_rotated, dest_rotated)
+            written.append(dest_rotated)
+            logger.debug(
+                "Copied rotated cutout: uid=%s source_id=%d dest_id=%d path=%s",
+                uid,
+                source_object_id,
+                dest_object_id,
+                dest_rotated,
+            )
+
         logger.info(
             "Copied object artifacts: uid=%s source_id=%d dest_id=%d files=%d",
             uid,
@@ -279,6 +301,7 @@ def delete_object_artifact_files(
 
     removed = remove_file(object_cutout_path(base_dir, uid, object_id))
     removed += remove_file(object_glb_path(glb_dir, uid, object_id))
+    removed += remove_file(object_rotated_path(base_dir, uid, object_id))
 
     logger.debug(
         "Deleted object artifact files: uid=%s object_id=%d removed=%d",

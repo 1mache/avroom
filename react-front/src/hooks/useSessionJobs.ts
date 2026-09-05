@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  clearObjectRotation,
   deleteJob,
   deleteObject as deleteObjectRequest,
   deleteObject3d as deleteObject3dRequest,
@@ -837,6 +838,28 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         return;
       }
 
+      // GLB identity faces the camera; the Source Cutout may be a side view.
+      // Identity pose means "show the photo", not "render the mesh at 0,0,0".
+      const identityPose =
+        pose.azimuthDeg === 0 &&
+        pose.relativeElevationDeg === 0 &&
+        (pose.rollDeg ?? 0) === 0;
+      if (isVolumetricObject(target.is3d) && identityPose) {
+        setObjects((prev) =>
+          prev.map((o) => (o.objectId === objectId ? { ...o, rotation: null } : o)),
+        );
+        if (target.uuid) {
+          try {
+            await clearObjectRotation(target.uuid);
+          } catch (err) {
+            if (imageIdRef.current === currentImageId) {
+              onError(err, "rotate");
+            }
+          }
+        }
+        onMutated?.();
+        return;
+      }
       // Planar: map orbit deltas → CSS rotateY / rotateX; no GLB.
       if (!isVolumetricObject(target.is3d)) {
         if (!target.uuid) {
@@ -1079,15 +1102,16 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       y: number,
       options: { scaleByPov?: boolean; smartRotate?: boolean } = {},
     ) => {
-      const scaleByPov = options.scaleByPov ?? true;
-      const smartRotate = options.smartRotate ?? true;
-      if (!scaleByPov && !smartRotate) {
-        return Promise.resolve(false);
-      }
-
       const currentImageId = imageIdRef.current;
       const target = objectsRef.current.find((o) => o.objectId === objectId);
       if (!currentImageId || !target?.uuid) {
+        return Promise.resolve(false);
+      }
+
+      const scaleByPov = options.scaleByPov ?? true;
+      const smartRotate =
+        (options.smartRotate ?? true) && !isVolumetricObject(target.is3d);
+      if (!scaleByPov && !smartRotate) {
         return Promise.resolve(false);
       }
 

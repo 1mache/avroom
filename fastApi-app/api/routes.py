@@ -49,6 +49,7 @@ from core.object_metadata import (
     set_object_offset,
     set_object_rescale_state,
     set_object_rotation_pose,
+    clear_object_rotation_pose,
     to_object_metadata_response,
 )
 from schemas.objects import (
@@ -409,6 +410,23 @@ def persist_object_rotation(
         len(png_bytes),
     )
     return response
+
+
+@router.delete("/objects/{object_uuid}/rotation", status_code=204)
+def clear_object_rotation(object_uuid: str) -> Response:
+    """Remove the baked novel-view PNG and pose so the Source Cutout shows again."""
+    logger.info("Object rotation clear requested: uuid=%s", object_uuid)
+    storage_dir = get_image_storage_dir()
+    metadata = get_object_by_uuid(object_uuid)
+    if metadata is None:
+        logger.warning("Object rotation clear failed — not found: uuid=%s", object_uuid)
+        raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
+
+    remove_file(object_rotated_path(storage_dir, metadata.session_id, metadata.object_id))
+    clear_object_rotation_pose(object_uuid)
+    touch_session(metadata.session_id)
+    logger.info("Object rotation cleared: uuid=%s", object_uuid)
+    return Response(status_code=204)
 
 
 @router.post("/{uid}/objects/import", response_model=ImportObjectResponse, status_code=201)

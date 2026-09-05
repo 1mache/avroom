@@ -345,6 +345,20 @@ def reset_object_transform(object_uuid: str) -> ObjectMetadata:
     return updated
 
 
+def clear_object_rotation_pose(object_uuid: str) -> ObjectMetadata:
+    """Clear persisted novel-view pose columns. Caller deletes the PNG."""
+    updated = _update_object_fields(
+        object_uuid,
+        {
+            "rotation_azimuth_deg": None,
+            "rotation_relative_elevation_deg": None,
+            "rotation_roll_deg": None,
+        },
+    )
+    logger.info("Cleared object rotation pose: uuid=%s", object_uuid)
+    return updated
+
+
 def set_object_rotation_pose(
     object_uuid: str,
     *,

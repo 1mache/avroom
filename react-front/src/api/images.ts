@@ -416,6 +416,16 @@ export async function persistObjectRotation(
   return handleJsonResponse<ObjectMetadataResponse>(response);
 }
 
+/** Clear the baked novel-view so the Source Cutout shows again. */
+export async function clearObjectRotation(objectUuid: string): Promise<void> {
+  const response = await authedFetch(`${API_BASE_URL}/images/objects/${objectUuid}/rotation`, {
+    method: "DELETE",
+  });
+  if (!response.ok) {
+    await throwApiError(response);
+  }
+}
+
 export async function setObjectOffset(
   objectUuid: string,
   offsetX: number,

@@ -23,6 +23,14 @@ logger = logging.getLogger(__name__)
 _pool: InferencePool | None = None
 _client: InferenceClient | None = None
 
+# CPU-only kinds: never wait behind segment/inpaint/3D on the worker FIFO.
+# Cache-miss depth/normals still take inference_session() inside the helper.
+_INLINE_KINDS = frozenset({
+    JobKind.SMART_PASTE,
+    JobKind.RESCALE_BY_DEPTH,
+    JobKind.NOVEL_VIEW,
+})
+
 
 class InferenceJobError(RuntimeError):
     """Raised when an inference job fails in a worker or inline."""
@@ -40,7 +48,7 @@ class InferenceClient:
         self._pool = pool
 
     def _run(self, job: JobRequest) -> JobResult:
-        if self._pool is None:
+        if self._pool is None or job.kind in _INLINE_KINDS:
             logger.debug("Running inference inline: job_id=%s kind=%s", job.job_id, job.kind)
             return execute(job)
 

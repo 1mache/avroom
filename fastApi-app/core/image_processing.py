@@ -22,11 +22,12 @@ from core.inference_pool.session_runtime import mask_id_for_candidate_slot
 from core.object_storage import current_background_path, object_cutout_path, resolve_object_cutout_path
 from core.depth_cache import (
     compute_average_depth_over_mask,
+    content_hash_for_bytes,
     get_or_compute_depth,
     load_depth_map,
     memory_image_key,
 )
-from core.normal_cache import get_or_compute_normals
+from core.normal_cache import get_or_compute_normals, load_normal_map
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.camera_calib_cache import load_camera_calib
 from core.camera_calibration import cache_dict_to_calibration_result
@@ -879,13 +880,18 @@ def run_smart_paste(
         source_x = int(round((base_bounds.left + base_bounds.right) / 2))
         source_y = int(round((base_bounds.top + base_bounds.bottom) / 2))
         image_bytes = load_canvas_bytes(image_id=metadata.session_id, base_dir=base_dir)
-        with inference_session():
-            normal_map, _content_hash = get_or_compute_normals(
-                base_dir,
-                metadata.session_id,
-                image_bytes,
-                _map_normals_bgr,
-            )
+        canvas_hash = content_hash_for_bytes(image_bytes)
+        cached_normals = load_normal_map(base_dir, metadata.session_id, canvas_hash)
+        if cached_normals is not None:
+            normal_map = cached_normals
+        else:
+            with inference_session():
+                normal_map, _content_hash = get_or_compute_normals(
+                    base_dir,
+                    metadata.session_id,
+                    image_bytes,
+                    _map_normals_bgr,
+                )
         logger.info(
             "Smart paste normal map ready: object_uuid=%s source=(%d,%d) shape=%s",
             object_uuid,
@@ -940,20 +946,20 @@ def run_smart_paste(
                 scale_x, scale_y = origin_x, origin_y
 
     source_depth = origin_depth if origin_depth is not None else metadata.average_depth
-    with inference_session():
-        smart_paster = load_avroom_attr("SmartPaster")()
-        paste_result = smart_paster.smart_paste(
-            source_average_depth=source_depth,
-            depth_map=depth_map,
-            x=scale_x,
-            y=scale_y,
-            normal_map=normal_map,
-            source_x=source_x,
-            source_y=source_y,
-            scale_by_pov=scale_by_pov,
-            smart_rotate=smart_rotate,
-            wall_mount=metadata.is_3d is not False,
-        )
+    # Pure numpy — no GPU; must not wait on inference_session held by inpaint.
+    smart_paster = load_avroom_attr("SmartPaster")()
+    paste_result = smart_paster.smart_paste(
+        source_average_depth=source_depth,
+        depth_map=depth_map,
+        x=scale_x,
+        y=scale_y,
+        normal_map=normal_map,
+        source_x=source_x,
+        source_y=source_y,
+        scale_by_pov=scale_by_pov,
+        smart_rotate=smart_rotate,
+        wall_mount=metadata.is_3d is not False,
+    )
 
     if scale_by_pov:
         display_scale = paste_result.scale_factor

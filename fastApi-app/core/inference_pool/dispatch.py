@@ -11,9 +11,10 @@ logger = logging.getLogger(__name__)
 
 # Facade-only jobs do not pass through image_processing helpers that already
 # acquire inference_session(); they need the lock here in inline mode.
+# NOVEL_VIEW is OSMesa CPU mesh render — deliberately omitted so it can run
+# while a CUDA job holds the GPU lock.
 _FACADE_JOB_KINDS = frozenset({
     JobKind.GENERATE_3D,
-    JobKind.NOVEL_VIEW,
     JobKind.VALIDATE_CONTENT,
     JobKind.CALIBRATE_CAMERA,
     JobKind.MAP_NORMALS,

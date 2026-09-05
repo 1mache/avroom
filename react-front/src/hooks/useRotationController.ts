@@ -32,15 +32,27 @@ interface UseRotationControllerOptions {
   onError: (error: unknown) => void;
 }
 
+/** Last committed mesh-xyz (X=pitch Y=yaw Z=roll). Volumetric last rotation
+ * lives on `rotation.pose`; planar lives on the CSS fields. */
 function poseFromObject(obj: CutoutObject | null): Css3dPose {
   if (!obj) {
     return { ...IDENTITY_CSS_POSE };
+  }
+  const perspectivePx = obj.cssPerspectivePx || DEFAULT_CSS_PERSPECTIVE_PX;
+  if (isVolumetricObject(obj.is3d) && obj.rotation?.pose) {
+    const pose = obj.rotation.pose;
+    return {
+      rotateXDeg: pose.relativeElevationDeg,
+      rotateYDeg: pose.azimuthDeg,
+      rotateZDeg: pose.rollDeg ?? 0,
+      perspectivePx,
+    };
   }
   return {
     rotateXDeg: obj.cssRotateXDeg,
     rotateYDeg: obj.cssRotateYDeg,
     rotateZDeg: obj.cssRotateZDeg,
-    perspectivePx: obj.cssPerspectivePx || DEFAULT_CSS_PERSPECTIVE_PX,
+    perspectivePx,
   };
 }
 
@@ -226,17 +238,18 @@ export function useRotationController({
 
     disarmOtherTools();
 
+    const baseline = poseFromObject(selectedObject);
+
     // Planar: arm sliders immediately — no GLB.
     if (!isVolumetricObject(selectedObject.is3d)) {
-      const baseline = poseFromObject(selectedObject);
       planarBaselineRef.current = baseline;
       setDraftCssPose(baseline);
       setRotateMode(true);
       return;
     }
 
-    // Volumetric: seed draft from zeros (orbit deltas), then GLB ladder.
-    setDraftCssPose({ ...IDENTITY_CSS_POSE });
+    // Volumetric: restore last rotation, then GLB ladder.
+    setDraftCssPose(baseline);
 
     if (glbData) {
       setRotateMode(true);

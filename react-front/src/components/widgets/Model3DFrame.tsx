@@ -107,6 +107,36 @@ export interface Model3DFrameHandle {
 }
 
 const radToDeg = (radians: number): number => (radians * 180) / Math.PI;
+const degToRad = (degrees: number): number => (degrees * Math.PI) / 180;
+
+/** Place the orbit camera at azimuth/elevation/roll deltas from identity. */
+function applyOrbitPose(
+  controls: OrbitControls,
+  initialAzimuthal: number,
+  initialPolar: number,
+  azimuthDeg: number,
+  elevationDeg: number,
+  rollDeg: number,
+): void {
+  const camera = controls.object as THREE.PerspectiveCamera;
+  const offset = new THREE.Vector3().copy(camera.position).sub(controls.target);
+  const spherical = new THREE.Spherical().setFromVector3(offset);
+  spherical.theta = initialAzimuthal + degToRad(azimuthDeg);
+  spherical.phi = initialPolar - degToRad(elevationDeg);
+  spherical.makeSafe();
+  offset.setFromSpherical(spherical);
+  camera.position.copy(controls.target).add(offset);
+  camera.up.set(0, 1, 0);
+  camera.lookAt(controls.target);
+  if (rollDeg !== 0) {
+    const forward = new THREE.Vector3()
+      .subVectors(controls.target, camera.position)
+      .normalize();
+    camera.up.applyAxisAngle(forward, degToRad(rollDeg));
+    camera.lookAt(controls.target);
+  }
+  controls.update();
+}
 
 // Above this many vertices the fit samples with a stride instead of reading
 // every one -- generated GLBs run to hundreds of thousands of vertices, and a
@@ -176,8 +206,12 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
   const initialAzimuthalRef = useRef(0);
   const initialPolarRef = useRef(0);
   const orbitDraggingRef = useRef(false);
+  const orbitAzimuthDegRef = useRef(orbitAzimuthDeg);
+  const orbitElevationDegRef = useRef(orbitElevationDeg);
   const orbitRollDegRef = useRef(orbitRollDeg);
   const onOrbitChangeRef = useRef(onOrbitChange);
+  orbitAzimuthDegRef.current = orbitAzimuthDeg;
+  orbitElevationDegRef.current = orbitElevationDeg;
   orbitRollDegRef.current = orbitRollDeg;
   onOrbitChangeRef.current = onOrbitChange;
   // Populated by the load effect below; read by the secondary slider-driven
@@ -399,7 +433,26 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
       oriented.add(obj);
 
       group.add(oriented);
+      // Fit at identity, then restore last rotation. Fitting while already
+      // orbited changes projected silhouette size; a scene remount (Strict
+      // Mode) also skips the orbit effect, so this is the one restore site.
+      applyOrbitPose(
+        controls,
+        initialAzimuthalRef.current,
+        initialPolarRef.current,
+        0,
+        0,
+        0,
+      );
       fitGroupToView();
+      applyOrbitPose(
+        controls,
+        initialAzimuthalRef.current,
+        initialPolarRef.current,
+        orbitAzimuthDegRef.current,
+        orbitElevationDegRef.current,
+        orbitRollDegRef.current,
+      );
     };
 
     if (format === "obj") {
@@ -419,7 +472,6 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
       if (!roll) {
         return;
       }
-      const degToRad = (degrees: number): number => (degrees * Math.PI) / 180;
       const forward = new THREE.Vector3()
         .subVectors(controls.target, camera.position)
         .normalize();
@@ -530,25 +582,14 @@ export const Model3DFrame = forwardRef<Model3DFrameHandle, Props>(function Model
     if (!controls || !renderer) {
       return;
     }
-    const camera = controls.object as THREE.PerspectiveCamera;
-    const degToRad = (degrees: number): number => (degrees * Math.PI) / 180;
-    const offset = new THREE.Vector3().copy(camera.position).sub(controls.target);
-    const spherical = new THREE.Spherical().setFromVector3(offset);
-    spherical.theta = initialAzimuthalRef.current + degToRad(orbitAzimuthDeg);
-    spherical.phi = initialPolarRef.current - degToRad(orbitElevationDeg);
-    spherical.makeSafe();
-    offset.setFromSpherical(spherical);
-    camera.position.copy(controls.target).add(offset);
-    camera.up.set(0, 1, 0);
-    camera.lookAt(controls.target);
-    if (orbitRollDeg !== 0) {
-      const forward = new THREE.Vector3()
-        .subVectors(controls.target, camera.position)
-        .normalize();
-      camera.up.applyAxisAngle(forward, degToRad(orbitRollDeg));
-      camera.lookAt(controls.target);
-    }
-    controls.update();
+    applyOrbitPose(
+      controls,
+      initialAzimuthalRef.current,
+      initialPolarRef.current,
+      orbitAzimuthDeg,
+      orbitElevationDeg,
+      orbitRollDeg,
+    );
   }, [orbitAzimuthDeg, orbitElevationDeg, orbitRollDeg]);
 
   return (

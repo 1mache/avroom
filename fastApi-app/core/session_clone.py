@@ -29,6 +29,7 @@ from core.object_storage import (
     current_background_path,
     object_cutout_path,
     object_glb_path,
+    object_rotated_path,
     resolve_object_cutout_path,
     resolve_object_glb_path,
     session_preview_path,
@@ -131,7 +132,7 @@ def _copy_session_files(source_uid: str, dest_uid: str) -> None:
 
 
 def _copy_object_files(source_uid: str, dest_uid: str, object_id: int) -> None:
-    """Copy one object's cutout (required) and optional GLB into *dest_uid*."""
+    """Copy one object's cutout (required), optional GLB, and optional rotated PNG."""
     storage_dir = get_image_storage_dir()
     glb_dir = get_3d_storage_dir()
 
@@ -148,6 +149,12 @@ def _copy_object_files(source_uid: str, dest_uid: str, object_id: int) -> None:
     if source_glb.exists():
         copy_file_preserving_mtime(
             source_glb, object_glb_path(glb_dir, dest_uid, object_id)
+        )
+
+    source_rotated = object_rotated_path(storage_dir, source_uid, object_id)
+    if source_rotated.exists():
+        copy_file_preserving_mtime(
+            source_rotated, object_rotated_path(storage_dir, dest_uid, object_id)
         )
 
 
@@ -190,6 +197,14 @@ def _clone_visible_objects(source_uid: str, dest_uid: str) -> int:
                 offset_y=meta.offset_y,
                 display_scale=meta.display_scale,
                 stage_seq=0,
+                is_3d=meta.is_3d,
+                css_rotate_x_deg=meta.css_rotate_x_deg,
+                css_rotate_y_deg=meta.css_rotate_y_deg,
+                css_rotate_z_deg=meta.css_rotate_z_deg,
+                css_perspective_px=meta.css_perspective_px,
+                rotation_azimuth_deg=meta.rotation_azimuth_deg,
+                rotation_relative_elevation_deg=meta.rotation_relative_elevation_deg,
+                rotation_roll_deg=meta.rotation_roll_deg,
             )
         )
 

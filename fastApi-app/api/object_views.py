@@ -33,6 +33,7 @@ from schemas.objects import (
 from schemas.sessions import SessionPreviewRequest
 from core.object_storage import (
     current_background_path,
+    object_rotated_path,
     resolve_object_cutout_path,
     resolve_object_glb_path,
     session_preview_path,
@@ -106,6 +107,14 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
             # those fall back to nulls plus an unmoved (0, 0) offset.
             meta = load_object_metadata(uid, oid)
             stage_seq = meta.stage_seq if meta is not None else 0
+            rotated_b64: str | None = None
+            rotated_bounds = None
+            if meta is not None and meta.rotation_azimuth_deg is not None:
+                rotated_path = object_rotated_path(storage_dir, uid, oid)
+                if rotated_path.exists():
+                    rotated_bytes = rotated_path.read_bytes()
+                    rotated_b64 = to_base64_ascii(rotated_bytes)
+                    rotated_bounds = extract_cutout_bounds_from_png_bytes(rotated_bytes)
             objects_list.append(
                 ObjectInfo(
                     object_id=oid,
@@ -124,6 +133,18 @@ async def get_session_objects(uid: str) -> ObjectListResponse:
                     display_scale=meta.display_scale if meta is not None else 1.0,
                     clone_root_uuid=meta.clone_root_uuid if meta is not None else None,
                     beyond_stage=stage_seq > history_cursor,
+                    is_3d=meta.is_3d if meta is not None else None,
+                    css_rotate_x_deg=meta.css_rotate_x_deg if meta is not None else 0.0,
+                    css_rotate_y_deg=meta.css_rotate_y_deg if meta is not None else 0.0,
+                    css_rotate_z_deg=meta.css_rotate_z_deg if meta is not None else 0.0,
+                    css_perspective_px=meta.css_perspective_px if meta is not None else 800.0,
+                    rotation_azimuth_deg=meta.rotation_azimuth_deg if meta is not None else None,
+                    rotation_relative_elevation_deg=(
+                        meta.rotation_relative_elevation_deg if meta is not None else None
+                    ),
+                    rotation_roll_deg=meta.rotation_roll_deg if meta is not None else None,
+                    rotated_b64=rotated_b64,
+                    rotated_bounds=rotated_bounds,
                 )
             )
         except FileNotFoundError as exc:

@@ -11,9 +11,10 @@ logger = logging.getLogger(__name__)
 
 # Facade-only jobs do not pass through image_processing helpers that already
 # acquire inference_session(); they need the lock here in inline mode.
+# NOVEL_VIEW is OSMesa CPU mesh render — deliberately omitted so it can run
+# while a CUDA job holds the GPU lock.
 _FACADE_JOB_KINDS = frozenset({
     JobKind.GENERATE_3D,
-    JobKind.NOVEL_VIEW,
     JobKind.VALIDATE_CONTENT,
     JobKind.CALIBRATE_CAMERA,
     JobKind.MAP_NORMALS,
@@ -296,7 +297,9 @@ def _execute_impl(job: JobRequest) -> JobResult:
         from core.debug_vision import run_auto_mask_pick
 
         assert job.image_bytes is not None and job.x is not None and job.y is not None
-        payload = run_auto_mask_pick(job.image_bytes, x=job.x, y=job.y)
+        payload = run_auto_mask_pick(
+            job.image_bytes, x=job.x, y=job.y, points=job.points
+        )
         return JobResult(job_id=job.job_id, ok=True, debug_payload=payload)
 
     if job.kind == JobKind.DEBUG_INPAINT_VERIFY:
@@ -309,6 +312,7 @@ def _execute_impl(job: JobRequest) -> JobResult:
             x=job.x,
             y=job.y,
             mask_index=debug_options.get("mask_index"),
+            points=job.points,
         )
         return JobResult(job_id=job.job_id, ok=True, debug_payload=payload)
 

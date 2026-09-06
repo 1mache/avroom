@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { withAuthParam } from "../api/authToken";
 import { API_BASE_URL, getSessionObjects, getUidCacheStatus, syncCheckSession } from "../api/images";
-import { toCutoutAlphaBounds } from "./useSessionJobs";
+import { rotationFromInfo, toCutoutAlphaBounds } from "./useSessionJobs";
 import type { JobInfo } from "../types/api";
 import type { CutoutObject } from "../types/session";
 
@@ -90,8 +90,13 @@ export function useSessionSync(options: UseSessionSyncOptions) {
 
           if (local) {
             const beyondStage = info.beyond_stage ?? false;
+            const serverRotation = rotationFromInfo(info);
             // Update server-owned fields; keep purely-local/transient ones
             // (offset, hidden, revealed, glbData, normalizedClickPos) untouched.
+            // Pending/error rotation stays local until it settles.
+            const keepLocalRotation =
+              local.rotation != null &&
+              (local.rotation.status === "pending" || local.rotation.status === "error");
             return {
               ...local,
               uuid: info.uuid ?? local.uuid,
@@ -103,8 +108,16 @@ export function useSessionSync(options: UseSessionSyncOptions) {
                 info.source_elevation_deg ?? local.sourceElevationDeg,
               has3d: info.has_3d ?? local.has3d,
               cloneRootUuid: info.clone_root_uuid ?? local.cloneRootUuid,
+              is3d: info.is_3d ?? local.is3d,
+              cssRotateXDeg: info.css_rotate_x_deg ?? local.cssRotateXDeg,
+              cssRotateYDeg: info.css_rotate_y_deg ?? local.cssRotateYDeg,
+              cssRotateZDeg: info.css_rotate_z_deg ?? local.cssRotateZDeg,
+              cssPerspectivePx: info.css_perspective_px ?? local.cssPerspectivePx,
               beyondStage,
               revealed: beyondStage ? local.revealed : false,
+              rotation: keepLocalRotation
+                ? local.rotation
+                : (serverRotation ?? local.rotation),
             };
           }
 
@@ -116,7 +129,7 @@ export function useSessionSync(options: UseSessionSyncOptions) {
             cutoutAlphaBounds,
             normalizedClickPos: null,
             glbData: null,
-            rotation: null,
+            rotation: rotationFromInfo(info),
             hidden: false,
             beyondStage: info.beyond_stage ?? false,
             revealed: false,
@@ -125,6 +138,11 @@ export function useSessionSync(options: UseSessionSyncOptions) {
             sourceElevationDeg: info.source_elevation_deg ?? 15,
             has3d: info.has_3d ?? false,
             cloneRootUuid: info.clone_root_uuid ?? null,
+            is3d: info.is_3d ?? null,
+            cssRotateXDeg: info.css_rotate_x_deg ?? 0,
+            cssRotateYDeg: info.css_rotate_y_deg ?? 0,
+            cssRotateZDeg: info.css_rotate_z_deg ?? 0,
+            cssPerspectivePx: info.css_perspective_px ?? 800,
           };
         });
 

@@ -28,7 +28,7 @@ from core.inference_pool.session_runtime import (
 from core.mask_cache import delete_candidate
 from core.notifications import notify_pipeline_event
 from core.object_3d import ensure_object_glb
-from core.object_metadata import next_object_id, save_object_metadata
+from core.object_metadata import load_object_metadata, next_object_id, save_object_metadata
 from core.object_storage import object_cutout_path, resolve_object_cutout_path
 from core.session_history import commit_background
 from core.repositories.job_repo import JobRecord, create_job, reserved_mask_ids
@@ -132,7 +132,7 @@ def run_inpaint_job(job: JobRecord) -> None:
             drop_lease(job.session_id, lease)
         release_canvas_writer(job.session_id)
 
-    if job.payload.get("generate_3d"):
+    if job.payload.get("generate_3d") and object_metadata.is_3d is not False:
         try:
             create_job(job.user_id, job.session_id, "generate_3d", {"object_id": object_id})
             logger.info(
@@ -147,6 +147,12 @@ def run_inpaint_job(job: JobRecord) -> None:
                 job.id,
                 object_id,
             )
+    elif job.payload.get("generate_3d"):
+        logger.info(
+            "Skipping auto 3D after inpaint — planar object: job_id=%s object_id=%d",
+            job.id,
+            object_id,
+        )
 
     logger.info(
         "Inpaint job complete: job_id=%s session_id=%s object_id=%d object_uuid=%s",
@@ -194,6 +200,16 @@ def run_generate_3d_job(job: JobRecord) -> None:
     """Run 3D generation for a queued job, reusing the shared GLB cache-or-generate helper."""
     object_id = job.payload["object_id"]
     storage_dir = get_image_storage_dir()
+    meta = load_object_metadata(job.session_id, object_id)
+    if meta is not None and meta.is_3d is False:
+        logger.info(
+            "Skipping 3D generation — planar object: job_id=%s session_id=%s object_id=%d",
+            job.id,
+            job.session_id,
+            object_id,
+        )
+        return
+
     cutout_path = resolve_object_cutout_path(storage_dir, job.session_id, object_id)
     if not cutout_path.exists():
         raise FileNotFoundError(

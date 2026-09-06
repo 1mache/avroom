@@ -61,15 +61,29 @@ def _use_test_database() -> None:
 _use_test_database()
 
 
-@pytest.fixture(autouse=True)
-def _clean_database() -> Iterator[None]:
-    """Ensure the schema exists and every table is empty before each test."""
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_test_schema() -> None:
+    """Recreate tables once per pytest process so columns match current models.
+
+    ``create_all`` alone does not add columns to an existing table; a stale
+    ``avroom_test`` schema from before a migration would then fail every test
+    that touches the new columns.
+    """
     from db import models  # noqa: F401 — registers tables on Base.metadata
     from db.base import Base
     from db.session import get_engine
 
     engine = get_engine()
+    Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
+
+
+@pytest.fixture(autouse=True)
+def _clean_database() -> Iterator[None]:
+    """Ensure every table is empty before each test."""
+    from db.session import get_engine
+
+    engine = get_engine()
     with engine.begin() as conn:
         conn.execute(text("TRUNCATE TABLE objects, sessions, projects, users RESTART IDENTITY CASCADE"))
     yield

@@ -22,11 +22,12 @@ from core.inference_pool.session_runtime import mask_id_for_candidate_slot
 from core.object_storage import current_background_path, object_cutout_path, resolve_object_cutout_path
 from core.depth_cache import (
     compute_average_depth_over_mask,
+    content_hash_for_bytes,
     get_or_compute_depth,
     load_depth_map,
     memory_image_key,
 )
-from core.normal_cache import get_or_compute_normals
+from core.normal_cache import get_or_compute_normals, load_normal_map
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.camera_calib_cache import load_camera_calib
 from core.camera_calibration import cache_dict_to_calibration_result
@@ -625,13 +626,28 @@ def build_object_metadata_for_inpaint(
             image_height=depth_map.shape[0],
         )
         source_elevation_deg = elevation_result.elevation_deg
+    is_3d = True
+    try:
+        classify_png = load_avroom_attr(
+            "classify_object_is_3d_from_png_bytes",
+            "avroom_object_removal.core.object_shape_classifier",
+        )
+        is_3d = bool(classify_png(cutout_bytes, scorer=_get_cutout_clip_scorer()))
+    except Exception:
+        logger.exception(
+            "Object shape classify failed; defaulting is_3d=True: image_id=%s object_id=%d",
+            image_id,
+            object_id,
+        )
     logger.info(
-        "Object metadata prepared: image_id=%s object_id=%d mask_id=%s average_depth=%.2f source_elevation=%.2f",
+        "Object metadata prepared: image_id=%s object_id=%d mask_id=%s average_depth=%.2f "
+        "source_elevation=%.2f is_3d=%s",
         image_id,
         object_id,
         mask_id,
         average_depth,
         source_elevation_deg,
+        is_3d,
     )
     return create_object_metadata(
         session_id=image_id,
@@ -639,6 +655,7 @@ def build_object_metadata_for_inpaint(
         average_depth=average_depth,
         content_hash=content_hash,
         source_elevation_deg=source_elevation_deg,
+        is_3d=is_3d,
     )
 
 
@@ -829,7 +846,11 @@ def run_smart_paste(
     scale_by_pov: bool = True,
     smart_rotate: bool = True,
 ) -> SmartPasteBridgeResult:
-    """Run smart paste for one object at ``(x, y)`` and persist metadata only."""
+    """Run smart paste for one object at ``(x, y)`` and persist metadata only.
+
+    Volumetric (mesh) objects never auto-rotate; ``smart_rotate`` applies to
+    planar cutouts only. Scale-by-POV is unchanged.
+    """
     logger.info(
         "Smart paste requested: object_uuid=%s placement=(%d,%d) scale_by_pov=%s smart_rotate=%s",
         object_uuid,
@@ -840,6 +861,15 @@ def run_smart_paste(
     )
 
     metadata = _load_object_metadata_for_rescale(base_dir, object_uuid)
+    # Mesh objects keep scale-by-POV; auto-rotate is planar CSS only.
+    if smart_rotate and metadata.is_3d is not False:
+        logger.info(
+            "Smart paste auto-rotate skipped: volumetric object_uuid=%s is_3d=%s",
+            object_uuid,
+            metadata.is_3d,
+        )
+        smart_rotate = False
+
     cutout_path = resolve_object_cutout_path(base_dir, metadata.session_id, metadata.object_id)
     base_bounds = extract_cutout_bounds_from_png_bytes(cutout_path.read_bytes())
 
@@ -850,13 +880,18 @@ def run_smart_paste(
         source_x = int(round((base_bounds.left + base_bounds.right) / 2))
         source_y = int(round((base_bounds.top + base_bounds.bottom) / 2))
         image_bytes = load_canvas_bytes(image_id=metadata.session_id, base_dir=base_dir)
-        with inference_session():
-            normal_map, _content_hash = get_or_compute_normals(
-                base_dir,
-                metadata.session_id,
-                image_bytes,
-                _map_normals_bgr,
-            )
+        canvas_hash = content_hash_for_bytes(image_bytes)
+        cached_normals = load_normal_map(base_dir, metadata.session_id, canvas_hash)
+        if cached_normals is not None:
+            normal_map = cached_normals
+        else:
+            with inference_session():
+                normal_map, _content_hash = get_or_compute_normals(
+                    base_dir,
+                    metadata.session_id,
+                    image_bytes,
+                    _map_normals_bgr,
+                )
         logger.info(
             "Smart paste normal map ready: object_uuid=%s source=(%d,%d) shape=%s",
             object_uuid,
@@ -911,19 +946,20 @@ def run_smart_paste(
                 scale_x, scale_y = origin_x, origin_y
 
     source_depth = origin_depth if origin_depth is not None else metadata.average_depth
-    with inference_session():
-        smart_paster = load_avroom_attr("SmartPaster")()
-        paste_result = smart_paster.smart_paste(
-            source_average_depth=source_depth,
-            depth_map=depth_map,
-            x=scale_x,
-            y=scale_y,
-            normal_map=normal_map,
-            source_x=source_x,
-            source_y=source_y,
-            scale_by_pov=scale_by_pov,
-            smart_rotate=smart_rotate,
-        )
+    # Pure numpy — no GPU; must not wait on inference_session held by inpaint.
+    smart_paster = load_avroom_attr("SmartPaster")()
+    paste_result = smart_paster.smart_paste(
+        source_average_depth=source_depth,
+        depth_map=depth_map,
+        x=scale_x,
+        y=scale_y,
+        normal_map=normal_map,
+        source_x=source_x,
+        source_y=source_y,
+        scale_by_pov=scale_by_pov,
+        smart_rotate=smart_rotate,
+        wall_mount=metadata.is_3d is not False,
+    )
 
     if scale_by_pov:
         display_scale = paste_result.scale_factor

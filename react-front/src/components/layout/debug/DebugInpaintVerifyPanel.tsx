@@ -5,7 +5,7 @@ import { formatMs, pngSrc, type PanelState } from "./shared";
 
 export interface DebugInpaintVerifyPanelProps {
   file: File | null;
-  clickPos: { x: number; y: number } | null;
+  seedCount: number;
   inpaintVerify: PanelState<DebugInpaintVerifyResponse>;
   onRun: () => void;
   onOpenLightbox: (src: string, alt: string) => void;
@@ -13,7 +13,7 @@ export interface DebugInpaintVerifyPanelProps {
 
 export const DebugInpaintVerifyPanel: React.FC<DebugInpaintVerifyPanelProps> = ({
   file,
-  clickPos,
+  seedCount,
   inpaintVerify,
   onRun,
   onOpenLightbox,
@@ -30,7 +30,7 @@ export const DebugInpaintVerifyPanel: React.FC<DebugInpaintVerifyPanelProps> = (
         type="button"
         className="btn"
         onClick={onRun}
-        disabled={!file || !clickPos || inpaintVerify.status === "running"}
+        disabled={!file || seedCount < 1 || inpaintVerify.status === "running"}
       >
         {inpaintVerify.status === "running" ? <span className="tool-spinner" /> : "Re-run"}
       </button>

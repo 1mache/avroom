@@ -23,6 +23,7 @@ from core.object_storage import (
     legacy_object_glb_path,
     object_cutout_path,
     object_glb_path,
+    object_rotated_path,
     remove_file,
     session_preview_path,
 )
@@ -62,6 +63,7 @@ def delete_session_and_files(uid: str) -> int:
 
     for oid in obj_ids:
         removed += remove_file(object_cutout_path(storage_dir, uid, oid))
+        removed += remove_file(object_rotated_path(storage_dir, uid, oid))
         removed += remove_file(object_glb_path(three_d_dir, uid, oid))
 
     removed += delete_session_depth_maps(storage_dir, uid)

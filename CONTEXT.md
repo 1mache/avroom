@@ -111,8 +111,16 @@ An object created from another object in the same room. Also the action that cre
 _Avoid_: Clone, Duplicate
 
 **3D render**:
-The object's 3D mesh, used as the rotation angle picker.
+The object's 3D mesh, used as the rotation angle picker for volumetric objects.
 _Avoid_: GLB, "the model" (when meaning this mesh)
+
+**Planar object**:
+A flat item (painting, poster, TV, wall art, mirror). Classified once after cut-out. Rotates with CSS 3D transforms — no 3D render.
+_Avoid_: 2D object (ok in casual speech; prefer planar in product copy), flat
+
+**Volumetric object**:
+A furniture-like item with depth (chair, lamp, sculpture). Classified once after cut-out. Rotates via 3D render + novel view.
+_Avoid_: 3D object (ambiguous with 3D render), is_3d (code flag only)
 
 **Preview**:
 The Room Selector card thumbnail of a room as left.
@@ -199,11 +207,11 @@ Change the display name of a project, a room, or an object.
 _Avoid_: label, title (as the verb)
 
 **Rotate**:
-Open the 3D angle picker on the selected object and commit a new 2D view. The Source Cutout is untouched.
+Open the angle picker on the selected object and commit a new view. Planar objects use CSS 3D tilt; volumetric objects use the 3D render + novel view. The Source Cutout is untouched.
 _Avoid_: orbit (the gesture is part of rotate, not a separate product verb)
 
 **Smart-paste**:
-Place the selected object at a drop point. When armed, runs only the steps enabled in toolbar settings: scale by POV (depth-proportional rescale) and smart rotate (infer mesh pose from surface normals).
+Place the selected object at a drop point. When armed, runs only the steps enabled in toolbar settings: scale by POV (depth-proportional rescale) and smart rotate (infer pose from surface normals — CSS tilt for planar, mesh novel-view for volumetric).
 _Avoid_: drag (when this extra step runs)
 
 **Scale by POV**:
@@ -211,7 +219,7 @@ Smart-paste step that rescales the object to match depth at the drop point.
 _Avoid_: rescale (as the product verb alone)
 
 **Smart rotate**:
-Smart-paste step that infers a mesh-orbit pose from normals at the source cutout center vs the drop point.
+Smart-paste step that infers a pose from normals at the source cutout center vs the drop point. Planar objects apply it as CSS 3D; volumetric objects apply it as mesh novel-view.
 _Avoid_: auto-rotate (as the product verb)
 
 **Backtrack**:
@@ -237,7 +245,7 @@ Lasso a region and fill those background pixels. No object is created.
 _Avoid_: cut out
 
 **Rotate**:
-Obtain a 3D render, orbit, commit a novel view. The Source Cutout stays.
+Obtain a 3D render and orbit (volumetric), or tilt with CSS 3D (planar), then commit. The Source Cutout stays.
 _Avoid_: 3D preview (as the product)
 
 **Place**:

@@ -11,7 +11,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, JSON, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.base import Base
@@ -113,6 +113,16 @@ class ObjectRow(Base):
     offset_y: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
     display_scale: Mapped[float] = mapped_column(Float, default=1.0, nullable=False)
     stage_seq: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # NULL on pre-classification rows → treat as volumetric at read time.
+    is_3d: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    css_rotate_x_deg: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    css_rotate_y_deg: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    css_rotate_z_deg: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    css_perspective_px: Mapped[float] = mapped_column(Float, default=800.0, nullable=False)
+    # Last committed volumetric novel-view pose. Null = show Source Cutout.
+    rotation_azimuth_deg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rotation_relative_elevation_deg: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rotation_roll_deg: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     session: Mapped[SessionRow] = relationship(back_populates="objects")
 

@@ -11,6 +11,10 @@ from .content_image_validator import ContentImageValidator
 from .cutout_selector import CutoutSelectionResult, select_best_cutout
 from .object_remover import ObjectRemover
 from .object_segmentor import ObjectSegmentor
+from .object_shape_classifier import (
+    classify_object_is_3d,
+    classify_object_is_3d_from_png_bytes,
+)
 from .smart_paster import SmartPaster, SmartPasteResult
 
 __all__ = [
@@ -26,4 +30,6 @@ __all__ = [
     "ContentImageValidator",
     "CutoutSelectionResult",
     "select_best_cutout",
+    "classify_object_is_3d",
+    "classify_object_is_3d_from_png_bytes",
 ]

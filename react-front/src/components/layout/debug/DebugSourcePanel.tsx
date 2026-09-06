@@ -3,14 +3,20 @@ import React, { useRef, useState } from "react";
 import { PhotoIcon } from "../../icons";
 import { getContainedImageRect } from "../../../utils/stageGeometry";
 
+export interface DebugSeed {
+  x: number;
+  y: number;
+}
+
 export interface DebugSourcePanelProps {
   file: File | null;
   previewUrl: string | null;
-  clickPos: { x: number; y: number } | null;
+  seeds: DebugSeed[];
   busy: boolean;
   /** Replaces the current file — parent resets every panel's state. */
   onFileAccepted: (file: File) => void;
   onPreviewClick: React.MouseEventHandler<HTMLImageElement>;
+  onClearSeeds: () => void;
   onRunAll: () => void;
 }
 
@@ -22,10 +28,11 @@ export interface DebugSourcePanelProps {
 export const DebugSourcePanel: React.FC<DebugSourcePanelProps> = ({
   file,
   previewUrl,
-  clickPos,
+  seeds,
   busy,
   onFileAccepted,
   onPreviewClick,
+  onClearSeeds,
   onRunAll,
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
@@ -48,6 +55,13 @@ export const DebugSourcePanel: React.FC<DebugSourcePanelProps> = ({
       onFileAccepted(dropped);
     }
   };
+
+  const seedReadout =
+    seeds.length === 0
+      ? "Click the photo to add seed points (up to 8)"
+      : seeds.length === 1
+        ? `1 seed at ${seeds[0].x}, ${seeds[0].y} — Esc or Clear resets`
+        : `${seeds.length} seeds · Esc or Clear resets`;
 
   return (
     <div className="debug-source">
@@ -78,35 +92,41 @@ export const DebugSourcePanel: React.FC<DebugSourcePanelProps> = ({
                 className="dropzone-preview"
                 onClick={onPreviewClick}
               />
-              {clickPos && previewImgRef.current ? (
-                <span
-                  className="debug-click-marker"
-                  style={(() => {
+              {previewImgRef.current
+                ? seeds.map((seed, index) => {
                     const img = previewImgRef.current;
+                    if (!img) {
+                      return null;
+                    }
                     const natural = { width: img.naturalWidth, height: img.naturalHeight };
                     const rendered = getContainedImageRect(
                       { width: img.clientWidth, height: img.clientHeight },
                       natural,
                     );
                     if (!rendered || natural.width <= 0 || natural.height <= 0) {
-                      return undefined;
+                      return null;
                     }
-                    return {
-                      left: rendered.x + (clickPos.x / natural.width) * rendered.width,
-                      top: rendered.y + (clickPos.y / natural.height) * rendered.height,
-                    };
-                  })()}
-                />
-              ) : null}
+                    return (
+                      <span
+                        key={`${seed.x}-${seed.y}-${index}`}
+                        className="debug-click-marker"
+                        style={{
+                          left: rendered.x + (seed.x / natural.width) * rendered.width,
+                          top: rendered.y + (seed.y / natural.height) * rendered.height,
+                        }}
+                      >
+                        {seeds.length > 1 ? (
+                          <span className="debug-click-marker-label">{index + 1}</span>
+                        ) : null}
+                      </span>
+                    );
+                  })
+                : null}
             </div>
             <div className="dropzone-file">
               <span className="dropzone-filename">{file.name}</span>
             </div>
-            <p className="debug-click-readout">
-              {clickPos
-                ? `Click ${clickPos.x}, ${clickPos.y} — used by auto mask pick and inpaint verify`
-                : "Click the photo to set a seed point"}
-            </p>
+            <p className="debug-click-readout">{seedReadout}</p>
           </>
         ) : (
           <button type="button" className="dropzone-invite" onClick={() => inputRef.current?.click()}>
@@ -122,6 +142,14 @@ export const DebugSourcePanel: React.FC<DebugSourcePanelProps> = ({
       <div className="debug-source-actions">
         <button type="button" className="btn" onClick={() => inputRef.current?.click()}>
           {file ? "Choose another" : "Choose a file"}
+        </button>
+        <button
+          type="button"
+          className="btn"
+          onClick={onClearSeeds}
+          disabled={seeds.length === 0}
+        >
+          Clear seeds
         </button>
         <button type="button" className="btn is-primary" onClick={onRunAll} disabled={!file || busy}>
           {busy ? <span className="tool-spinner" /> : "Run all"}

@@ -41,6 +41,7 @@ class SmartPaster:
         source_y: int | None = None,
         scale_by_pov: bool = True,
         smart_rotate: bool = True,
+        wall_mount: bool = True,
     ) -> SmartPasteResult:
         """Run smart paste at natural-image placement ``(x, y)``."""
         logger.info(
@@ -79,6 +80,7 @@ class SmartPaster:
                 source_y=source_y,
                 dest_x=x,
                 dest_y=y,
+                wall_mount=wall_mount,
             )
             if pose is not None:
                 azimuth_deg = pose.azimuth_deg
@@ -114,6 +116,7 @@ class SmartPaster:
         source_y: int,
         dest_x: int,
         dest_y: int,
+        wall_mount: bool = True,
     ) -> OrbitPose | None:
         try:
             source_normal = sample_normal_at_point(normal_map, source_x, source_y)
@@ -129,4 +132,10 @@ class SmartPaster:
                 exc,
             )
             return None
-        return orbit_pose_from_normals(source_normal, dest_normal)
+        return orbit_pose_from_normals(
+            source_normal,
+            dest_normal,
+            wall_mount=wall_mount,
+            dest_x=dest_x,
+            image_width=int(normal_map.shape[1]),
+        )

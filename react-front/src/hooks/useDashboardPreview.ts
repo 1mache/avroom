@@ -54,12 +54,25 @@ export function useDashboardPreview(uid: string, inputs: PreviewInputs) {
 
       const layers = objects
         .filter(isDrawnOnStage)
-        .map((obj) => ({
-          src: effectiveCutoutSrc(obj, shown.has(obj.objectId)),
-          offset: obj.offset,
-          displayScale: obj.displayScale,
-          bounds: effectiveCutoutBounds(obj, shown.has(obj.objectId)),
-        }));
+        .map((obj) => {
+          const showOriginal = shown.has(obj.objectId);
+          const cssPose =
+            !showOriginal && obj.is3d === false
+              ? {
+                  rotateXDeg: obj.cssRotateXDeg,
+                  rotateYDeg: obj.cssRotateYDeg,
+                  rotateZDeg: obj.cssRotateZDeg,
+                  perspectivePx: obj.cssPerspectivePx,
+                }
+              : null;
+          return {
+            src: effectiveCutoutSrc(obj, showOriginal),
+            offset: obj.offset,
+            displayScale: obj.displayScale,
+            bounds: effectiveCutoutBounds(obj, showOriginal),
+            cssPose,
+          };
+        });
 
       const composed = await composeSessionPreview(backgroundSrc, layers, size);
       if (composed) {

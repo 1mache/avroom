@@ -11,14 +11,15 @@ interface HitCanvasEntry {
   // on src change, not just track which ids exist.
   src: string;
   displayScale: number;
+  cssKey: string;
 }
 
 /**
  * Alpha-precise hit testing: cutout PNGs are full-image-sized with
  * transparency outside the object, so a topmost DOM overlay would swallow
  * every click. This builds an offscreen canvas per object (rebuilt whenever
- * its effective src or displayScale changes) and samples pixel alpha on
- * demand.
+ * its effective src, displayScale, or CSS pose changes) and samples pixel
+ * alpha on demand.
  */
 export function useHitTesting(
   objects: CutoutObject[],
@@ -36,8 +37,14 @@ export function useHitTesting(
 
     objects.forEach((obj) => {
       const src = effectiveCutoutSrc(obj, isShowingOriginal(obj));
+      const cssKey = `${obj.cssRotateXDeg},${obj.cssRotateYDeg},${obj.cssRotateZDeg},${obj.cssPerspectivePx}`;
       const existing = hitCanvasesRef.current.get(obj.objectId);
-      if (existing && existing.src === src && existing.displayScale === obj.displayScale) {
+      if (
+        existing &&
+        existing.src === src &&
+        existing.displayScale === obj.displayScale &&
+        existing.cssKey === cssKey
+      ) {
         return;
       }
 
@@ -57,6 +64,7 @@ export function useHitTesting(
           height: img.naturalHeight,
           src,
           displayScale: obj.displayScale,
+          cssKey,
         });
       };
       img.src = src;

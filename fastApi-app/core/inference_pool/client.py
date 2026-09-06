@@ -23,6 +23,14 @@ logger = logging.getLogger(__name__)
 _pool: InferencePool | None = None
 _client: InferenceClient | None = None
 
+# CPU-only kinds: never wait behind segment/inpaint/3D on the worker FIFO.
+# Cache-miss depth/normals still take inference_session() inside the helper.
+_INLINE_KINDS = frozenset({
+    JobKind.SMART_PASTE,
+    JobKind.RESCALE_BY_DEPTH,
+    JobKind.NOVEL_VIEW,
+})
+
 
 class InferenceJobError(RuntimeError):
     """Raised when an inference job fails in a worker or inline."""
@@ -40,7 +48,7 @@ class InferenceClient:
         self._pool = pool
 
     def _run(self, job: JobRequest) -> JobResult:
-        if self._pool is None:
+        if self._pool is None or job.kind in _INLINE_KINDS:
             logger.debug("Running inference inline: job_id=%s kind=%s", job.job_id, job.kind)
             return execute(job)
 
@@ -414,7 +422,12 @@ class InferenceClient:
         return result.debug_png_bytes, result.debug_mask_count
 
     def run_debug_auto_mask_pick(
-        self, *, image_bytes: bytes, x: int, y: int
+        self,
+        *,
+        image_bytes: bytes,
+        x: int,
+        y: int,
+        points: tuple[tuple[int, int], ...] | None = None,
     ) -> dict[str, Any]:
         job = JobRequest(
             job_id=_new_job_id(),
@@ -423,6 +436,7 @@ class InferenceClient:
             image_bytes=image_bytes,
             x=x,
             y=y,
+            points=points,
         )
         result = self._run(job)
         self._raise_if_failed(result)
@@ -430,7 +444,13 @@ class InferenceClient:
         return result.debug_payload
 
     def run_debug_inpaint_verify(
-        self, *, image_bytes: bytes, x: int, y: int, mask_index: int | None
+        self,
+        *,
+        image_bytes: bytes,
+        x: int,
+        y: int,
+        mask_index: int | None,
+        points: tuple[tuple[int, int], ...] | None = None,
     ) -> dict[str, Any]:
         job = JobRequest(
             job_id=_new_job_id(),
@@ -439,6 +459,7 @@ class InferenceClient:
             image_bytes=image_bytes,
             x=x,
             y=y,
+            points=points,
             options={"mask_index": mask_index},
         )
         result = self._run(job)

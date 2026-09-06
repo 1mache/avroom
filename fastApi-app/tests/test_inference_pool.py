@@ -8,7 +8,9 @@ import sys
 import threading
 import time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
+
+import numpy as np
 
 _APP_ROOT = Path(__file__).resolve().parents[1]
 if str(_APP_ROOT) not in sys.path:
@@ -122,7 +124,8 @@ def test_segment_execute_skips_dispatch_level_lock() -> None:
     lock_mock.assert_not_called()
 
 
-def test_novel_view_execute_uses_dispatch_level_lock_inline() -> None:
+def test_novel_view_execute_skips_dispatch_level_lock() -> None:
+    """OSMesa mesh render must not wait on the CUDA inference_session lock."""
     from core.inference_pool.dispatch import execute
 
     job = JobRequest(
@@ -130,6 +133,7 @@ def test_novel_view_execute_uses_dispatch_level_lock_inline() -> None:
         kind=JobKind.NOVEL_VIEW,
         storage_dir=str(_APP_ROOT / "tmp" / "images"),
         cutout_path=str(_APP_ROOT / "tmp" / "images" / "cutout.png"),
+        mesh_path=str(_APP_ROOT / "tmp" / "images" / "mesh.glb"),
         elevation_deg=0.0,
         azimuth_deg=45.0,
         relative_elevation_deg=0.0,
@@ -139,13 +143,127 @@ def test_novel_view_execute_uses_dispatch_level_lock_inline() -> None:
 
     with patch.dict(os.environ, {"AVROOM_INFERENCE_WORKER": ""}, clear=False):
         with patch("core.inference_pool.dispatch.inference_session") as lock_mock:
-            lock_mock.return_value.__enter__ = lambda *_: None
-            lock_mock.return_value.__exit__ = lambda *_: None
             with patch("core.inference_pool.dispatch._execute_impl", return_value=expected):
                 result = execute(job)
 
     assert result.ok is True
-    lock_mock.assert_called_once()
+    lock_mock.assert_not_called()
+
+
+def test_cpu_kinds_bypass_worker_pool() -> None:
+    """Smart paste / rescale / novel-view must not wait behind pool FIFO jobs."""
+    try:
+        from core.inference_pool.client import InferenceClient
+    except ModuleNotFoundError as exc:
+        print(f"Skipping pool-bypass test (missing dependency: {exc.name})")
+        return
+
+    pool = MagicMock()
+    client = InferenceClient(pool)
+    storage = str(_APP_ROOT / "tmp" / "images")
+
+    for kind in (JobKind.SMART_PASTE, JobKind.RESCALE_BY_DEPTH, JobKind.NOVEL_VIEW):
+        pool.reset_mock()
+        expected = JobResult(job_id="cpu-1", ok=True)
+        job = JobRequest(job_id="cpu-1", kind=kind, storage_dir=storage)
+        with patch("core.inference_pool.client.execute", return_value=expected) as execute_mock:
+            result = client._run(job)
+        assert result.ok is True
+        execute_mock.assert_called_once_with(job)
+        pool.submit_and_wait.assert_not_called()
+
+    pool.reset_mock()
+    segment_job = JobRequest(
+        job_id="seg-1",
+        kind=JobKind.SEGMENT,
+        storage_dir=storage,
+        image_id="session-1",
+        x=1,
+        y=2,
+    )
+    pool.submit_and_wait.return_value = JobResult(
+        job_id="seg-1", ok=True, candidates=[("mask_0", b"cutout")]
+    )
+    with patch("core.inference_pool.client.execute") as execute_mock:
+        result = client._run(segment_job)
+    assert result.ok is True
+    execute_mock.assert_not_called()
+    pool.submit_and_wait.assert_called_once_with(segment_job)
+
+
+def test_smart_paste_skips_gpu_lock_on_cache_hit() -> None:
+    """Warm depth/normal caches: paste math must not acquire inference_session."""
+    try:
+        from core.image_processing import run_smart_paste
+        from schemas.common import CutoutBounds
+    except ModuleNotFoundError as exc:
+        print(f"Skipping smart-paste lock test (missing dependency: {exc.name})")
+        return
+
+    metadata = MagicMock()
+    metadata.session_id = "sess-1"
+    metadata.object_id = 0
+    metadata.average_depth = 100.0
+    metadata.display_scale = 1.0
+    metadata.content_hash = "abc123"
+    metadata.is_3d = False
+
+    depth = np.full((10, 10), 100.0, dtype=np.float32)
+    normals = np.ones((10, 10, 3), dtype=np.float32)
+    bounds = CutoutBounds(
+        left=2, top=2, right=8, bottom=8, natural_width=10, natural_height=10
+    )
+
+    paste_result = MagicMock()
+    paste_result.source_average_depth = 100.0
+    paste_result.target_depth = 100.0
+    paste_result.scale_factor = 1.0
+    paste_result.azimuth_deg = None
+    paste_result.relative_elevation_deg = None
+
+    smart_paster = MagicMock()
+    smart_paster.smart_paste.return_value = paste_result
+
+    def load_attr(name: str, module: str | None = None) -> object:
+        helpers = {
+            "drop_is_at_original_footprint": lambda **_kwargs: False,
+            "sample_depth_at_point": lambda _depth, _x, _y: 100.0,
+            "origin_depth_sample_point": lambda *_args: (5, 5),
+            "SmartPaster": lambda: smart_paster,
+        }
+        return helpers[name]
+
+    cutout_path = MagicMock()
+    cutout_path.read_bytes.return_value = b"png-bytes"
+
+    with (
+        patch("core.image_processing._load_object_metadata_for_rescale", return_value=metadata),
+        patch("core.image_processing.resolve_object_cutout_path", return_value=cutout_path),
+        patch("core.image_processing.extract_cutout_bounds_from_png_bytes", return_value=bounds),
+        patch("core.image_processing.load_canvas_bytes", return_value=b"canvas"),
+        patch("core.image_processing.content_hash_for_bytes", return_value="hash"),
+        patch("core.image_processing.load_normal_map", return_value=normals) as load_normals,
+        patch("core.image_processing.get_or_compute_normals") as compute_normals,
+        patch("core.image_processing._compute_session_depth_map", return_value=depth),
+        patch("core.image_processing.load_avroom_attr", side_effect=load_attr),
+        patch("core.image_processing._persist_rescale_metadata"),
+        patch("core.image_processing.get_normal_map_enabled", return_value=True),
+        patch("core.image_processing.inference_session") as lock_mock,
+    ):
+        result = run_smart_paste(
+            base_dir=_APP_ROOT / "tmp" / "images",
+            object_uuid="obj-1",
+            x=5,
+            y=5,
+            scale_by_pov=True,
+            smart_rotate=True,
+        )
+
+    assert result.display_scale == 1.0
+    load_normals.assert_called_once()
+    compute_normals.assert_not_called()
+    lock_mock.assert_not_called()
+    smart_paster.smart_paste.assert_called_once()
 
 
 def test_session_lock_serializes_same_session() -> None:
@@ -181,6 +299,8 @@ if __name__ == "__main__":
     test_job_result_pickle_round_trip()
     test_inline_client_delegates_to_dispatch()
     test_segment_execute_skips_dispatch_level_lock()
-    test_novel_view_execute_uses_dispatch_level_lock_inline()
+    test_novel_view_execute_skips_dispatch_level_lock()
+    test_cpu_kinds_bypass_worker_pool()
+    test_smart_paste_skips_gpu_lock_on_cache_hit()
     test_session_lock_serializes_same_session()
     print("inference pool tests passed")

@@ -53,6 +53,13 @@ import {
   type Size,
 } from "../../utils/stageGeometry";
 import {
+  css3dTransform,
+  hasCss3dPose,
+  isVolumetricObject,
+  mapPointThroughInverseCss3d,
+  type Css3dPose,
+} from "../../utils/css3dTransform";
+import {
   composeStageSnapshot,
   snapshotDownloadFilename,
   triggerBlobDownload,
@@ -63,6 +70,7 @@ import { MaskPickerModal } from "../widgets/MaskPickerModal";
 import { MODEL_3D_FRAME_PADDING, Model3DFrame } from "../widgets/Model3DFrame";
 import { BatchQueuePanel } from "../workspace/BatchQueuePanel";
 import { ObjectRail } from "../workspace/ObjectRail";
+import { RotationSliderBar } from "../workspace/RotationSliderBar";
 import { Toolbar } from "../workspace/Toolbar";
 
 const MAX_SEGMENT_SEEDS = 8;
@@ -534,11 +542,11 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       jobs.setSelectedObjectId(objectId);
       // Rotation is scoped to whichever object is selected — switching away
       // closes the angle picker.
-      rotation.setRotateMode(false);
+      rotation.cancelRotation();
       setCutMode(false);
       setPendingSeeds([]);
     },
-    [jobs.setSelectedObjectId, rotation.setRotateMode],
+    [jobs.setSelectedObjectId, rotation.cancelRotation],
   );
 
   const handleToggleHidden = useCallback(
@@ -546,10 +554,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       const wasSelected = jobs.selectedObjectId === objectId;
       jobs.toggleHidden(objectId);
       if (wasSelected) {
-        rotation.setRotateMode(false);
+        rotation.cancelRotation();
       }
     },
-    [jobs.selectedObjectId, jobs.toggleHidden, rotation.setRotateMode],
+    [jobs.selectedObjectId, jobs.toggleHidden, rotation.cancelRotation],
   );
 
   const handleToggleShowOriginal = useCallback((objectId: number) => {
@@ -589,7 +597,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   );
 
   const handleCut = useCallback(() => {
-    rotation.setRotateMode(false);
+    rotation.cancelRotation();
     setAreaMode(false);
     setEraserMode(false);
     setLassoDraft(null);
@@ -599,10 +607,10 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     }
     setPendingSeeds([]);
     setCutMode((armed) => !armed);
-  }, [armedBatch.batchMode, rotation.setRotateMode]);
+  }, [armedBatch.batchMode, rotation.cancelRotation]);
 
   const handleEraser = useCallback(() => {
-    rotation.setRotateMode(false);
+    rotation.cancelRotation();
     setCutMode(false);
     setAreaMode(false);
     if (!armedBatch.batchMode) {
@@ -616,17 +624,17 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       }
       return !armed;
     });
-  }, [armedBatch.batchMode, rotation.setRotateMode]);
+  }, [armedBatch.batchMode, rotation.cancelRotation]);
 
   const handleArea = useCallback(() => {
-    rotation.setRotateMode(false);
+    rotation.cancelRotation();
     setCutMode(false);
     setEraserMode(false);
     setLassoDraft(null);
     setPendingEraseRegions([]);
     setPendingSeeds([]);
     setAreaMode((armed) => !armed);
-  }, [rotation.setRotateMode]);
+  }, [rotation.cancelRotation]);
 
   const handleToggleBatchMode = useCallback(() => {
     armedBatch.setBatchMode((on) => !on);
@@ -783,14 +791,14 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         setError("This object is from an older room and can't be deleted.");
         return;
       }
-      rotation.setRotateMode(false);
+      rotation.cancelRotation();
       if (hasCloneSiblings(target, jobs.objects)) {
         void jobs.deleteObject(objectId);
         return;
       }
       setPendingDeleteObjectId(objectId);
     },
-    [jobs.deleteObject, jobs.objects, rotation.setRotateMode],
+    [jobs.deleteObject, jobs.objects, rotation.cancelRotation],
   );
 
   const handleDeleteObject = useCallback(() => {
@@ -803,17 +811,17 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const handleClearObject3d = useCallback(
     (objectId: number) => {
       if (jobs.selectedObjectId === objectId) {
-        rotation.setRotateMode(false);
+        rotation.cancelRotation();
       }
       void jobs.clearObject3d(objectId);
     },
-    [jobs.clearObject3d, jobs.selectedObjectId, rotation.setRotateMode],
+    [jobs.clearObject3d, jobs.selectedObjectId, rotation.cancelRotation],
   );
 
   const handleResetObjectChanges = useCallback(
     (objectId: number) => {
       if (jobs.selectedObjectId === objectId) {
-        rotation.setRotateMode(false);
+        rotation.cancelRotation();
       }
       setShowOriginalIds((prev) => {
         if (!prev.has(objectId)) {
@@ -825,7 +833,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       });
       void jobs.resetObjectChanges(objectId);
     },
-    [jobs.resetObjectChanges, jobs.selectedObjectId, rotation.setRotateMode],
+    [jobs.resetObjectChanges, jobs.selectedObjectId, rotation.cancelRotation],
   );
 
   const pendingDeleteObject =
@@ -911,7 +919,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           handleMaskPickerDeferred();
           return;
         }
-        rotation.setRotateMode(false);
+        if (rotation.rotateMode) {
+          rotation.cancelRotation();
+        }
         setCutMode(false);
         setAreaMode(false);
         setEraserMode(false);
@@ -953,7 +963,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     armedBatch.appendClicks,
     armedBatch.batchModeRef,
     rotation.commitCurrentRotation,
-    rotation.setRotateMode,
+    rotation.cancelRotation,
   ]);
 
   // --- pointer interaction on the photo -----------------------------------
@@ -1013,10 +1023,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         return;
       }
 
-      // While the selected object's 3D model is shown, its 2D cutout is hidden
-      // and that region belongs to the (higher z-index) 3D frame instead.
+      // While the selected volumetric object's 3D model is shown, its 2D
+      // cutout is hidden and that region belongs to the 3D frame instead.
       const hitOrder = buildHitTestOrder(jobs.objects, jobs.selectedObjectId).filter(
-        (obj) => !(rotation.rotateMode && obj.objectId === jobs.selectedObjectId),
+        (obj) =>
+          !(
+            rotation.rotateMode &&
+            rotation.volumetric &&
+            obj.objectId === jobs.selectedObjectId
+          ),
       );
 
       for (const obj of hitOrder) {
@@ -1037,13 +1052,23 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         }
 
         const samplePoint =
-          baseBounds && obj.displayScale !== 1
-            ? mapPointThroughInverseScale(
+          baseBounds && !isVolumetricObject(obj.is3d) && hasCss3dPose(cssPoseOf(obj))
+            ? mapPointThroughInverseCss3d(
                 { x: localObjX, y: localObjY },
-                baseBounds,
+                {
+                  x: (baseBounds.left + baseBounds.right) / 2,
+                  y: (baseBounds.top + baseBounds.bottom) / 2,
+                },
+                cssPoseOf(obj),
                 obj.displayScale,
               )
-            : { x: localObjX, y: localObjY };
+            : baseBounds && obj.displayScale !== 1
+              ? mapPointThroughInverseScale(
+                  { x: localObjX, y: localObjY },
+                  baseBounds,
+                  obj.displayScale,
+                )
+              : { x: localObjX, y: localObjY };
 
         if (
           sampleObjectAlpha(obj.objectId, samplePoint.x, samplePoint.y) <= ALPHA_HIT_THRESHOLD
@@ -1085,11 +1110,38 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // --- derived render values ---------------------------------------------
 
   const visibleObjects = jobs.objects.filter(isDrawnOnStage);
-  // While the selected object's 3D model is shown, its 2D cutout is skipped so
-  // the 3D frame replaces it rather than stacking on top of it.
+  // While the selected volumetric object's 3D model is shown, its 2D cutout
+  // is skipped so the 3D frame replaces it. Planar rotate keeps the cutout
+  // visible (CSS 3D drives it live).
   const stageObjects = visibleObjects.filter(
-    (obj) => !(rotation.rotateMode && obj.objectId === jobs.selectedObjectId),
+    (obj) =>
+      !(
+        rotation.rotateMode &&
+        rotation.volumetric &&
+        obj.objectId === jobs.selectedObjectId
+      ),
   );
+
+  const cssPoseOf = (obj: CutoutObject): Css3dPose => ({
+    rotateXDeg: obj.cssRotateXDeg,
+    rotateYDeg: obj.cssRotateYDeg,
+    rotateZDeg: obj.cssRotateZDeg,
+    perspectivePx: obj.cssPerspectivePx,
+  });
+
+  const usesPlanarCss3d = (obj: CutoutObject): boolean => {
+    if (isVolumetricObject(obj.is3d)) {
+      return false;
+    }
+    const showOriginal = isShowingOriginal(obj);
+    if (showOriginal) {
+      return false;
+    }
+    if (rotation.rotateMode && obj.objectId === jobs.selectedObjectId) {
+      return true;
+    }
+    return hasCss3dPose(cssPoseOf(obj));
+  };
 
   const cutoutStyle = (
     obj: CutoutObject,
@@ -1101,19 +1153,68 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     }
 
     const baseBounds = effectiveCutoutBounds(obj, showOriginal);
+    const scaleX = renderedRect.width / naturalSize.width;
+    const scaleY = renderedRect.height / naturalSize.height;
+    const planar = usesPlanarCss3d(obj) && baseBounds;
+
+    // Positions are relative to .stage-cutout-clip (rendered-rect origin),
+    // not the stage — do not add renderedRect.x/y.
+    if (planar && baseBounds) {
+      const pose = cssPoseOf(obj);
+      const left = (obj.offset.x + baseBounds.left) * scaleX;
+      const top = (obj.offset.y + baseBounds.top) * scaleY;
+      const width = (baseBounds.right - baseBounds.left) * scaleX;
+      const height = (baseBounds.bottom - baseBounds.top) * scaleY;
+      return {
+        left: `${left}px`,
+        top: `${top}px`,
+        width: `${width}px`,
+        height: `${height}px`,
+        zIndex,
+        transform: css3dTransform(pose, obj.displayScale),
+        transformOrigin: "50% 50%",
+        transformStyle: "preserve-3d",
+      };
+    }
+
     const transformOrigin =
       baseBounds && naturalSize.width > 0 && naturalSize.height > 0
         ? `${(((baseBounds.left + baseBounds.right) / 2 / naturalSize.width) * 100).toFixed(4)}% ${(((baseBounds.top + baseBounds.bottom) / 2 / naturalSize.height) * 100).toFixed(4)}%`
         : "50% 50%";
 
     return {
-      left: `${renderedRect.x + obj.offset.x * (renderedRect.width / naturalSize.width)}px`,
-      top: `${renderedRect.y + obj.offset.y * (renderedRect.height / naturalSize.height)}px`,
+      left: `${obj.offset.x * scaleX}px`,
+      top: `${obj.offset.y * scaleY}px`,
       width: `${renderedRect.width}px`,
       height: `${renderedRect.height}px`,
       zIndex,
       transform: obj.displayScale !== 1 ? `scale(${obj.displayScale})` : undefined,
       transformOrigin,
+    };
+  };
+
+  /** Inner img offset when the cutout sits in a tight CSS-3D wrapper. */
+  const planarCutoutImgStyle = (
+    obj: CutoutObject,
+    showOriginal: boolean,
+  ): React.CSSProperties | undefined => {
+    if (!naturalSize || !renderedRect) {
+      return undefined;
+    }
+    const baseBounds = effectiveCutoutBounds(obj, showOriginal);
+    if (!baseBounds || !usesPlanarCss3d(obj)) {
+      return undefined;
+    }
+    const scaleX = renderedRect.width / naturalSize.width;
+    const scaleY = renderedRect.height / naturalSize.height;
+    return {
+      position: "absolute",
+      left: `${-baseBounds.left * scaleX}px`,
+      top: `${-baseBounds.top * scaleY}px`,
+      width: `${renderedRect.width}px`,
+      height: `${renderedRect.height}px`,
+      objectFit: "contain",
+      pointerEvents: "none",
     };
   };
 
@@ -1130,9 +1231,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     height: `${rect.height}px`,
   });
 
-  // On-stage rect the selected object occupies (alpha bounds + drag offset).
-  // Both the 3D frame and the selection frame are placed against this, so
-  // neither jumps relative to the 2D cutout.
+  // Stage-space rect (includes renderedRect origin) — used by the rotation
+  // slider, which sits outside .stage-cutout-clip.
   const selectedRect =
     naturalSize && renderedRect && selectedObject
       ? getBoundsStageRect(
@@ -1143,15 +1243,53 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         )
       : null;
 
-  const model3DFrameStyle: React.CSSProperties | undefined = selectedRect
+  // Same rect in clip-local coords (origin = photo top-left).
+  const selectedRectInClip =
+    selectedRect && renderedRect
+      ? {
+          left: selectedRect.left - renderedRect.x,
+          top: selectedRect.top - renderedRect.y,
+          width: selectedRect.width,
+          height: selectedRect.height,
+        }
+      : null;
+
+  const model3DFrameStyle: React.CSSProperties | undefined = selectedRectInClip
     ? {
-        ...rectStyle(inflateAroundCenter(selectedRect, MODEL_3D_FRAME_PADDING)),
+        ...rectStyle(inflateAroundCenter(selectedRectInClip, MODEL_3D_FRAME_PADDING)),
         // Above the interaction overlay so OrbitControls receive the pointer.
         zIndex: 200,
         pointerEvents: "auto",
         touchAction: "none",
       }
     : undefined;
+
+  // Compact slider card parked beside the rotating object (not a full-width bar).
+  const rotationSliderPanelStyle: React.CSSProperties | undefined = (() => {
+    if (!rotation.rotateMode || !selectedRect) {
+      return undefined;
+    }
+    const PANEL_W = 300;
+    const GAP = 10;
+    const anchor = rotation.volumetric
+      ? inflateAroundCenter(selectedRect, MODEL_3D_FRAME_PADDING)
+      : selectedRect;
+    const stageW = stageRef.current?.clientWidth ?? anchor.left + anchor.width + PANEL_W + GAP + 24;
+    const stageH = stageRef.current?.clientHeight ?? anchor.top + 200;
+    let left = anchor.left + anchor.width + GAP;
+    if (left + PANEL_W > stageW - 8) {
+      left = Math.max(8, anchor.left - PANEL_W - GAP);
+    }
+    const top = Math.max(8, Math.min(anchor.top, stageH - 148));
+    return {
+      position: "absolute",
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${PANEL_W}px`,
+      zIndex: 220,
+      pointerEvents: "auto",
+    };
+  })();
 
   const canResize =
     Boolean(selectedObject?.uuid) &&
@@ -1330,7 +1468,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         paintOrder.map(async (obj) => {
           const showOriginal = isShowingOriginal(obj);
           const isRotatePickerTarget =
-            rotation.rotateMode && obj.objectId === selectedId;
+            rotation.rotateMode &&
+            rotation.volumetric &&
+            obj.objectId === selectedId;
 
           if (isRotatePickerTarget) {
             const capture = rotation.model3DFrameRef.current?.capture();
@@ -1353,11 +1493,17 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             };
           }
 
+          const cssPose =
+            !showOriginal && obj.is3d === false
+              ? cssPoseOf(obj)
+              : null;
+
           return {
             src: effectiveCutoutSrc(obj, showOriginal),
             offset: obj.offset,
             displayScale: obj.displayScale,
             bounds: effectiveCutoutBounds(obj, showOriginal),
+            cssPose,
           };
         }),
       );
@@ -1514,20 +1660,121 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
               <img src={photoSrc} alt="" className="stage-photo" onLoad={handleImageLoad} />
 
-              {stageObjects.map((obj, index) => (
-                <img
-                  key={obj.objectId}
-                  src={effectiveCutoutSrc(obj, isShowingOriginal(obj))}
-                  alt=""
-                  className="stage-cutout"
-                  style={cutoutStyle(
-                    obj,
-                    isShowingOriginal(obj),
-                    obj.objectId === jobs.selectedObjectId ? stageObjects.length + 2 : index + 2,
-                  )}
-                  draggable={false}
-                />
-              ))}
+              {renderedRect ? (
+                <div
+                  className="stage-cutout-clip"
+                  style={rectStyle({
+                    left: renderedRect.x,
+                    top: renderedRect.y,
+                    width: renderedRect.width,
+                    height: renderedRect.height,
+                  })}
+                >
+                  {stageObjects.map((obj, index) => {
+                    const showOriginal = isShowingOriginal(obj);
+                    const zIndex =
+                      obj.objectId === jobs.selectedObjectId ? stageObjects.length + 2 : index + 2;
+                    const planar = usesPlanarCss3d(obj);
+                    if (planar) {
+                      const imgStyle = planarCutoutImgStyle(obj, showOriginal);
+                      return (
+                        <div
+                          key={obj.objectId}
+                          className="stage-cutout-css3d"
+                          style={cutoutStyle(obj, showOriginal, zIndex)}
+                        >
+                          <img
+                            src={effectiveCutoutSrc(obj, showOriginal)}
+                            alt=""
+                            style={imgStyle}
+                            draggable={false}
+                          />
+                        </div>
+                      );
+                    }
+                    return (
+                      <img
+                        key={obj.objectId}
+                        src={effectiveCutoutSrc(obj, showOriginal)}
+                        alt=""
+                        className="stage-cutout"
+                        style={cutoutStyle(obj, showOriginal, zIndex)}
+                        draggable={false}
+                      />
+                    );
+                  })}
+
+                  {rotation.rotateMode && rotation.volumetric && rotation.glbData ? (
+                    <Model3DFrame
+                      ref={rotation.model3DFrameRef}
+                      glbData={rotation.glbData}
+                      style={model3DFrameStyle}
+                      enableOrbitDrag
+                      orbitAzimuthDeg={rotation.draftCssPose.rotateYDeg}
+                      orbitElevationDeg={rotation.draftCssPose.rotateXDeg}
+                      orbitRollDeg={rotation.draftCssPose.rotateZDeg}
+                      onOrbitChange={rotation.syncOrbitFromDrag}
+                    />
+                  ) : null}
+
+                  {selectedRectInClip && !rotation.rotateMode ? (
+                    <div className="selection-frame" style={{ ...rectStyle(selectedRectInClip), zIndex: 210 }}>
+                      {canResize ? (
+                        <>
+                          <button
+                            type="button"
+                            className="selection-handle selection-corner tl"
+                            aria-label="Resize top left"
+                            onPointerDown={handleResizePointerDown("tl")}
+                          />
+                          <button
+                            type="button"
+                            className="selection-handle selection-corner tr"
+                            aria-label="Resize top right"
+                            onPointerDown={handleResizePointerDown("tr")}
+                          />
+                          <button
+                            type="button"
+                            className="selection-handle selection-corner bl"
+                            aria-label="Resize bottom left"
+                            onPointerDown={handleResizePointerDown("bl")}
+                          />
+                          <button
+                            type="button"
+                            className="selection-handle selection-corner br"
+                            aria-label="Resize bottom right"
+                            onPointerDown={handleResizePointerDown("br")}
+                          />
+                          <button
+                            type="button"
+                            className="selection-handle selection-edge t"
+                            aria-label="Resize top"
+                            onPointerDown={handleResizePointerDown("t")}
+                          />
+                          <button
+                            type="button"
+                            className="selection-handle selection-edge r"
+                            aria-label="Resize right"
+                            onPointerDown={handleResizePointerDown("r")}
+                          />
+                          <button
+                            type="button"
+                            className="selection-handle selection-edge b"
+                            aria-label="Resize bottom"
+                            onPointerDown={handleResizePointerDown("b")}
+                          />
+                          <button
+                            type="button"
+                            className="selection-handle selection-edge l"
+                            aria-label="Resize left"
+                            onPointerDown={handleResizePointerDown("l")}
+                          />
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
 
               {displayedBatchBox && renderedRect && naturalSize ? (
                 <div
@@ -1608,64 +1855,16 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                 </svg>
               ) : null}
 
-              {rotation.rotateMode && rotation.glbData ? (
-                <Model3DFrame ref={rotation.model3DFrameRef} glbData={rotation.glbData} style={model3DFrameStyle} />
-              ) : null}
-
-              {selectedRect && !rotation.rotateMode ? (
-                <div className="selection-frame" style={{ ...rectStyle(selectedRect), zIndex: 210 }}>
-                  {canResize ? (
-                    <>
-                      <button
-                        type="button"
-                        className="selection-handle selection-corner tl"
-                        aria-label="Resize top left"
-                        onPointerDown={handleResizePointerDown("tl")}
-                      />
-                      <button
-                        type="button"
-                        className="selection-handle selection-corner tr"
-                        aria-label="Resize top right"
-                        onPointerDown={handleResizePointerDown("tr")}
-                      />
-                      <button
-                        type="button"
-                        className="selection-handle selection-corner bl"
-                        aria-label="Resize bottom left"
-                        onPointerDown={handleResizePointerDown("bl")}
-                      />
-                      <button
-                        type="button"
-                        className="selection-handle selection-corner br"
-                        aria-label="Resize bottom right"
-                        onPointerDown={handleResizePointerDown("br")}
-                      />
-                      <button
-                        type="button"
-                        className="selection-handle selection-edge t"
-                        aria-label="Resize top"
-                        onPointerDown={handleResizePointerDown("t")}
-                      />
-                      <button
-                        type="button"
-                        className="selection-handle selection-edge r"
-                        aria-label="Resize right"
-                        onPointerDown={handleResizePointerDown("r")}
-                      />
-                      <button
-                        type="button"
-                        className="selection-handle selection-edge b"
-                        aria-label="Resize bottom"
-                        onPointerDown={handleResizePointerDown("b")}
-                      />
-                      <button
-                        type="button"
-                        className="selection-handle selection-edge l"
-                        aria-label="Resize left"
-                        onPointerDown={handleResizePointerDown("l")}
-                      />
-                    </>
-                  ) : null}
+              {rotation.rotateMode && rotationSliderPanelStyle ? (
+                <div
+                  className="rotation-slider-panel"
+                  style={rotationSliderPanelStyle}
+                  onPointerDown={(event) => event.stopPropagation()}
+                >
+                  <RotationSliderBar
+                    pose={rotation.draftCssPose}
+                    onChange={rotation.updateDraftCssPose}
+                  />
                 </div>
               ) : null}
             </div>
@@ -1702,7 +1901,11 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         ) : null}
 
         {rotation.rotateMode ? (
-          <p className="stage-hint">Drag to orbit · Enter applies · Esc cancels</p>
+          <p className="stage-hint">
+            {rotation.volumetric
+              ? "Drag mesh or use sliders · Enter applies · Esc cancels"
+              : "Sliders tilt · Enter applies · Esc cancels"}
+          </p>
         ) : eraserMode ? (
           <p className="stage-hint">
             {armedBatch.batchMode

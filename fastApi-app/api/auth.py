@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from core.auth.identity import current_user_id
 from core.auth.jwt_backend import hash_password, issue_token, verify_password
-from core.notifications import request_recipient_verification
+from core.notifications import notify_account_created, request_recipient_verification
 from db.models import User
 from db.session import get_db
 from schemas.auth import LoginRequest, MeResponse, SignupRequest, TokenResponse
@@ -48,6 +48,7 @@ def signup(request: SignupRequest, db: Session = Depends(get_db)) -> TokenRespon
 
     logger.info("Signup succeeded: user_id=%s", user.id)
     request_recipient_verification(user.email)
+    notify_account_created(user.email)
     return TokenResponse(access_token=issue_token(user.id))
 
 

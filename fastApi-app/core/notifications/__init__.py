@@ -73,6 +73,37 @@ def notify_pipeline_event(
     _spawn(_send)
 
 
+def notify_account_created(email: str) -> None:
+    """Send a welcome email to a freshly registered account.
+
+    Same contract as `notify_pipeline_event`: fires on a daemon thread and
+    never raises -- signup must succeed even if the mail server is down.
+
+    # ponytail: signup is open registration with an attacker-controlled
+    # email; anyone can make the configured SMTP account send mail to any
+    # address. Fine locally / on SES (sandbox verification gates recipients
+    # there); add signup rate-limiting before pointing a real SMTP relay
+    # (e.g. Gmail) at a public deployment.
+    """
+    if not get_notify_enabled():
+        return
+    from_addr = get_notify_from()
+
+    def _send() -> None:
+        try:
+            _backend_send(
+                from_addr,
+                email,
+                "Welcome to Avroom",
+                "Your Avroom account is ready.\n\n"
+                "You'll get an email here whenever a room finishes processing.",
+            )
+        except Exception:
+            logger.warning("Welcome email failed: email=%s", email, exc_info=True)
+
+    _spawn(_send)
+
+
 def request_recipient_verification(email: str) -> None:
     """Kick off SES address verification for a newly registered account.
 

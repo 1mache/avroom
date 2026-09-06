@@ -10,7 +10,7 @@ PNG, and return bytes. Nothing is persisted to session storage.
 
 import logging
 import time
-from typing import Any
+from typing import Any, Sequence
 
 import cv2
 import numpy as np
@@ -277,15 +277,42 @@ def _png_b64(image: np.ndarray, label: str) -> str:
     return to_base64_ascii(encode_png(image, label))
 
 
+_MAX_DEBUG_SEEDS = 8
+
+
 def _validate_click(bgr: np.ndarray, x: int, y: int) -> None:
     height, width = bgr.shape[:2]
     if x < 0 or y < 0 or x >= width or y >= height:
         raise ValueError(f"Click ({x}, {y}) is outside the image ({width}x{height}).")
 
 
+def _normalize_seed_points(
+    x: int,
+    y: int,
+    points: Sequence[tuple[int, int]] | None,
+) -> tuple[tuple[int, int], ...]:
+    """Primary (x, y) plus optional extras, capped at ``_MAX_DEBUG_SEEDS``."""
+    if not points:
+        return ((x, y),)
+    if points[0] != (x, y):
+        raise ValueError("points[0] must match the primary (x, y) click.")
+    if len(points) > _MAX_DEBUG_SEEDS:
+        raise ValueError(f"At most {_MAX_DEBUG_SEEDS} seeds are allowed.")
+    return tuple(points)
+
+
 def _segment_click(
-    image_bytes: bytes, bgr: np.ndarray, x: int, y: int
+    image_bytes: bytes,
+    bgr: np.ndarray,
+    x: int,
+    y: int,
+    *,
+    points: Sequence[tuple[int, int]] | None = None,
 ) -> tuple[tuple[np.ndarray, np.ndarray], ...]:
+    seed_points = _normalize_seed_points(x, y, points)
+    for point_x, point_y in seed_points:
+        _validate_click(bgr, point_x, point_y)
+    extra_points = seed_points[1:] if len(seed_points) > 1 else None
     ObjectSegmentor = load_avroom_attr("ObjectSegmentor")
     segmentor = ObjectSegmentor()
     return segmentor.get_mask_for_object_at_position(
@@ -293,14 +320,23 @@ def _segment_click(
         x=x,
         y=y,
         image_bytes=image_bytes,
+        extra_points=extra_points,
     )
 
 
-def run_auto_mask_pick(image_bytes: bytes, *, x: int, y: int) -> dict[str, Any]:
-    """Segment at a click and rank cutouts with CLIP. Returns JSON-ready dict."""
+def run_auto_mask_pick(
+    image_bytes: bytes,
+    *,
+    x: int,
+    y: int,
+    points: Sequence[tuple[int, int]] | None = None,
+) -> dict[str, Any]:
+    """Segment at a click (optional extra seeds) and rank cutouts with CLIP."""
     start = time.monotonic()
     bgr = _decode_bgr(image_bytes, label="auto-mask-pick")
-    _validate_click(bgr, x, y)
+    seed_points = _normalize_seed_points(x, y, points)
+    for point_x, point_y in seed_points:
+        _validate_click(bgr, point_x, point_y)
 
     select_best_cutout = load_avroom_attr("select_best_cutout")
     DEFAULT_THRESHOLD = load_avroom_attr(
@@ -316,7 +352,7 @@ def run_auto_mask_pick(image_bytes: bytes, *, x: int, y: int) -> dict[str, Any]:
         "_pil_rgb_to_bgr", module="avroom_object_removal.core.cutout_selector"
     )
 
-    pairs = _segment_click(image_bytes, bgr, x, y)
+    pairs = _segment_click(image_bytes, bgr, x, y, points=seed_points)
     cutouts = [cutout for _mask, cutout in pairs]
     refined_masks = [mask for mask, _cutout in pairs]
     selection = select_best_cutout(
@@ -348,7 +384,7 @@ def run_auto_mask_pick(image_bytes: bytes, *, x: int, y: int) -> dict[str, Any]:
                 "reason": reason,
                 "clip_checks": clip_checks,
                 "preview_b64": _png_b64(
-                    _cutout_preview_bgr(cutout, ((x, y),)), f"preview {index}"
+                    _cutout_preview_bgr(cutout, seed_points), f"preview {index}"
                 ),
                 "clip_crop_b64": clip_b64,
                 "cutout_b64": _png_b64(cutout, f"cutout {index}"),
@@ -373,15 +409,18 @@ def run_auto_mask_pick(image_bytes: bytes, *, x: int, y: int) -> dict[str, Any]:
         )
     logger.info(
         "Auto mask pick debug complete: candidates=%d winner=%s finalists=%s "
-        "tiebreak=%s elapsed_ms=%.1f",
+        "tiebreak=%s seeds=%d elapsed_ms=%.1f",
         len(candidates),
         selection.winner_index,
         selection.finalist_indices,
         selection.tiebreak_method,
+        len(seed_points),
         elapsed_ms,
     )
+    click_xys = [[px, py] for px, py in seed_points]
     return {
         "click_xy": [x, y],
+        "click_xys": click_xys,
         "threshold": float(DEFAULT_THRESHOLD),
         "winner_index": selection.winner_index,
         "finalist_indices": list(selection.finalist_indices),
@@ -398,15 +437,18 @@ def run_inpaint_verify(
     x: int,
     y: int,
     mask_index: int | None,
+    points: Sequence[tuple[int, int]] | None = None,
 ) -> dict[str, Any]:
     """Inpaint one click-candidate and return the CLIP verify retry trace."""
     start = time.monotonic()
     bgr = _decode_bgr(image_bytes, label="inpaint-verify")
-    _validate_click(bgr, x, y)
+    seed_points = _normalize_seed_points(x, y, points)
+    for point_x, point_y in seed_points:
+        _validate_click(bgr, point_x, point_y)
 
     select_best_cutout = load_avroom_attr("select_best_cutout")
 
-    pairs = _segment_click(image_bytes, bgr, x, y)
+    pairs = _segment_click(image_bytes, bgr, x, y, points=seed_points)
     if not pairs:
         raise ValueError("Segmentation returned no candidates.")
 
@@ -430,7 +472,7 @@ def run_inpaint_verify(
     _cutout_preview_bgr = load_avroom_attr(
         "_cutout_preview_bgr", module="avroom_object_removal.core.cutout_selector"
     )
-    preview_b64 = _png_b64(_cutout_preview_bgr(cutout, ((x, y),)), f"preview {chosen}")
+    preview_b64 = _png_b64(_cutout_preview_bgr(cutout, seed_points), f"preview {chosen}")
     cutout_b64 = _png_b64(cutout, f"cutout {chosen}")
     if cutout.ndim == 3 and cutout.shape[2] >= 4:
         compose_mask = cutout[:, :, 3]
@@ -480,14 +522,18 @@ def run_inpaint_verify(
     passed = bool(attempts) and bool(attempts[-1]["ok"])
     elapsed_ms = (time.monotonic() - start) * 1000
     logger.info(
-        "Inpaint verify debug complete: mask_index=%d attempts=%d passed=%s elapsed_ms=%.1f",
+        "Inpaint verify debug complete: mask_index=%d attempts=%d passed=%s "
+        "seeds=%d elapsed_ms=%.1f",
         chosen,
         len(attempts),
         passed,
+        len(seed_points),
         elapsed_ms,
     )
+    click_xys = [[px, py] for px, py in seed_points]
     return {
         "click_xy": [x, y],
+        "click_xys": click_xys,
         "mask_index": chosen,
         "preview_b64": preview_b64,
         "cutout_b64": cutout_b64,

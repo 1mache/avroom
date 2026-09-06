@@ -116,12 +116,18 @@ export async function debugSamEverything(
 
 export async function debugAutoMaskPick(
   file: File,
-  x: number,
-  y: number,
+  seeds: ReadonlyArray<{ x: number; y: number }>,
 ): Promise<DebugAutoMaskPickResponse> {
+  if (seeds.length === 0) {
+    throw new Error("At least one seed is required.");
+  }
   const formData = new FormData();
   formData.append("file", file);
-  const params = new URLSearchParams({ x: String(x), y: String(y) });
+  const primary = seeds[0];
+  const params = new URLSearchParams({ x: String(primary.x), y: String(primary.y) });
+  for (const seed of seeds.slice(1)) {
+    params.append("points", `${seed.x},${seed.y}`);
+  }
   const response = await authedFetch(`${API_BASE_URL}/debug/auto-mask-pick?${params.toString()}`, {
     method: "POST",
     body: formData,
@@ -134,13 +140,19 @@ export async function debugAutoMaskPick(
 
 export async function debugInpaintVerify(
   file: File,
-  x: number,
-  y: number,
+  seeds: ReadonlyArray<{ x: number; y: number }>,
   maskIndex: number | null,
 ): Promise<DebugInpaintVerifyResponse> {
+  if (seeds.length === 0) {
+    throw new Error("At least one seed is required.");
+  }
   const formData = new FormData();
   formData.append("file", file);
-  const params = new URLSearchParams({ x: String(x), y: String(y) });
+  const primary = seeds[0];
+  const params = new URLSearchParams({ x: String(primary.x), y: String(primary.y) });
+  for (const seed of seeds.slice(1)) {
+    params.append("points", `${seed.x},${seed.y}`);
+  }
   if (maskIndex !== null) {
     params.set("mask_index", String(maskIndex));
   }

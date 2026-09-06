@@ -3099,6 +3099,18 @@ body.is-resizing-object {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
 }
 
+.debug-click-marker-label {
+  position: absolute;
+  left: 50%;
+  top: -14px;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1;
+  color: #e2564f;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.9);
+}
+
 .debug-click-readout {
   margin: 8px 0 0;
   font-family: var(--mono);

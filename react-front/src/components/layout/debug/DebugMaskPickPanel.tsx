@@ -5,7 +5,7 @@ import { formatMs, pngSrc, type PanelState } from "./shared";
 
 export interface DebugMaskPickPanelProps {
   file: File | null;
-  clickPos: { x: number; y: number } | null;
+  seedCount: number;
   maskPick: PanelState<DebugAutoMaskPickResponse>;
   selectedMaskIndex: number | null;
   onSelectMaskIndex: (index: number) => void;
@@ -15,7 +15,7 @@ export interface DebugMaskPickPanelProps {
 
 export const DebugMaskPickPanel: React.FC<DebugMaskPickPanelProps> = ({
   file,
-  clickPos,
+  seedCount,
   maskPick,
   selectedMaskIndex,
   onSelectMaskIndex,
@@ -34,7 +34,7 @@ export const DebugMaskPickPanel: React.FC<DebugMaskPickPanelProps> = ({
         type="button"
         className="btn"
         onClick={onRun}
-        disabled={!file || !clickPos || maskPick.status === "running"}
+        disabled={!file || seedCount < 1 || maskPick.status === "running"}
       >
         {maskPick.status === "running" ? <span className="tool-spinner" /> : "Re-run"}
       </button>
@@ -95,7 +95,9 @@ export const DebugMaskPickPanel: React.FC<DebugMaskPickPanelProps> = ({
         <p className="debug-panel-elapsed">{formatMs(maskPick.data.elapsed_ms)}</p>
       </>
     ) : (
-      <p className="debug-panel-hint">Click the photo, then run. Shows every SAM mask, CLIP score, and the winner.</p>
+      <p className="debug-panel-hint">
+        Click the photo to place seeds (up to 8), then run. Shows every SAM mask, CLIP score, and the winner.
+      </p>
     )}
   </section>
 );

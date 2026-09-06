@@ -66,7 +66,14 @@ class DebugMaskCandidate(BaseModel):
 class DebugAutoMaskPickResponse(BaseModel):
     """All SAM candidates plus CLIP ranking for one click. No session writes."""
 
-    click_xy: Annotated[list[int], Field(description="Natural-image click [x, y].")]
+    click_xy: Annotated[list[int], Field(description="Primary natural-image click [x, y].")]
+    click_xys: Annotated[
+        list[list[int]],
+        Field(
+            default_factory=list,
+            description="Every seed as [x, y], primary first (length 1..8).",
+        ),
+    ]
     threshold: Annotated[float, Field(description="Legacy threshold field; gating uses per-check 0.55.")]
     winner_index: Annotated[int | None, Field(description="Chosen candidate, or null.")]
     finalist_indices: Annotated[
@@ -122,7 +129,14 @@ class DebugInpaintAttempt(BaseModel):
 class DebugInpaintVerifyResponse(BaseModel):
     """Hybrid inpaint + CLIP retry trace for one mask. No session writes."""
 
-    click_xy: Annotated[list[int], Field(description="Natural-image click [x, y].")]
+    click_xy: Annotated[list[int], Field(description="Primary natural-image click [x, y].")]
+    click_xys: Annotated[
+        list[list[int]],
+        Field(
+            default_factory=list,
+            description="Every seed as [x, y], primary first (length 1..8).",
+        ),
+    ]
     mask_index: Annotated[int, Field(description="Candidate index that was inpainted.")]
     preview_b64: Annotated[str, Field(description="PNG preview with click marker, base64.")]
     cutout_b64: Annotated[str, Field(description="BGRA cutout PNG for the chosen mask, base64.")]

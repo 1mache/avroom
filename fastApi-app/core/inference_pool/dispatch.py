@@ -297,7 +297,9 @@ def _execute_impl(job: JobRequest) -> JobResult:
         from core.debug_vision import run_auto_mask_pick
 
         assert job.image_bytes is not None and job.x is not None and job.y is not None
-        payload = run_auto_mask_pick(job.image_bytes, x=job.x, y=job.y)
+        payload = run_auto_mask_pick(
+            job.image_bytes, x=job.x, y=job.y, points=job.points
+        )
         return JobResult(job_id=job.job_id, ok=True, debug_payload=payload)
 
     if job.kind == JobKind.DEBUG_INPAINT_VERIFY:
@@ -310,6 +312,7 @@ def _execute_impl(job: JobRequest) -> JobResult:
             x=job.x,
             y=job.y,
             mask_index=debug_options.get("mask_index"),
+            points=job.points,
         )
         return JobResult(job_id=job.job_id, ok=True, debug_payload=payload)
 

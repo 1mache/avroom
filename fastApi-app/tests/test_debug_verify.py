@@ -95,7 +95,7 @@ def _load_attr(name: str, module: str = "avroom_object_removal"):
 
 def test_auto_mask_pick_payload_validates() -> None:
     with (
-        patch("core.debug_vision._segment_click", return_value=(_pair(),)),
+        patch("core.debug_vision._segment_click", return_value=(_pair(),)) as segment,
         patch("core.debug_vision.load_avroom_attr", side_effect=_load_attr),
         patch("core.debug_vision._get_cutout_clip_scorer", return_value=MagicMock()),
         patch("core.debug_vision._get_cutout_tiebreaker", return_value=None),
@@ -107,6 +107,30 @@ def test_auto_mask_pick_payload_validates() -> None:
     assert model.candidates[0].reason == "winner"
     assert model.candidates[0].clip_crop_b64 is None
     assert model.tiebreak_method == "none"
+    assert model.click_xy == [8, 8]
+    assert model.click_xys == [[8, 8]]
+    segment.assert_called_once()
+    assert segment.call_args.kwargs["points"] == ((8, 8),)
+
+
+def test_auto_mask_pick_forwards_extra_seeds() -> None:
+    seeds = ((8, 8), (10, 12), (14, 9))
+    with (
+        patch("core.debug_vision._segment_click", return_value=(_pair(),)) as segment,
+        patch("core.debug_vision.load_avroom_attr", side_effect=_load_attr),
+        patch("core.debug_vision._get_cutout_clip_scorer", return_value=MagicMock()),
+        patch("core.debug_vision._get_cutout_tiebreaker", return_value=None),
+    ):
+        payload = run_auto_mask_pick(_png_bytes(), x=8, y=8, points=seeds)
+
+    model = DebugAutoMaskPickResponse.model_validate(payload)
+    assert model.click_xys == [[8, 8], [10, 12], [14, 9]]
+    assert segment.call_args.kwargs["points"] == seeds
+
+
+def test_auto_mask_pick_extra_seed_out_of_bounds() -> None:
+    with pytest.raises(ValueError, match="outside the image"):
+        run_auto_mask_pick(_png_bytes(), x=8, y=8, points=((8, 8), (99, 0)))
 
 
 def test_inpaint_verify_payload_validates() -> None:
@@ -123,6 +147,7 @@ def test_inpaint_verify_payload_validates() -> None:
     assert model.mask_index == 0
     assert model.preview_b64
     assert model.cutout_b64
+    assert model.click_xys == [[8, 8]]
     assert len(model.attempts) == 1
     assert model.attempts[0].params.strength == 0.40
 
@@ -130,6 +155,18 @@ def test_inpaint_verify_payload_validates() -> None:
 def test_click_out_of_bounds() -> None:
     with pytest.raises(ValueError, match="outside the image"):
         run_auto_mask_pick(_png_bytes(), x=99, y=0)
+
+
+def test_parse_extra_point_strings() -> None:
+    from api.debug_vision import _parse_extra_point_strings, _seed_points_for_request
+
+    assert _parse_extra_point_strings(None) == ()
+    assert _parse_extra_point_strings(["10,12", " 14 , 9 "]) == ((10, 12), (14, 9))
+    assert _seed_points_for_request(8, 8, ["10,12"]) == ((8, 8), (10, 12))
+    with pytest.raises(ValueError, match="Invalid points"):
+        _parse_extra_point_strings(["10"])
+    with pytest.raises(ValueError, match="At most"):
+        _parse_extra_point_strings([f"{i},{i}" for i in range(8)])
 
 
 def test_debug_endpoints_disabled_are_404() -> None:

@@ -373,27 +373,86 @@ def _read_upload(file: UploadFile, *, label: str) -> bytes:
         raise HTTPException(status_code=500, detail=f"Failed to read upload: {exc}") from exc
 
 
+_MAX_DEBUG_SEEDS = 8
+
+
 def _http_from_inference(exc: InferenceJobError) -> HTTPException:
     detail = str(exc)
     lowered = detail.lower()
-    if "outside the image" in lowered or "no viable mask" in lowered or "out of range" in lowered:
+    if (
+        "outside the image" in lowered
+        or "no viable mask" in lowered
+        or "out of range" in lowered
+        or "at most" in lowered
+        or "must match" in lowered
+        or "invalid points" in lowered
+    ):
         return HTTPException(status_code=422, detail=detail)
     return HTTPException(status_code=500, detail=detail)
+
+
+def _parse_extra_point_strings(raw_points: list[str] | None) -> tuple[tuple[int, int], ...]:
+    """Parse repeated ``points=x,y`` query values into integer pairs.
+
+    These are *extra* seeds beyond the primary ``x``, ``y`` — at most 7 so the
+    full prompt stays within ``_MAX_DEBUG_SEEDS``.
+    """
+    if not raw_points:
+        return ()
+    if len(raw_points) > _MAX_DEBUG_SEEDS - 1:
+        raise ValueError(f"At most {_MAX_DEBUG_SEEDS} seeds are allowed.")
+    parsed: list[tuple[int, int]] = []
+    for raw in raw_points:
+        parts = raw.split(",")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid points value {raw!r}; expected 'x,y'.")
+        try:
+            parsed.append((int(parts[0].strip()), int(parts[1].strip())))
+        except ValueError as exc:
+            raise ValueError(f"Invalid points value {raw!r}; expected 'x,y'.") from exc
+    return tuple(parsed)
+
+
+def _seed_points_for_request(
+    x: int, y: int, raw_points: list[str] | None
+) -> tuple[tuple[int, int], ...]:
+    extras = _parse_extra_point_strings(raw_points)
+    return ((x, y),) + extras
 
 
 @router.post("/auto-mask-pick", response_model=DebugAutoMaskPickResponse)
 def debug_auto_mask_pick(
     file: Annotated[UploadFile, File(..., description="Image to segment.")],
-    x: Annotated[int, Query(description="Click x in natural image pixels.")],
-    y: Annotated[int, Query(description="Click y in natural image pixels.")],
+    x: Annotated[int, Query(description="Primary click x in natural image pixels.")],
+    y: Annotated[int, Query(description="Primary click y in natural image pixels.")],
+    points: Annotated[
+        list[str] | None,
+        Query(
+            description=(
+                "Optional extra seeds as repeated 'x,y' query values "
+                "(max 7 extras; 8 total including primary)."
+            ),
+        ),
+    ] = None,
 ) -> DebugAutoMaskPickResponse:
     """Rank every SAM candidate at a click with CLIP. No session writes."""
     _require_enabled()
-    logger.info("debug/auto-mask-pick called: filename=%s click=(%d,%d)", file.filename, x, y)
+    try:
+        seed_points = _seed_points_for_request(x, y, points)
+    except ValueError as exc:
+        logger.warning("debug/auto-mask-pick rejected: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    logger.info(
+        "debug/auto-mask-pick called: filename=%s click=(%d,%d) seeds=%d",
+        file.filename,
+        x,
+        y,
+        len(seed_points),
+    )
     image_bytes = _read_upload(file, label="debug/auto-mask-pick")
     try:
         payload = get_inference_client().run_debug_auto_mask_pick(
-            image_bytes=image_bytes, x=x, y=y
+            image_bytes=image_bytes, x=x, y=y, points=seed_points
         )
     except InferenceJobError as exc:
         logger.warning("debug/auto-mask-pick rejected: %s", exc)
@@ -417,26 +476,45 @@ def debug_auto_mask_pick(
 @router.post("/inpaint-verify", response_model=DebugInpaintVerifyResponse)
 def debug_inpaint_verify(
     file: Annotated[UploadFile, File(..., description="Image to inpaint.")],
-    x: Annotated[int, Query(description="Click x in natural image pixels.")],
-    y: Annotated[int, Query(description="Click y in natural image pixels.")],
+    x: Annotated[int, Query(description="Primary click x in natural image pixels.")],
+    y: Annotated[int, Query(description="Primary click y in natural image pixels.")],
     mask_index: Annotated[
         int | None,
         Query(description="Candidate index to inpaint. Defaults to CLIP winner."),
     ] = None,
+    points: Annotated[
+        list[str] | None,
+        Query(
+            description=(
+                "Optional extra seeds as repeated 'x,y' query values "
+                "(max 7 extras; 8 total including primary)."
+            ),
+        ),
+    ] = None,
 ) -> DebugInpaintVerifyResponse:
     """Run hybrid inpaint + CLIP retries on one mask. No session writes."""
     _require_enabled()
+    try:
+        seed_points = _seed_points_for_request(x, y, points)
+    except ValueError as exc:
+        logger.warning("debug/inpaint-verify rejected: %s", exc)
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     logger.info(
-        "debug/inpaint-verify called: filename=%s click=(%d,%d) mask_index=%s",
+        "debug/inpaint-verify called: filename=%s click=(%d,%d) seeds=%d mask_index=%s",
         file.filename,
         x,
         y,
+        len(seed_points),
         mask_index,
     )
     image_bytes = _read_upload(file, label="debug/inpaint-verify")
     try:
         payload = get_inference_client().run_debug_inpaint_verify(
-            image_bytes=image_bytes, x=x, y=y, mask_index=mask_index
+            image_bytes=image_bytes,
+            x=x,
+            y=y,
+            mask_index=mask_index,
+            points=seed_points,
         )
     except InferenceJobError as exc:
         logger.warning("debug/inpaint-verify rejected: %s", exc)

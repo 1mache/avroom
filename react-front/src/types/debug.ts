@@ -68,6 +68,8 @@ export interface DebugMaskCandidate {
 
 export interface DebugAutoMaskPickResponse {
   click_xy: [number, number] | number[];
+  /** Every seed [x, y], primary first. Omitted by older servers. */
+  click_xys?: number[][];
   threshold: number;
   winner_index: number | null;
   finalist_indices: number[];
@@ -106,6 +108,8 @@ export interface DebugInpaintAttempt {
 
 export interface DebugInpaintVerifyResponse {
   click_xy: [number, number] | number[];
+  /** Every seed [x, y], primary first. Omitted by older servers. */
+  click_xys?: number[][];
   mask_index: number;
   preview_b64: string;
   cutout_b64: string;

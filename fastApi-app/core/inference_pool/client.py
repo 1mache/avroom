@@ -422,7 +422,12 @@ class InferenceClient:
         return result.debug_png_bytes, result.debug_mask_count
 
     def run_debug_auto_mask_pick(
-        self, *, image_bytes: bytes, x: int, y: int
+        self,
+        *,
+        image_bytes: bytes,
+        x: int,
+        y: int,
+        points: tuple[tuple[int, int], ...] | None = None,
     ) -> dict[str, Any]:
         job = JobRequest(
             job_id=_new_job_id(),
@@ -431,6 +436,7 @@ class InferenceClient:
             image_bytes=image_bytes,
             x=x,
             y=y,
+            points=points,
         )
         result = self._run(job)
         self._raise_if_failed(result)
@@ -438,7 +444,13 @@ class InferenceClient:
         return result.debug_payload
 
     def run_debug_inpaint_verify(
-        self, *, image_bytes: bytes, x: int, y: int, mask_index: int | None
+        self,
+        *,
+        image_bytes: bytes,
+        x: int,
+        y: int,
+        mask_index: int | None,
+        points: tuple[tuple[int, int], ...] | None = None,
     ) -> dict[str, Any]:
         job = JobRequest(
             job_id=_new_job_id(),
@@ -447,6 +459,7 @@ class InferenceClient:
             image_bytes=image_bytes,
             x=x,
             y=y,
+            points=points,
             options={"mask_index": mask_index},
         )
         result = self._run(job)

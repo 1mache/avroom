@@ -39,8 +39,8 @@ Image routes live in [`fastApi-app/api/routes.py`](../../fastApi-app/api/routes.
 | `POST` | `/debug/depth-map` | multipart `file` + query params | PNG bytes |
 | `POST` | `/debug/normal-map` | multipart `file` + `hub_model` query | PNG bytes |
 | `POST` | `/debug/sam-everything` | multipart `file` + query params | PNG bytes |
-| `POST` | `/debug/auto-mask-pick` | multipart `file` + `x` `y` query | `DebugAutoMaskPickResponse` |
-| `POST` | `/debug/inpaint-verify` | multipart `file` + `x` `y` `mask_index` query | `DebugInpaintVerifyResponse` |
+| `POST` | `/debug/auto-mask-pick` | multipart `file` + `x` `y` + optional repeated `points` query | `DebugAutoMaskPickResponse` |
+| `POST` | `/debug/inpaint-verify` | multipart `file` + `x` `y` + optional `points` + `mask_index` query | `DebugInpaintVerifyResponse` |
 | `POST` | `/auth/signup` | `SignupRequest` | `TokenResponse` (201) |
 | `POST` | `/auth/login` | `LoginRequest` | `TokenResponse` |
 | `GET` | `/auth/me` | Bearer token | `MeResponse` |
@@ -424,11 +424,11 @@ Underlying capability: `SamSegmentationStrategy.predict_everything(image, *, poi
 
 ### `POST /debug/auto-mask-pick`
 
-Runs `ObjectSegmentor` at query `x`,`y` (natural-image pixels) then `select_best_cutout`. Returns every candidate's preview/cutout PNG (base64), CLIP crop when scored, `score`, `reason`, and `winner_index`. Does **not** write session mask cache. `422` if the click is outside the image.
+Runs `ObjectSegmentor` at query `x`,`y` (natural-image pixels) then `select_best_cutout`. Optional repeated `points=x,y` query values add up to 7 extra foreground seeds (8 total including primary) — same multi-point SAM prompt as production `POST /images/segment`. Response includes `click_xy` (primary) and `click_xys` (every seed). Returns every candidate's preview/cutout PNG (base64), CLIP crop when scored, `score`, `reason`, and `winner_index`. Does **not** write session mask cache. `422` if any seed is outside the image, a `points` value is malformed, or the seed cap is exceeded.
 
 ### `POST /debug/inpaint-verify`
 
-Same click segmentation as auto-mask-pick, then hybrid inpaint on `mask_index` (optional; defaults to CLIP winner). Returns LaMa PNG, per-retry candidate + CLIP crop, CLIP scores, SD params sent, verifier `param_fixes_json`, and the final sharpened image. `422` if the click is out of bounds, `mask_index` is out of range, or there is no viable mask when `mask_index` is omitted.
+Same click segmentation as auto-mask-pick (including optional multi-point `points`), then hybrid inpaint on `mask_index` (optional; defaults to CLIP winner). Returns LaMa PNG, per-retry candidate + CLIP crop, CLIP scores, SD params sent, verifier `param_fixes_json`, and the final sharpened image. `422` if any seed is out of bounds, `mask_index` is out of range, or there is no viable mask when `mask_index` is omitted.
 
 ## Auth endpoints
 

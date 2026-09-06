@@ -35,7 +35,7 @@ export interface DebugScreenProps {
  * or writes to disk.
  *
  * Each section below is its own panel component (components/layout/debug/) —
- * this screen just owns the shared photo/click state, the per-panel result
+ * this screen just owns the shared photo/seed state, the per-panel result
  * state, and the run/orchestration callbacks (runAll chains three of them).
  */
 export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
@@ -54,7 +54,7 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
   const [inpaintVerify, setInpaintVerify] = useState<PanelState<DebugInpaintVerifyResponse>>({
     status: "idle",
   });
-  const [clickPos, setClickPos] = useState<{ x: number; y: number } | null>(null);
+  const [seeds, setSeeds] = useState<{ x: number; y: number }[]>([]);
   const [selectedMaskIndex, setSelectedMaskIndex] = useState<number | null>(null);
   const [normalSample, setNormalSample] = useState<NormalSample | null>(null);
 
@@ -110,7 +110,7 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
     setSam({ status: "idle" });
     setMaskPick({ status: "idle" });
     setInpaintVerify({ status: "idle" });
-    setClickPos(null);
+    setSeeds([]);
     setSelectedMaskIndex(null);
   }, []);
 
@@ -227,29 +227,43 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
     if (!point) {
       return;
     }
-    setClickPos({ x: Math.round(point.x), y: Math.round(point.y) });
+    const next = { x: Math.round(point.x), y: Math.round(point.y) };
+    setSeeds((prev) => (prev.length >= 8 ? prev : [...prev, next]));
+  }, []);
+
+  const clearSeeds = useCallback(() => setSeeds([]), []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      setSeeds((prev) => (prev.length === 0 ? prev : []));
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
   const runMaskPick = useCallback(async () => {
-    if (!file || !clickPos) return;
+    if (!file || seeds.length === 0) return;
     const token = runTokenRef.current;
     setMaskPick({ status: "running" });
     try {
-      const data = await debugAutoMaskPick(file, clickPos.x, clickPos.y);
+      const data = await debugAutoMaskPick(file, seeds);
       if (runTokenRef.current !== token) return;
       setMaskPick({ status: "done", data });
       setSelectedMaskIndex(data.winner_index);
     } catch (err) {
       if (runTokenRef.current === token) setMaskPick({ status: "error", message: errorMessage(err) });
     }
-  }, [file, clickPos]);
+  }, [file, seeds]);
 
   const runInpaintVerify = useCallback(async () => {
-    if (!file || !clickPos) return;
+    if (!file || seeds.length === 0) return;
     const token = runTokenRef.current;
     setInpaintVerify({ status: "running" });
     try {
-      const data = await debugInpaintVerify(file, clickPos.x, clickPos.y, selectedMaskIndex);
+      const data = await debugInpaintVerify(file, seeds, selectedMaskIndex);
       if (runTokenRef.current !== token) return;
       setInpaintVerify({ status: "done", data });
     } catch (err) {
@@ -257,7 +271,7 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
         setInpaintVerify({ status: "error", message: errorMessage(err) });
       }
     }
-  }, [file, clickPos, selectedMaskIndex]);
+  }, [file, seeds, selectedMaskIndex]);
 
   // Sequential on purpose: SAM shares the process-wide GPU lock with
   // everything else in inline mode, so firing all three at once would just
@@ -296,10 +310,11 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
           <DebugSourcePanel
             file={file}
             previewUrl={previewUrl}
-            clickPos={clickPos}
+            seeds={seeds}
             busy={busy}
             onFileAccepted={acceptFile}
             onPreviewClick={handlePreviewClick}
+            onClearSeeds={clearSeeds}
             onRunAll={() => void runAll()}
           />
 
@@ -354,7 +369,7 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
 
           <DebugMaskPickPanel
             file={file}
-            clickPos={clickPos}
+            seedCount={seeds.length}
             maskPick={maskPick}
             selectedMaskIndex={selectedMaskIndex}
             onSelectMaskIndex={setSelectedMaskIndex}
@@ -364,7 +379,7 @@ export const DebugScreen: React.FC<DebugScreenProps> = ({ onExit }) => {
 
           <DebugInpaintVerifyPanel
             file={file}
-            clickPos={clickPos}
+            seedCount={seeds.length}
             inpaintVerify={inpaintVerify}
             onRun={() => void runInpaintVerify()}
             onOpenLightbox={openLightbox}

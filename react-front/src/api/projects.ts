@@ -1,4 +1,4 @@
-import type { ProjectInfo } from "../types/api";
+import type { ProjectInfo, SessionInfo } from "../types/api";
 import { authedFetch } from "./authToken";
 import { API_BASE_URL, handleJsonResponse, throwApiError } from "./images";
 
@@ -52,4 +52,14 @@ export async function importProject(file: File): Promise<ProjectInfo> {
     body: formData,
   });
   return handleJsonResponse<ProjectInfo>(response);
+}
+
+export async function importRoom(projectId: string, file: File): Promise<SessionInfo> {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await authedFetch(`${API_BASE_URL}/projects/${projectId}/rooms/import`, {
+    method: "POST",
+    body: formData,
+  });
+  return handleJsonResponse<SessionInfo>(response);
 }

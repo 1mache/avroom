@@ -6,15 +6,10 @@ import avroomLogo from "../../assets/avroom.png";
 import { useAuth } from "../../context/AuthContext";
 import type { JobInfo, ProjectInfo } from "../../types/api";
 import { byMostRecentlyEdited } from "../../utils/time";
-import { triggerBlobDownload } from "../../utils/preview";
+import { archiveDownloadFilename, triggerBlobDownload } from "../../utils/preview";
 import { ProjectCard } from "../dashboard/ProjectCard";
 import { FlaskIcon, LogoutIcon, PlusIcon, UploadIcon } from "../icons";
 import { ConfirmDialog } from "../widgets/ConfirmDialog";
-
-function archiveDownloadFilename(name: string): string {
-  const base = (name.trim() || "project").replace(/[<>:"/\\|?*]/g, "_").slice(0, 80);
-  return `${base}.avroom.zip`;
-}
 
 // Same cadence as the Rooms dashboard's job poll (see DashboardScreen) --
 // cheap, one endpoint for every session regardless of project.
@@ -132,7 +127,7 @@ export const ProjectsScreen: React.FC<ProjectsScreenProps> = ({ onOpenProject, o
     setExportingId(project.id);
     try {
       const blob = await exportProject(project.id);
-      triggerBlobDownload(blob, archiveDownloadFilename(project.name));
+      triggerBlobDownload(blob, archiveDownloadFilename(project.name, "project"));
     } catch (exportErr) {
       setError(exportErr instanceof Error ? exportErr.message : "Failed to export the project.");
     } finally {

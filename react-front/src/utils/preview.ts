@@ -198,3 +198,10 @@ export function snapshotDownloadFilename(name: string | null, uid: string): stri
   const base = (name?.trim() || uid).replace(/[<>:"/\\|?*]/g, "_").slice(0, 80);
   return `${base}_snapshot.png`;
 }
+
+/** Filename for a downloaded project/room export zip -- mirrors the backend's
+ * `core.project_archive.archive_filename`. */
+export function archiveDownloadFilename(name: string, kind: "project" | "room"): string {
+  const base = (name.trim() || kind).replace(/[<>:"/\\|?*]/g, "_").slice(0, 80);
+  return kind === "project" ? `${base}.avroom.zip` : `${base}.avroom-room.zip`;
+}

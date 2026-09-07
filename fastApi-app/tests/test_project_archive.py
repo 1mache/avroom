@@ -37,7 +37,13 @@ from core.object_storage import (  # noqa: E402
     object_glb_path,
     session_preview_path,
 )
-from core.project_archive import ArchiveFormatError, build_project_archive, restore_project_archive  # noqa: E402
+from core.project_archive import (  # noqa: E402
+    ArchiveFormatError,
+    build_project_archive,
+    build_room_archive,
+    restore_project_archive,
+    restore_room_archive,
+)
 from core.repositories import project_repo, session_repo  # noqa: E402
 from core.session_history import commit_background  # noqa: E402
 
@@ -216,3 +222,131 @@ def test_export_and_import_endpoints(storage_sandbox: StorageSandbox) -> None:
     body = imported.json()
     assert body["room_count"] == 2
     assert body["id"] != project_id
+
+
+def test_room_round_trip(storage_sandbox: StorageSandbox, tmp_path: Path) -> None:
+    project_id, (room_a, _room_b) = _seed_project(storage_sandbox)
+    session_repo.set_session_name(room_a, "Living room")
+    old_clone = load_object_metadata(room_a, 1)
+    assert old_clone is not None and old_clone.clone_root_uuid is not None
+
+    other_project_id = project_repo.create_project(LOCAL_USER_ID, "Other apartment")
+
+    zip_path = tmp_path / "room.zip"
+    build_room_archive(room_a, zip_path)
+
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+        assert "manifest.json" in names
+        manifest = json.loads(zf.read("manifest.json"))
+        assert manifest["kind"] == "room"
+        assert len(manifest["rooms"]) == 1
+
+    new_uid = restore_room_archive(zip_path, LOCAL_USER_ID, other_project_id)
+    assert new_uid != room_a
+    assert project_repo.list_project_session_ids(other_project_id) == [new_uid]
+
+    assert (storage_sandbox.images / f"{new_uid}.png").exists()
+    assert current_background_path(storage_sandbox.images, new_uid).exists()
+    assert list(storage_sandbox.images.glob(f"{new_uid}_bg_hist_*.png"))
+    assert object_cutout_path(storage_sandbox.images, new_uid, 0).exists()
+    assert object_glb_path(storage_sandbox.glb, new_uid, 0).exists()
+
+    state = session_repo.get_session_state(new_uid)
+    assert state is not None
+    assert state.name == "Living room"
+    assert state.history_cursor == 2
+    assert state.history_head == 2
+
+    new_clone = load_object_metadata(new_uid, 1)
+    new_root = load_object_metadata(new_uid, 0)
+    assert new_clone is not None and new_root is not None
+    assert new_clone.uuid != old_clone.uuid
+    assert new_clone.clone_root_uuid == new_root.uuid
+
+
+def test_room_import_resolves_name_collision(storage_sandbox: StorageSandbox, tmp_path: Path) -> None:
+    project_id, (room_a, _room_b) = _seed_project(storage_sandbox)
+    session_repo.set_session_name(room_a, "Living room")
+
+    zip_path = tmp_path / "room.zip"
+    build_room_archive(room_a, zip_path)
+
+    # Import back into the SAME project the room came from -- "Living room" is taken.
+    new_uid = restore_room_archive(zip_path, LOCAL_USER_ID, project_id)
+    state = session_repo.get_session_state(new_uid)
+    assert state is not None
+    assert state.name == "Living room-copy"
+
+    original_state = session_repo.get_session_state(room_a)
+    assert original_state is not None
+    assert original_state.name == "Living room"  # untouched
+
+
+def test_project_zip_rejected_by_room_import(storage_sandbox: StorageSandbox, tmp_path: Path) -> None:
+    project_id, _ = _seed_project(storage_sandbox)
+    other_project_id = project_repo.create_project(LOCAL_USER_ID, "Elsewhere")
+    zip_path = tmp_path / "project.zip"
+    build_project_archive(project_id, zip_path)
+
+    with pytest.raises(ArchiveFormatError, match="room export"):
+        restore_room_archive(zip_path, LOCAL_USER_ID, other_project_id)
+
+
+def test_room_zip_rejected_by_project_import(storage_sandbox: StorageSandbox, tmp_path: Path) -> None:
+    project_id, (room_a, _room_b) = _seed_project(storage_sandbox)
+    zip_path = tmp_path / "room.zip"
+    build_room_archive(room_a, zip_path)
+
+    with pytest.raises(ArchiveFormatError, match="project export"):
+        restore_project_archive(zip_path, LOCAL_USER_ID)
+
+
+def test_legacy_manifest_without_kind_imports_as_project(tmp_path: Path) -> None:
+    session_repo.register_uid("bootstrap-legacy-kind")  # provisions the local user row
+    manifest: dict[str, Any] = {
+        "format": 1,
+        "project": {"name": "Legacy export"},
+        "rooms": [],
+    }
+    zip_path = tmp_path / "legacy.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("manifest.json", json.dumps(manifest))
+
+    new_project_id = restore_project_archive(zip_path, LOCAL_USER_ID)
+    summary = project_repo.get_project(new_project_id)
+    assert summary is not None
+    assert summary.name == "Legacy export"
+
+
+def test_room_export_and_import_endpoints(storage_sandbox: StorageSandbox) -> None:
+    from fastapi.testclient import TestClient
+
+    from main import app
+
+    client = TestClient(app)
+
+    project_id, (room_a, _room_b) = _seed_project(storage_sandbox, name="Endpoint apartment")
+    other_project_id = project_repo.create_project(LOCAL_USER_ID, "Endpoint elsewhere")
+
+    exported = client.get(f"/images/{room_a}/export")
+    assert exported.status_code == 200
+    assert exported.headers["content-type"] == "application/zip"
+
+    imported = client.post(
+        f"/projects/{other_project_id}/rooms/import",
+        files={"file": ("room.avroom-room.zip", exported.content, "application/zip")},
+    )
+    assert imported.status_code == 201
+    body = imported.json()
+    assert body["uid"] != room_a
+
+    # Feeding a project zip into the room importer is a friendly 422, not a crash.
+    project_zip = client.get(f"/projects/{project_id}/export")
+    assert project_zip.status_code == 200
+    rejected = client.post(
+        f"/projects/{other_project_id}/rooms/import",
+        files={"file": ("project.avroom.zip", project_zip.content, "application/zip")},
+    )
+    assert rejected.status_code == 422
+    assert "not a room export" in rejected.json()["detail"]

@@ -1,16 +1,20 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  ApiError,
   copySession,
   deleteSession,
+  exportSession,
   getActiveJobs,
   getSessions,
   setSessionName,
 } from "../../api/images";
+import { importRoom } from "../../api/projects";
 import type { JobInfo, SessionInfo } from "../../types/api";
 import { byMostRecentlyEdited } from "../../utils/time";
+import { archiveDownloadFilename, triggerBlobDownload } from "../../utils/preview";
 import { SessionCard } from "../dashboard/SessionCard";
-import { BackIcon, PlusIcon } from "../icons";
+import { BackIcon, PlusIcon, UploadIcon } from "../icons";
 import { ConfirmDialog } from "../widgets/ConfirmDialog";
 
 // How often the dashboard re-checks which sessions have queued/running or
@@ -46,11 +50,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   const [pendingDeleteUid, setPendingDeleteUid] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [copyingUid, setCopyingUid] = useState<string | null>(null);
+  const [exportingUid, setExportingUid] = useState<string | null>(null);
   const [renameTarget, setRenameTarget] = useState<SessionInfo | null>(null);
   const [renameName, setRenameName] = useState("");
   const [renameBusy, setRenameBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeJobs, setActiveJobs] = useState<JobInfo[]>([]);
+  const [importBusy, setImportBusy] = useState(false);
+  const [importError, setImportError] = useState<string | null>(null);
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -125,6 +133,55 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
     [load],
   );
 
+  const handleExport = useCallback(
+    async (uid: string) => {
+      const session = sessions.find((s) => s.uid === uid) ?? null;
+      setExportingUid(uid);
+      try {
+        const blob = await exportSession(uid);
+        triggerBlobDownload(blob, archiveDownloadFilename(session?.name ?? uid, "room"));
+      } catch (exportErr) {
+        setError(exportErr instanceof Error ? exportErr.message : "Failed to export the room.");
+      } finally {
+        setExportingUid(null);
+      }
+    },
+    [sessions],
+  );
+
+  const handleImportFile = useCallback(
+    async (file: File) => {
+      setImportBusy(true);
+      setImportError(null);
+      try {
+        const session = await importRoom(projectId, file);
+        setSessions((prev) => [...prev, session].sort(byMostRecentlyEdited));
+      } catch (importErr) {
+        // 422 is a malformed/wrong-kind archive -- a normal answer, same as
+        // ProjectsScreen's project-import rejection.
+        if (importErr instanceof ApiError && importErr.status === 422) {
+          setImportError(importErr.detail || "That file isn't a valid AVRoom room export.");
+        } else {
+          setError(importErr instanceof Error ? importErr.message : "Failed to import the room.");
+        }
+      } finally {
+        setImportBusy(false);
+      }
+    },
+    [projectId],
+  );
+
+  const handleImportInputChange: React.ChangeEventHandler<HTMLInputElement> = useCallback(
+    (event) => {
+      const picked = event.target.files?.[0];
+      event.target.value = "";
+      if (picked) {
+        void handleImportFile(picked);
+      }
+    },
+    [handleImportFile],
+  );
+
   const openRename = useCallback((uid: string) => {
     const session = sessions.find((s) => s.uid === uid) ?? null;
     if (!session) {
@@ -171,7 +228,25 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             <span className="new-session-label">New room</span>
             <span className="new-session-hint">JPG, PNG or WebP · 640×480 and up</span>
           </button>
+          <button
+            type="button"
+            className="new-session-import-btn"
+            onClick={() => importInputRef.current?.click()}
+            disabled={importBusy}
+            aria-label="Import room"
+            data-tip="Import room from a zip"
+          >
+            {importBusy ? <span className="tool-spinner" /> : <UploadIcon size={18} />}
+          </button>
+          <input
+            ref={importInputRef}
+            type="file"
+            accept=".zip"
+            className="file-input"
+            onChange={handleImportInputChange}
+          />
         </div>
+        {importError ? <p className="upload-rejection">{importError}</p> : null}
 
         <div className="dash-eyebrow">
           <span className="dash-eyebrow-title">Rooms</span>
@@ -216,10 +291,12 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                     isBusy={sessionJobs.some((job) => job.status === "queued" || job.status === "running")}
                     isFailed={sessionJobs.some((job) => job.status === "failed" || job.status === "conflict")}
                     isCopying={copyingUid === session.uid}
+                    isExporting={exportingUid === session.uid}
                     onOpen={onOpenSession}
                     onRequestDelete={setPendingDeleteUid}
                     onRequestCopy={(uid) => void handleCopyRoom(uid)}
                     onRequestRename={openRename}
+                    onRequestExport={(uid) => void handleExport(uid)}
                   />
                 );
               })}

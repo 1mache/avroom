@@ -12,10 +12,14 @@ together in ``main.py``.
 from __future__ import annotations
 
 import logging
+import tempfile
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi.responses import FileResponse
 from pathlib import Path
+from starlette.background import BackgroundTask
 
+from core.project_archive import KIND_ROOM, archive_filename, build_room_archive
 from core.session_teardown import delete_session_and_files
 from core.session_clone import clone_session
 
@@ -46,6 +50,7 @@ from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.repositories.session_repo import (
     SessionNotFoundError,
     evaluate_session_sync,
+    get_session_state,
     is_session_registered,
     list_sessions_with_names,
     set_session_name,
@@ -279,6 +284,33 @@ def run_batch(uid: str, request: BatchRequest) -> BatchResponse:
         raise HTTPException(status_code=500, detail=f"Batch failed: {exc}") from exc
     logger.info("Batch finished: uid=%s batch_id=%s", uid, result.batch_id)
     return result
+
+
+@router.get("/{uid}/export")
+async def export_session_endpoint(uid: str) -> FileResponse:
+    """Download one room (its metadata and blobs) as a zip, for `POST /projects/{id}/rooms/import`."""
+    state = get_session_state(uid)
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'")
+    logger.info("Room export requested: uid=%s name=%r", uid, state.name)
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    tmp.close()
+    out_path = Path(tmp.name)
+    try:
+        build_room_archive(uid, out_path)
+    except Exception:
+        out_path.unlink(missing_ok=True)
+        logger.exception("Room export failed: uid=%s", uid)
+        raise
+
+    logger.info("Room export ready: uid=%s bytes=%d", uid, out_path.stat().st_size)
+    return FileResponse(
+        out_path,
+        media_type="application/zip",
+        filename=archive_filename(state.name or uid, kind=KIND_ROOM),
+        background=BackgroundTask(out_path.unlink),
+    )
 
 
 @router.delete("/{uid}", status_code=204)

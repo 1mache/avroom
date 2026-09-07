@@ -15,10 +15,13 @@ export interface SessionCardProps {
   isFailed?: boolean;
   /** True while this card's copy request is in flight. */
   isCopying?: boolean;
+  /** True while this card's export request is in flight. */
+  isExporting?: boolean;
   onOpen: (uid: string) => void;
   onRequestDelete: (uid: string) => void;
   onRequestCopy: (uid: string) => void;
   onRequestRename: (uid: string) => void;
+  onRequestExport: (uid: string) => void;
 }
 
 /**
@@ -33,10 +36,12 @@ export const SessionCard: React.FC<SessionCardProps> = ({
   isBusy = false,
   isFailed = false,
   isCopying = false,
+  isExporting = false,
   onOpen,
   onRequestDelete,
   onRequestCopy,
   onRequestRename,
+  onRequestExport,
 }) => {
   const [previewFailed, setPreviewFailed] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -114,7 +119,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
           aria-expanded={menuOpen}
           aria-haspopup="menu"
           data-tip="Room options"
-          disabled={isCopying}
+          disabled={isCopying || isExporting}
         >
           <MoreIcon size={15} />
         </button>
@@ -124,7 +129,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               type="button"
               className="session-card-menu-item"
               role="menuitem"
-              disabled={isCopying}
+              disabled={isCopying || isExporting}
               onClick={(event) => {
                 event.stopPropagation();
                 closeMenu();
@@ -137,7 +142,7 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               type="button"
               className="session-card-menu-item"
               role="menuitem"
-              disabled={isCopying}
+              disabled={isCopying || isExporting}
               onClick={(event) => {
                 event.stopPropagation();
                 closeMenu();
@@ -145,6 +150,19 @@ export const SessionCard: React.FC<SessionCardProps> = ({
               }}
             >
               {isCopying ? "Copying…" : "Copy room"}
+            </button>
+            <button
+              type="button"
+              className="session-card-menu-item"
+              role="menuitem"
+              disabled={isCopying || isExporting}
+              onClick={(event) => {
+                event.stopPropagation();
+                closeMenu();
+                onRequestExport(uid);
+              }}
+            >
+              {isExporting ? "Exporting…" : "Export room"}
             </button>
           </div>
         ) : null}

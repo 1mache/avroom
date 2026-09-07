@@ -357,6 +357,8 @@ Not wired into segment/inpaint/removal pipelines.
 
 Public API: `Reconstruction3DFacade().generate(image, *, quality=ReconstructionQuality.HIGH, output="bytes")`. Accepts BGRA `np.ndarray` from `ObjectRemover`, PNG `bytes`, `PIL.Image`, or `pathlib.Path`. Returns GLB as `bytes` / `Path` / `BytesIO`.
 
+`Hunyuan3D2ReconstructionStrategy._prepare_cutout_for_hunyuan` (in `strategies/hunyuan3d2_reconstruction_strategy.py`) tight-crops the cutout to its alpha bbox, pads it 20%, then **upscales the padded square up to a 512px floor** (`_MIN_UPLOAD_SIDE_PX`, `Image.LANCZOS`, never downscales) before upload — a small real-world object (a knob, a vase far from camera) can crop to under 50px, and uploading that starves the diffusion model of detail, producing a near-flat blob/plate instead of real geometry regardless of `is_3d` classification.
+
 The Hunyuan3D-2.1 Space is queued; one generation takes tens of seconds of compute plus queue wait. **Wired into FastAPI** via `core/inference_pool` (`JobKind.GENERATE_3D`) from two call sites: `POST /3d/test-3d` (`fastApi-app/api/model_3d.py`, now itself a durable job — see "Durable Job Queue" above — that queues a `generate_3d` `JobRow` and returns `202`) and `POST /images/novel-view` (`fastApi-app/api/novel_view.py`, still a direct blocking call, via the shared `core/object_3d.py::ensure_object_glb` cache-or-generate helper both call sites use). It is not part of the `/images/click`/`/images/inpaint` object-removal path.
 
 See [docs/ai-pipeline/ai-engines/reconstruction-3d/README.md](docs/ai-pipeline/ai-engines/reconstruction-3d/README.md) for the full strategy list, quality-preset mapping, and error types.

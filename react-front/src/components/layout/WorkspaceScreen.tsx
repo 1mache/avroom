@@ -1254,9 +1254,21 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         }
       : null;
 
+  // Small objects (a knob, a vase far from camera) render on-screen at a few
+  // dozen px -- unusably tiny to orbit. Floor only grows the frame further;
+  // a large object's already-bigger padded rect passes through untouched.
+  const MODEL_3D_FRAME_MIN_PX = 260;
+  const modelFrameRect = (
+    rect: { left: number; top: number; width: number; height: number },
+  ) => {
+    const padded = inflateAroundCenter(rect, MODEL_3D_FRAME_PADDING);
+    const grow = MODEL_3D_FRAME_MIN_PX / Math.max(padded.width, padded.height);
+    return grow > 1 ? inflateAroundCenter(padded, grow) : padded;
+  };
+
   const model3DFrameStyle: React.CSSProperties | undefined = selectedRectInClip
     ? {
-        ...rectStyle(inflateAroundCenter(selectedRectInClip, MODEL_3D_FRAME_PADDING)),
+        ...rectStyle(modelFrameRect(selectedRectInClip)),
         // Above the interaction overlay so OrbitControls receive the pointer.
         zIndex: 200,
         pointerEvents: "auto",
@@ -1271,9 +1283,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     }
     const PANEL_W = 300;
     const GAP = 10;
-    const anchor = rotation.volumetric
-      ? inflateAroundCenter(selectedRect, MODEL_3D_FRAME_PADDING)
-      : selectedRect;
+    const anchor = rotation.volumetric ? modelFrameRect(selectedRect) : selectedRect;
     const stageW = stageRef.current?.clientWidth ?? anchor.left + anchor.width + PANEL_W + GAP + 24;
     const stageH = stageRef.current?.clientHeight ?? anchor.top + 200;
     let left = anchor.left + anchor.width + GAP;

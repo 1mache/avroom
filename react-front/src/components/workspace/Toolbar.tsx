@@ -318,32 +318,6 @@ export const Toolbar: React.FC<ToolbarProps> = ({
         <EraserIcon />
       </button>
 
-      <div
-        className="tool-radios"
-        role="radiogroup"
-        aria-label="Cutout verification"
-        data-tip={verifyMode === "auto" ? "CLIP picks the mask" : "Pick a mask"}
-      >
-        <button
-          type="button"
-          role="radio"
-          className="tool-radio"
-          aria-checked={verifyMode === "manual"}
-          onClick={() => onVerifyModeChange("manual")}
-        >
-          Manual
-        </button>
-        <button
-          type="button"
-          role="radio"
-          className="tool-radio"
-          aria-checked={verifyMode === "auto"}
-          onClick={() => onVerifyModeChange("auto")}
-        >
-          Auto
-        </button>
-      </div>
-
       <button
         type="button"
         className="tool-btn"
@@ -461,6 +435,36 @@ export const Toolbar: React.FC<ToolbarProps> = ({
                   {isCopyingRoom ? "Copying room…" : "Copy room"}
                 </span>
               </button>
+            </div>
+            <div className="toolbar-settings-section">
+              <p className="toolbar-settings-title">Mask picker</p>
+              <div
+                className="tool-radios toolbar-settings-radios"
+                role="radiogroup"
+                aria-label="Cutout verification"
+              >
+                <button
+                  type="button"
+                  role="radio"
+                  className="tool-radio"
+                  aria-checked={verifyMode === "manual"}
+                  onClick={() => onVerifyModeChange("manual")}
+                >
+                  Manual
+                </button>
+                <button
+                  type="button"
+                  role="radio"
+                  className="tool-radio"
+                  aria-checked={verifyMode === "auto"}
+                  onClick={() => onVerifyModeChange("auto")}
+                >
+                  Auto
+                </button>
+              </div>
+              <p className="toolbar-settings-hint">
+                {verifyMode === "auto" ? "CLIP picks the mask" : "Pick a mask"}
+              </p>
             </div>
             <div className="toolbar-settings-section">
               <p className="toolbar-settings-title">Object removal</p>

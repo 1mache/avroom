@@ -130,11 +130,14 @@ export const MoreIcon: React.FC<IconProps> = (props) => (
   </Svg>
 );
 
-/** Gear — workspace settings trigger. */
+/** Cog wheel — workspace settings trigger. */
 export const SettingsIcon: React.FC<IconProps> = (props) => (
   <Svg {...props}>
-    <circle cx="12" cy="12" r="2.4" />
-    <path d="M12 3.2v2.1M12 18.7v2.1M3.2 12h2.1M18.7 12h2.1M5.4 5.4l1.5 1.5M17.1 17.1l1.5 1.5M5.4 18.6l1.5-1.5M17.1 6.9l1.5-1.5" />
+    <circle cx="12" cy="12" r="5.4" />
+    <circle cx="12" cy="12" r="2" />
+    {Array.from({ length: 8 }, (_, i) => (
+      <rect key={i} x="10.9" y="4" width="2.2" height="2.4" transform={`rotate(${i * 45} 12 12)`} />
+    ))}
   </Svg>
 );
 

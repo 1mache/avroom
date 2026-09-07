@@ -29,19 +29,17 @@ survives as a draggable cutout you can reposition, rotate, and copy — all in t
 
 ## What it does
 
-- **Object removal** — click a segmentation seed, pick from candidate masks, and the object is
+- **Object removal** — click an object, pick from candidate masks (or let it guess and pick the best one), and the object is
   cut out while the background is inpainted around the hole.
-- **Drag & drop** — reposition any cutout on the canvas; the offset persists.
+- **Drag & drop** — reposition any cutout on the canvas.
 - **Smart paste** — drop an object anywhere and it rescales to the local depth, optionally
   matching the room's perspective as it moves.
-- **2D rotation via novel-view synthesis** — a 3D model is generated from the cutout on the fly;
-  orbit it and commit an angle to get a freshly rendered 2D view in place.
+- **2D rotation via novel-view synthesis** — a 3D model is generated from the cutout;
+  rotate it and commit an angle to get a freshly rendered 2D view in place.
 - **Copy / delete** objects, each tracked independently per room.
 - **Projects → Rooms** — rooms are grouped under projects, each with its own preview thumbnail.
 - **Export / import** — a project or a single room packs down to a self-contained zip and
   restores on any instance under the caller's account.
-- **Durable job queue** — segment/inpaint/3D-gen are queued Postgres rows, not blocking requests;
-  work submitted right before you navigate away survives and picks back up.
 
 ## How it works
 

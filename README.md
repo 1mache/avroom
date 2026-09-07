@@ -51,9 +51,10 @@ survives as a draggable cutout you can reposition, rotate, and copy — all in t
 
 ## How it works
 
-Three rules the pipeline never breaks:
-
 - **SAM sees both the depth map and the RGB photo.** RGB sometimes over-segments on fabric creases and shadows.
+<!-- docs/media/depth-map.png -->
+<img src="docs/media/depth-map.png" alt="Depth map of a room — near surfaces bright, far surfaces dark" width="480">
+
 - **Stable Diffusion refines a native-resolution crop, never the full image** — avoids
   the hallucinations and reimagining of the full room Stable diffusion would otherwise perform.
 - **Inpainting is checked, not trusted.** LaMa fills the hole, Stable Diffusion refines the
@@ -61,8 +62,6 @@ Three rules the pipeline never breaks:
   survived. If it did, it hands back a corrected prompt and generation parameters and the pass
   runs again — up to three retries before the last candidate is kept.
 
-<!-- docs/media/depth-map.png -->
-<img src="docs/media/depth-map.png" alt="Depth map of a room — near surfaces bright, far surfaces dark" width="480">
 
 Smart paste rides on a second model: **Metric3D** produces a surface-normal map of the room, so
 when an object is dropped it knows which way the wall or floor under it faces and can turn to

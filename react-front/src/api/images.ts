@@ -203,6 +203,16 @@ export async function copySession(uid: string): Promise<SessionInfo> {
   return handleJsonResponse<SessionInfo>(response);
 }
 
+// Skips fetchWithTimeout's 15s default, same as exportProject -- a room's
+// zip can be tens of MB of cutouts/GLBs, no reason to abort a slow download.
+export async function exportSession(uid: string): Promise<Blob> {
+  const response = await authedFetch(`${API_BASE_URL}/images/${uid}/export`);
+  if (!response.ok) {
+    return throwApiError(response);
+  }
+  return response.blob();
+}
+
 export async function getUidCacheStatus(uid: string): Promise<UidCacheStatusResponse> {
   const response = await authedFetch(`${API_BASE_URL}/images/${uid}/cache`);
   return handleJsonResponse<UidCacheStatusResponse>(response);

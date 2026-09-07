@@ -1,11 +1,20 @@
 from __future__ import annotations
 
-"""Project export/import as a single self-contained zip.
+"""Project and room export/import as a single self-contained zip.
 
-Bundles every room in a project -- its DB metadata (name, history counters,
-object rows) plus every blob it owns (original upload, canvas, undo
-snapshots, cutouts, GLBs) -- so a project can move to a different machine
-with fresh session/object/project ids minted on import.
+Bundles one or more rooms -- their DB metadata (name, history counters,
+object rows) plus every blob they own (original upload, canvas, undo
+snapshots, cutouts, GLBs) -- so they can move to a different machine with
+fresh session/object/project ids minted on import.
+
+A project archive (`build_project_archive`/`restore_project_archive`) bundles
+every room in a project plus a project name. A room archive
+(`build_room_archive`/`restore_room_archive`) bundles exactly one room, to be
+imported into an existing project. Both share the same manifest shape, blob
+layout, and zip-slip guard; the manifest's `kind` field ("project" or "room",
+missing == "project" for archives exported before this field existed) is what
+lets `_read_manifest` reject a project zip fed to the room importer (or vice
+versa) with a clear message instead of a confusing generic one.
 
 The blob inventory here is the photographic negative of
 `core.session_teardown.delete_session_and_files`: anything teardown deletes
@@ -28,12 +37,16 @@ from typing import Any
 from core.object_metadata import ObjectMetadata, list_object_ids, load_object_metadata, save_object_metadata
 from core.object_storage import resolve_object_cutout_path
 from core.repositories import project_repo, session_repo
+from core.repositories.session_repo import SessionNotFoundError
 from settings import get_3d_storage_dir, get_image_storage_dir
 
 logger = logging.getLogger(__name__)
 
 ARCHIVE_FORMAT = 1
 MANIFEST_NAME = "manifest.json"
+
+KIND_PROJECT = "project"
+KIND_ROOM = "room"
 
 _IMAGES_DIR = "images"
 _GLB_DIR = "3d"
@@ -46,7 +59,7 @@ _ENTRY_RE = re.compile(r"^(images|3d)/([^/\\]+)$")
 
 
 class ArchiveFormatError(ValueError):
-    """Raised when a zip has no manifest, a malformed one, or an unsupported format."""
+    """Raised when a zip has no manifest, a malformed one, or an unsupported/wrong-kind format."""
 
 
 def _room_blob_paths(storage_dir: Path, glb_dir: Path, uid: str) -> list[tuple[Path, str]]:
@@ -66,6 +79,56 @@ def _room_blob_paths(storage_dir: Path, glb_dir: Path, uid: str) -> list[tuple[P
     return pairs
 
 
+def _room_manifest_entry(uid: str) -> dict[str, Any] | None:
+    """Build one room's manifest dict (state + every object's metadata).
+
+    Returns `None` if *uid* has vanished since its caller looked it up
+    (defensive -- an FK guarantees this can't happen for a project's own
+    rooms, but a room archive's single uid is resolved fresh, so this is the
+    normal not-found path there too).
+    """
+    state = session_repo.get_session_state(uid)
+    if state is None:
+        return None
+
+    objects: list[dict[str, Any]] = []
+    for object_id in list_object_ids(uid):
+        metadata = load_object_metadata(uid, object_id)
+        if metadata is not None:
+            objects.append(metadata.model_dump())
+
+    return {
+        "uid": uid,
+        "name": state.name,
+        "created_at": state.created_at,
+        "last_changed": state.last_changed,
+        "history_min": state.history_min,
+        "history_cursor": state.history_cursor,
+        "history_head": state.history_head,
+        "objects": objects,
+    }
+
+
+def _write_archive(rooms_manifest: list[dict[str, Any]], room_ids: list[str], extra: dict[str, Any], out_path: Path) -> int:
+    """Write `manifest.json` plus every room's blobs to *out_path*. Returns file count."""
+    storage_dir = get_image_storage_dir()
+    glb_dir = get_3d_storage_dir()
+    file_count = 0
+    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_STORED) as zf:
+        for uid in room_ids:
+            for source_path, archive_name in _room_blob_paths(storage_dir, glb_dir, uid):
+                zf.write(source_path, archive_name)
+                file_count += 1
+        manifest = {
+            "format": ARCHIVE_FORMAT,
+            "exported_at": datetime.now(UTC).isoformat(),
+            "rooms": rooms_manifest,
+            **extra,
+        }
+        zf.writestr(MANIFEST_NAME, json.dumps(manifest))
+    return file_count
+
+
 def build_project_archive(project_id: str, out_path: Path) -> None:
     """Write a project (every room, its metadata, and its blobs) to a zip at *out_path*.
 
@@ -76,59 +139,54 @@ def build_project_archive(project_id: str, out_path: Path) -> None:
     if summary is None:
         raise project_repo.ProjectNotFoundError(project_id)
 
-    storage_dir = get_image_storage_dir()
-    glb_dir = get_3d_storage_dir()
     room_ids = project_repo.list_project_session_ids(project_id)
-
     rooms_manifest: list[dict[str, Any]] = []
-    file_count = 0
-    with zipfile.ZipFile(out_path, "w", zipfile.ZIP_STORED) as zf:
-        for uid in room_ids:
-            state = session_repo.get_session_state(uid)
-            if state is None:  # pragma: no cover - defensive; FK guarantees this can't happen
-                logger.warning("Project archive: room vanished mid-export, skipping: uid=%s", uid)
-                continue
+    kept_ids: list[str] = []
+    for uid in room_ids:
+        entry = _room_manifest_entry(uid)
+        if entry is None:  # pragma: no cover - defensive; FK guarantees this can't happen
+            logger.warning("Project archive: room vanished mid-export, skipping: uid=%s", uid)
+            continue
+        rooms_manifest.append(entry)
+        kept_ids.append(uid)
 
-            objects: list[dict[str, Any]] = []
-            for object_id in list_object_ids(uid):
-                metadata = load_object_metadata(uid, object_id)
-                if metadata is not None:
-                    objects.append(metadata.model_dump())
-
-            rooms_manifest.append(
-                {
-                    "uid": uid,
-                    "name": state.name,
-                    "created_at": state.created_at,
-                    "last_changed": state.last_changed,
-                    "history_min": state.history_min,
-                    "history_cursor": state.history_cursor,
-                    "history_head": state.history_head,
-                    "objects": objects,
-                }
-            )
-            for source_path, archive_name in _room_blob_paths(storage_dir, glb_dir, uid):
-                zf.write(source_path, archive_name)
-                file_count += 1
-
-        manifest = {
-            "format": ARCHIVE_FORMAT,
-            "exported_at": datetime.now(UTC).isoformat(),
-            "project": {"name": summary.name},
-            "rooms": rooms_manifest,
-        }
-        zf.writestr(MANIFEST_NAME, json.dumps(manifest))
+    file_count = _write_archive(
+        rooms_manifest, kept_ids, {"kind": KIND_PROJECT, "project": {"name": summary.name}}, out_path
+    )
 
     logger.info(
         "Project archive built: project_id=%s rooms=%d files=%d out_path=%s",
         project_id,
-        len(room_ids),
+        len(kept_ids),
         file_count,
         out_path,
     )
 
 
-def _read_manifest(zf: zipfile.ZipFile) -> dict[str, Any]:
+def build_room_archive(uid: str, out_path: Path) -> None:
+    """Write one room (its metadata and blobs) to a zip at *out_path*.
+
+    Raises:
+        session_repo.SessionNotFoundError: When *uid* isn't registered.
+    """
+    entry = _room_manifest_entry(uid)
+    if entry is None:
+        raise SessionNotFoundError(uid)
+
+    file_count = _write_archive([entry], [uid], {"kind": KIND_ROOM}, out_path)
+
+    logger.info("Room archive built: uid=%s files=%d out_path=%s", uid, file_count, out_path)
+
+
+def archive_filename(name: str, *, kind: str) -> str:
+    """Sanitize a project/room name for use as a downloaded zip's filename."""
+    cleaned = "".join(ch if ch not in '<>:"/\\|?*' else "_" for ch in name.strip())
+    suffix = "avroom.zip" if kind == KIND_PROJECT else "avroom-room.zip"
+    fallback = "project" if kind == KIND_PROJECT else "room"
+    return f"{cleaned[:80] or fallback}.{suffix}"
+
+
+def _read_manifest(zf: zipfile.ZipFile, expected_kind: str) -> dict[str, Any]:
     try:
         raw = zf.read(MANIFEST_NAME)
     except KeyError as exc:
@@ -139,6 +197,18 @@ def _read_manifest(zf: zipfile.ZipFile) -> dict[str, Any]:
         raise ArchiveFormatError("manifest.json is not valid JSON") from exc
     if manifest.get("format") != ARCHIVE_FORMAT:
         raise ArchiveFormatError(f"Unsupported archive format: {manifest.get('format')!r}")
+
+    kind = manifest.get("kind", KIND_PROJECT)  # archives predating this field are projects
+    if kind not in (KIND_PROJECT, KIND_ROOM):
+        raise ArchiveFormatError(f"Unsupported archive kind: {kind!r}")
+    if kind != expected_kind:
+        if kind == KIND_ROOM:
+            raise ArchiveFormatError(
+                "This is a room export, not a project export. Open a project and use Import room instead."
+            )
+        raise ArchiveFormatError(
+            "This is a project export, not a room export. Go back to Projects and use Import project instead."
+        )
     return manifest
 
 
@@ -181,7 +251,7 @@ def _classify_is_3d(storage_dir: Path, uid: str, object_id: int) -> bool:
         return bool(classify_png(cutout_path.read_bytes(), scorer=_get_cutout_clip_scorer()))
     except Exception:
         logger.exception(
-            "Object shape classify failed on project import; defaulting is_3d=True: "
+            "Object shape classify failed on import; defaulting is_3d=True: "
             "session_id=%s object_id=%d",
             uid,
             object_id,
@@ -208,6 +278,46 @@ def _restore_room_objects(room: dict[str, Any], new_uid: str, storage_dir: Path)
     return len(uuid_map)
 
 
+def _restore_room(zf: zipfile.ZipFile, room: dict[str, Any], user_id: str, project_id: str) -> str:
+    """Recreate one manifest room entry under a fresh uid inside *project_id*.
+
+    Resolves a room-name collision (names are unique per project, unlike
+    project names which are unique per user and can't collide into a
+    brand-new project) by falling back to `session_clone.allocate_copy_room_name`
+    -- the same `"<name>-copy"` scheme a manual room copy uses. Returns the
+    new uid.
+    """
+    storage_dir = get_image_storage_dir()
+    glb_dir = get_3d_storage_dir()
+
+    old_uid = room["uid"]
+    new_uid = str(uuid.uuid4())
+    session_repo.register_uid(new_uid, user_id, project_id)
+
+    _restore_room_files(zf, old_uid=old_uid, new_uid=new_uid, storage_dir=storage_dir, glb_dir=glb_dir)
+    _restore_room_objects(room, new_uid, storage_dir)
+
+    name = room.get("name")
+    if name is not None:
+        try:
+            session_repo.set_session_name(new_uid, name)
+        except ValueError:
+            from core.session_clone import allocate_copy_room_name
+
+            name = allocate_copy_room_name(project_id, name)
+            session_repo.set_session_name(new_uid, name)
+
+    session_repo.restore_session_state(
+        new_uid,
+        name=name,
+        last_changed=room.get("last_changed"),
+        history_min=room.get("history_min", 0),
+        history_cursor=room.get("history_cursor", 0),
+        history_head=room.get("history_head", 0),
+    )
+    return new_uid
+
+
 def restore_project_archive(zip_path: Path, user_id: str) -> str:
     """Recreate a project (fresh project/room/object ids) from an exported zip, owned by *user_id*.
 
@@ -219,13 +329,10 @@ def restore_project_archive(zip_path: Path, user_id: str) -> str:
         The new project id.
 
     Raises:
-        ArchiveFormatError: When the zip has no manifest, or an unsupported format.
+        ArchiveFormatError: When the zip has no manifest, or is a wrong-kind/unsupported format.
     """
-    storage_dir = get_image_storage_dir()
-    glb_dir = get_3d_storage_dir()
-
     with zipfile.ZipFile(zip_path, "r") as zf:
-        manifest = _read_manifest(zf)
+        manifest = _read_manifest(zf, KIND_PROJECT)
 
         base_name = (manifest.get("project") or {}).get("name") or "Imported project"
         project_id: str | None = None
@@ -239,33 +346,34 @@ def restore_project_archive(zip_path: Path, user_id: str) -> str:
                 candidate = f"{base_name} ({attempt})"
 
         room_count = 0
-        object_count = 0
-        file_count = 0
         for room in manifest.get("rooms", []):
-            old_uid = room["uid"]
-            new_uid = str(uuid.uuid4())
-            session_repo.register_uid(new_uid, user_id, project_id)
-
-            file_count += _restore_room_files(
-                zf, old_uid=old_uid, new_uid=new_uid, storage_dir=storage_dir, glb_dir=glb_dir
-            )
-            object_count += _restore_room_objects(room, new_uid, storage_dir)
-            session_repo.restore_session_state(
-                new_uid,
-                name=room.get("name"),
-                last_changed=room.get("last_changed"),
-                history_min=room.get("history_min", 0),
-                history_cursor=room.get("history_cursor", 0),
-                history_head=room.get("history_head", 0),
-            )
+            _restore_room(zf, room, user_id, project_id)
             room_count += 1
 
     logger.info(
-        "Project archive restored: project_id=%s name=%r rooms=%d objects=%d files=%d",
+        "Project archive restored: project_id=%s name=%r rooms=%d",
         project_id,
         candidate,
         room_count,
-        object_count,
-        file_count,
     )
     return project_id
+
+
+def restore_room_archive(zip_path: Path, user_id: str, project_id: str) -> str:
+    """Recreate one room (fresh room/object ids) from an exported zip, inside *project_id*.
+
+    Raises:
+        ArchiveFormatError: When the zip has no manifest, or is a wrong-kind/unsupported format.
+
+    Returns:
+        The new room's uid.
+    """
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        manifest = _read_manifest(zf, KIND_ROOM)
+        rooms = manifest.get("rooms", [])
+        if not rooms:
+            raise ArchiveFormatError("Room archive has no room entry")
+        new_uid = _restore_room(zf, rooms[0], user_id, project_id)
+
+    logger.info("Room archive restored: uid=%s project_id=%s", new_uid, project_id)
+    return new_uid

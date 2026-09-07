@@ -18,7 +18,14 @@ from starlette.background import BackgroundTask
 
 from core.auth.identity import current_user_id
 from core.auth.ownership import require_project_owner
-from core.project_archive import ArchiveFormatError, build_project_archive, restore_project_archive
+from core.project_archive import (
+    KIND_PROJECT,
+    ArchiveFormatError,
+    archive_filename,
+    build_project_archive,
+    restore_project_archive,
+    restore_room_archive,
+)
 from core.repositories.project_repo import (
     ProjectNotFoundError,
     create_project,
@@ -28,17 +35,13 @@ from core.repositories.project_repo import (
     list_projects,
     set_project_name,
 )
+from core.repositories.session_repo import get_session_state
 from core.session_teardown import delete_session_and_files
 from schemas.projects import CreateProjectRequest, ProjectInfo, SetProjectNameRequest
+from schemas.sessions import SessionInfo
 
 router = APIRouter(prefix="/projects", tags=["projects"], dependencies=[Depends(require_project_owner)])
 logger = logging.getLogger(__name__)
-
-
-def _archive_filename(project_name: str) -> str:
-    """Sanitize a project name for use as a downloaded zip's filename."""
-    cleaned = "".join(ch if ch not in '<>:"/\\|?*' else "_" for ch in project_name.strip())
-    return f"{cleaned[:80] or 'project'}.avroom.zip"
 
 
 @router.get("")
@@ -135,9 +138,43 @@ async def export_project_endpoint(project_id: str) -> FileResponse:
     return FileResponse(
         out_path,
         media_type="application/zip",
-        filename=_archive_filename(summary.name),
+        filename=archive_filename(summary.name, kind=KIND_PROJECT),
         background=BackgroundTask(out_path.unlink),
     )
+
+
+@router.post("/{project_id}/rooms/import", status_code=201)
+async def import_room_endpoint(
+    project_id: str, file: UploadFile = File(...), user_id: str = Depends(current_user_id)
+) -> SessionInfo:
+    """Recreate a room (fresh room/object ids) inside *project_id* from a previously exported room zip.
+
+    A room-name collision within the project auto-suffixes (`"<name>-copy"`,
+    `-copy1`, ...) the same way a manual room copy does -- see
+    `core.project_archive._restore_room`.
+    """
+    logger.info("Room import requested: project_id=%s user_id=%s filename=%r", project_id, user_id, file.filename)
+    if get_project(project_id) is None:
+        raise HTTPException(status_code=404, detail=f"Project not found for id='{project_id}'")
+
+    file_bytes = await file.read()
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
+    tmp_path = Path(tmp.name)
+    try:
+        tmp.write(file_bytes)
+        tmp.close()
+        try:
+            new_uid = restore_room_archive(tmp_path, user_id, project_id)
+        except (ArchiveFormatError, zipfile.BadZipFile) as exc:
+            logger.warning("Room import rejected: project_id=%s reason=%s", project_id, exc)
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+    state = get_session_state(new_uid)
+    assert state is not None  # restore_room_archive above just created this row
+    logger.info("Room imported: uid=%s project_id=%s name=%r", new_uid, project_id, state.name)
+    return SessionInfo(uid=new_uid, name=state.name, last_changed=state.last_changed)
 
 
 @router.post("/{project_id}/name")

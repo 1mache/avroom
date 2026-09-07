@@ -193,53 +193,84 @@ per-project (`uq_sessions_project_id_name`) — two different projects may each 
   `"workspace"` both carry `projectId`/`projectName` so a room's back arrow returns to the rooms
   screen it came from, not to the top. Still no router library.
 
-## Project Export / Import
+## Project & Room Export / Import
 
-A project (every room's DB metadata plus its blobs) can be exported to a single self-contained
-zip and imported back on any instance under the caller's own account, with every id minted
-fresh. Built for moving work between machines (laptop ↔ GPU box) or archiving.
+A project (every room's DB metadata plus its blobs) or a single room can be exported to a
+self-contained zip and imported back on any instance under the caller's own account, with
+every id minted fresh. Built for moving work between machines (laptop ↔ GPU box) or
+archiving.
 
-- **`core/project_archive.py`** — `build_project_archive(project_id, out_path)` and
-  `restore_project_archive(zip_path, user_id) -> new_project_id`. The archive is
-  `manifest.json` (project name, and per room: name/timestamps/history counters plus every
-  `ObjectMetadata.model_dump()`) alongside `images/<filename>` and `3d/<filename>` entries named
-  exactly as they sit on disk (still `{old_uid}`-prefixed — only the destination filename is
-  rewritten on import). `ZIP_STORED`, not deflate — PNG/JPEG/GLB are already compressed.
+- **`core/project_archive.py`** — `build_project_archive(project_id, out_path)` /
+  `restore_project_archive(zip_path, user_id) -> new_project_id` and their room-level
+  siblings `build_room_archive(uid, out_path)` /
+  `restore_room_archive(zip_path, user_id, project_id) -> new_uid`. The archive is
+  `manifest.json` (`kind: "project" | "room"`, missing == `"project"` for archives exported
+  before this field existed; project name only for a project archive; per room:
+  name/timestamps/history counters plus every `ObjectMetadata.model_dump()` — a room archive
+  has exactly one entry in `"rooms"`) alongside `images/<filename>` and `3d/<filename>`
+  entries named exactly as they sit on disk (still `{old_uid}`-prefixed — only the
+  destination filename is rewritten on import). `ZIP_STORED`, not deflate — PNG/JPEG/GLB are
+  already compressed. `_read_manifest(zf, expected_kind)` is the single place both import
+  paths validate against — feeding a project zip to the room importer (or vice versa) is an
+  `ArchiveFormatError` with a message naming the mismatch (e.g. "This is a room export, not a
+  project export. Open a project and use Import room instead."), not a generic format error.
 - **Its blob inventory is the photographic negative of `core/session_teardown.py`**: two glob
   patterns (`{uid}.*`, `{uid}_*`) per storage dir, i.e. anything teardown would delete on room
   deletion is, by definition, something export carries. Keep the two in sync when either changes.
   Deliberately excluded: `{uid}_depth_*.npy` / `{uid}_normal_*.npy` (recomputable, and a
   float32 HxWx3 normal map alone can dwarf every visible file in a room combined) and
   `{uid}_mask_*` (transient SAM candidates, gone by the time an object is finalized).
-- **Import always creates a new project** — never a merge, never a 409. A name collision
-  auto-suffixes (`"<name> (2)"`, `(3)`, …) by retrying `create_project` until one lands. Every
-  room gets a fresh `uuid4` uid and every object a fresh `uuid4`; `clone_root_uuid` (a plain
-  string with no FK) is remapped through a per-room old→new uuid map in the same pass, or clone
-  lineage (`count_clones_of_root`, `resolve_clone_lineage`) would silently mis-count after import.
-  `history_min/cursor/head` (`core/repositories/session_repo.py::get_session_state` /
-  `restore_session_state`, added for this) move verbatim alongside the `{uid}_bg_hist_*.png`
-  files they describe — the two are meaningless apart from each other.
+- **`_restore_room(zf, room, user_id, project_id) -> new_uid`** is the shared body both
+  `restore_project_archive` (looped per room, into its own freshly created project) and
+  `restore_room_archive` (called once, into an existing project the caller names) call: mint
+  a `uuid4` uid, `session_repo.register_uid`, restore files + objects, then set the room's
+  name. A project import can never collide (the project is brand new), but a room imported
+  into an existing project can — `_restore_room` tries `session_repo.set_session_name` first
+  and, on `ValueError`, re-resolves via `core.session_clone.allocate_copy_room_name` (the
+  same `"<name>-copy"` scheme a manual room copy uses) before writing `restore_session_state`.
+- **Import always creates a new project or room** — never a merge, never a 409. A project
+  name collision auto-suffixes (`"<name> (2)"`, `(3)`, …) by retrying `create_project` until
+  one lands; a room name collision (unique per project, not per user) auto-suffixes via
+  `allocate_copy_room_name` as above. Every room gets a fresh `uuid4` uid and every object a
+  fresh `uuid4`; `clone_root_uuid` (a plain string with no FK) is remapped through a per-room
+  old→new uuid map in the same pass, or clone lineage (`count_clones_of_root`,
+  `resolve_clone_lineage`) would silently mis-count after import. `history_min/cursor/head`
+  (`core/repositories/session_repo.py::get_session_state` / `restore_session_state`, added
+  for this) move verbatim alongside the `{uid}_bg_hist_*.png` files they describe — the two
+  are meaningless apart from each other.
 - **Zip-slip guard**: an entry only ever matches `^(images|3d)/[^/\\]+$` (one path segment, no
   `..`); the destination path is always built from a freshly minted uid plus that validated
   basename, never by joining an archive-supplied path.
-- **Routes** (`api/projects.py`): `GET /projects/{id}/export` (streams a temp-file zip via
-  `FileResponse` with a `BackgroundTask` cleanup, filename `<project name>.avroom.zip`) and
-  `POST /projects/import` (multipart `file`, 201 → `ProjectInfo`, 422 on a malformed/unsupported
-  archive). `/export` is covered by the router's existing `require_project_owner`; `/import` has
-  no `project_id` yet so the guard passes through unchecked, same as `GET`/`POST /projects`
-  today — it's exempted from `test_route_guard_coverage.py`'s multipart-body-uid check the same
-  way `/images/upload` and `/debug/*` are, for the same reason (no existing session to guard).
+- **Routes**: `GET /projects/{id}/export` and `POST /projects/import` (`api/projects.py`,
+  multipart `file`, 201 → `ProjectInfo`) as before, plus `GET /images/{uid}/export`
+  (`api/sessions.py`) and `POST /projects/{project_id}/rooms/import` (`api/projects.py`,
+  multipart `file`, 201 → `SessionInfo`). All four stream/accept a temp-file zip
+  (`FileResponse` with a `BackgroundTask` cleanup on export) and 422 on
+  `ArchiveFormatError`/`zipfile.BadZipFile` on import. `/images/{uid}/export` is covered by
+  `api/sessions.py`'s router-level `require_session_owner`; `/rooms/import` is covered by
+  `require_project_owner` off its `project_id` path param (a room importer has no uid yet, so
+  `require_session_owner` couldn't guard it); `/projects/import` still passes through
+  unchecked, same as `GET`/`POST /projects`. Every multipart route under `/projects/*` is
+  exempted from `test_route_guard_coverage.py`'s multipart-body-uid check for the same reason
+  (no existing session to guard) — the exemption is `route.path.startswith("/projects")`, not
+  a per-route list.
 - Job rows are never exported — transient, machine-local, and meaningless once the dispatcher
   that owned them is gone.
-- **Frontend**: `ProjectsScreen` owns both actions (no new `App.tsx` route). Export is a
-  `DownloadIcon` button in `ProjectCard`'s `.project-row-actions` (busy-swaps to
+- **Frontend**: `ProjectsScreen` owns the project-level actions (no new `App.tsx` route).
+  Export is a `DownloadIcon` button in `ProjectCard`'s `.project-row-actions` (busy-swaps to
   `.tool-spinner`, same idiom as `Toolbar.tsx`'s snapshot download) that blob-fetches the zip and
   triggers a browser download. Import is a mirrored `UploadIcon` button next to "New project"
   (`.new-session-row` wraps the two so `.new-session` can shrink to `flex: 1` instead of its old
   `width: 100%`), driving a hidden `<input type="file" accept=".zip">` — same idiom
   `UploadScreen.tsx` uses for photo picking. A 422 renders inline (`.upload-rejection`, matching
   the upload-rejection pattern); anything else surfaces through the screen's existing
-  `.modal.is-error` dialog.
+  `.modal.is-error` dialog. `DashboardScreen` mirrors the same import affordance for rooms
+  (same `.new-session-import-btn`/hidden-input/`.upload-rejection` idiom, scoped to its
+  `projectId`); room export instead lives as an "Export room" item in `SessionCard`'s existing
+  `...` menu (alongside Rename/Copy room) rather than a dedicated icon button, since
+  `SessionCard` — unlike `ProjectCard` — already has that menu and no icon row.
+  `utils/preview.ts::archiveDownloadFilename(name, kind)` is the one place both screens build
+  the download filename, mirroring the backend's `archive_filename`.
 
 ## Admin Users
 

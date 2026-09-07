@@ -63,15 +63,15 @@ survives as a draggable cutout you can reposition, rotate, and copy — all in t
   runs again — up to three retries before the last candidate is kept.
 
 
-Smart paste rides on a second model: **Metric3D** produces a surface-normal map of the room, so
-when an object is dropped it knows which way the wall or floor under it faces and can turn to
+- **Metric3D** produces a surface-normal map of the room, so
+when an object is dropped in smart paste mode, it knows which way the wall or floor under it faces and can turn to
 match, not just rescale.
 
 <!-- docs/media/normal-map.png -->
 <img src="docs/media/normal-map.png" alt="Surface-normal map of a room — walls and floor color-coded by facing direction" width="480">
 
-Rotation rides on a third: **Hunyuan3D-2.1** turns a single cutout into a full 3D mesh, which is
-what you actually orbit when you rotate an object. Commit an angle and that mesh is rendered back
+- **Hunyuan3D-2.1** turns a single cutout into a full 3D mesh, which is
+what you actually see when you rotate an object. Commit an angle and that mesh is rendered back
 down to a fresh 2D view — so a chair can be turned to face a direction the original photo never
 showed.
 

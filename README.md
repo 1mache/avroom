@@ -58,8 +58,8 @@ flowchart LR
 Two rules the pipeline never breaks:
 
 - **SAM sees the depth map, not the RGB photo.** RGB over-segments on fabric creases and shadows.
-- **Stable Diffusion refines a native-resolution crop, never the squashed full frame** — avoids
-  the upscale smear and paste seam a naive full-frame resize would cause.
+- **Stable Diffusion refines a native-resolution crop, never the full image** — avoids
+  the hallucinations and reimagining of the full room Stable diffusion would otherwise perform.
 
 ## Architecture
 
@@ -139,24 +139,6 @@ avroom/
 └── react-front/    # React + TypeScript frontend
 ```
 
-## Docs
-
-| Doc | Covers |
-|---|---|
-| [docs/overview.md](docs/overview.md) | Product scope, glossary |
-| [docs/architecture.md](docs/architecture.md) | Full system diagram |
-| [docs/tech-stack.md](docs/tech-stack.md) | Every dependency and model, with versions |
-| [docs/backend/api-endpoints.md](docs/backend/api-endpoints.md) | REST API reference |
-| [docs/ai-pipeline/](docs/ai-pipeline/) | Depth/segmentation/inpainting/3D internals |
-| [docs/deployment/aws-runbook.md](docs/deployment/aws-runbook.md) | EC2 GPU deployment |
-
-## Status
-
-**Implemented:** object removal, drag & drop, smart paste, 2D rotation (novel-view synthesis),
-copy/delete, projects/rooms, export/import, durable job queue, admin debug dashboard.
-
-**Planned, not yet built:** collaboration (spectator/partner/co-admin roles), NLP-driven edits,
-S3 blob storage, obstruction detection, depth adjustment.
 
 ## Team
 

@@ -9,6 +9,7 @@
 ![Python](https://img.shields.io/badge/python-3.11-blue)
 ![FastAPI](https://img.shields.io/badge/backend-FastAPI-009688)
 ![React](https://img.shields.io/badge/frontend-React%2019-61dafb)
+![PostgreSQL](https://img.shields.io/badge/db-PostgreSQL-336791)
 
 </div>
 
@@ -31,6 +32,8 @@ survives as a draggable cutout you can reposition, rotate, and copy — all in t
 
 - **Object removal** — click an object, pick from candidate masks (or let it guess and pick the best one), and the object is
   cut out while the background is inpainted around the hole.
+- **Erase** — draw a freehand lasso around anything the click-and-segment flow can't grab, and it's
+  removed and the background filled the same way — no cutout kept.
 - **Drag & drop** — reposition any cutout on the canvas.
 - **Smart paste** — drop an object anywhere and it rescales to the local depth, optionally
   matching the room's perspective as it moves.
@@ -40,26 +43,43 @@ survives as a draggable cutout you can reposition, rotate, and copy — all in t
 - **Projects → Rooms** — rooms are grouped under projects, each with its own preview thumbnail.
 - **Export / import** — a project or a single room packs down to a self-contained zip and
   restores on any instance under the caller's account.
+- **Batch actions** — arm several operations at once (erase, cut out, cut out + 3D, generate 3D)
+  from clicks, boxes, lassos, or existing objects, approve the queue, and collect every result
+  when the whole batch lands.
+- **Email on completion** — the long jobs (inpainting, 3D generation) email you when they finish,
+  so you don't sit and watch a spinner.
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    A[Origin Photo] --> B[Depth\nnear/far blend]
-    B --> C[Adapt\ndepth → RGB for SAM]
-    C --> D[Route\nboundary-variance probe]
-    D --> E[Segment\nSAM on depth map]
-    E --> F[Refine\nsanitize + dilate]
-    F --> G[Inpaint\nLaMa + Stable Diffusion]
-    G --> H[Compose\nRGBA cutout]
+    A[Origin Photo] --> B[Depth<br>near/far blend]
+    A --> N[Normals<br>Metric3D]
+    B --> C[Adapt<br>depth → RGB for SAM]
+    C --> D[Route<br>boundary-variance probe]
+    D --> E[Segment<br>SAM on depth map]
+    E --> F[Refine<br>sanitize + dilate]
+    F --> G[Inpaint<br>LaMa + Stable Diffusion]
+    G --> V{Gemini verify<br>artifacts left?}
+    V -- "retry with corrected prompt<br>+ params (up to 3×)" --> G
+    V -- clean --> H[Compose<br>RGBA cutout]
     H --> I[Background + Cutout]
+    N --> P[Smart paste<br>wall / floor orientation]
 ```
 
-Two rules the pipeline never breaks:
+Three rules the pipeline never breaks:
 
 - **SAM sees the depth map, not the RGB photo.** RGB over-segments on fabric creases and shadows.
 - **Stable Diffusion refines a native-resolution crop, never the full image** — avoids
   the hallucinations and reimagining of the full room Stable diffusion would otherwise perform.
+- **Inpainting is checked, not trusted.** LaMa fills the hole, Stable Diffusion refines the
+  texture, then Gemini looks at a before/after crop and decides whether any ghost of the object
+  survived. If it did, it hands back a corrected prompt and generation parameters and the pass
+  runs again — up to three retries before the last candidate is kept.
+
+Smart paste rides on a second model: **Metric3D** produces a surface-normal map of the room, so
+when an object is dropped it knows which way the wall or floor under it faces and can turn to
+match, not just rescale.
 
 ## Architecture
 
@@ -70,12 +90,12 @@ graph TB
     end
     subgraph Backend["fastApi-app — FastAPI (IPE)"]
         API[REST API]
-        JQ[(Job dispatcher\nqueued segment/inpaint/3D)]
-        PG[(Postgres\nsessions, objects, jobs)]
-        Blobs[(Local disk\ncutouts, GLBs, caches)]
+        JQ[(Job dispatcher<br>queued segment/inpaint/3D)]
+        PG[(Postgres<br>sessions, objects, jobs)]
+        Blobs[(Local disk<br>cutouts, GLBs, caches)]
     end
     subgraph Pipeline["TestModules — avroom_object_removal"]
-        AI[ObjectRemover\ndepth · SAM · inpaint · 3D]
+        AI[ObjectRemover<br>depth · SAM · inpaint · 3D]
     end
 
     FE -- fetch --> API
@@ -125,6 +145,7 @@ knobs that matter most:
 | Var | Purpose |
 |---|---|
 | `HF_TOKEN` | Hugging Face token — required for 3D reconstruction (Hunyuan3D-2.1 Space) |
+| `GEMINI_API_KEY` | Key for the inpaint verification pass (restrict it to `generativelanguage.googleapis.com`) |
 | `INFERENCE_WORKERS` | `0` = inline with a process GPU lock, `N` = N parallel inference workers |
 | `VALIDATE` | Gate upload validation (technical + content checks); `false` to skip |
 | `AUTH_MODE` | `single_user` (default, no login) or `jwt` (real accounts) |
@@ -138,7 +159,6 @@ avroom/
 ├── fastApi-app/    # FastAPI backend — API routes, job dispatcher, Postgres models
 └── react-front/    # React + TypeScript frontend
 ```
-
 
 ## Team
 

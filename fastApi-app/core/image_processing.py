@@ -848,8 +848,8 @@ def run_smart_paste(
 ) -> SmartPasteBridgeResult:
     """Run smart paste for one object at ``(x, y)`` and persist metadata only.
 
-    Volumetric (mesh) objects never auto-rotate; ``smart_rotate`` applies to
-    planar cutouts only. Scale-by-POV is unchanged.
+    Auto-rotate is CSS-only (no mesh/GLB path) and applies regardless of the
+    object's ``is_3d`` classification. Scale-by-POV is unchanged.
     """
     logger.info(
         "Smart paste requested: object_uuid=%s placement=(%d,%d) scale_by_pov=%s smart_rotate=%s",
@@ -861,15 +861,6 @@ def run_smart_paste(
     )
 
     metadata = _load_object_metadata_for_rescale(base_dir, object_uuid)
-    # Mesh objects keep scale-by-POV; auto-rotate is planar CSS only.
-    if smart_rotate and metadata.is_3d is not False:
-        logger.info(
-            "Smart paste auto-rotate skipped: volumetric object_uuid=%s is_3d=%s",
-            object_uuid,
-            metadata.is_3d,
-        )
-        smart_rotate = False
-
     cutout_path = resolve_object_cutout_path(base_dir, metadata.session_id, metadata.object_id)
     base_bounds = extract_cutout_bounds_from_png_bytes(cutout_path.read_bytes())
 
@@ -958,7 +949,7 @@ def run_smart_paste(
         source_y=source_y,
         scale_by_pov=scale_by_pov,
         smart_rotate=smart_rotate,
-        wall_mount=metadata.is_3d is not False,
+        wall_mount=False,
     )
 
     if scale_by_pov:

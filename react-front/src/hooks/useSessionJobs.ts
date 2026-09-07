@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-  clearObjectRotation,
   deleteJob,
   deleteObject as deleteObjectRequest,
   deleteObject3d as deleteObject3dRequest,
   duplicateObject as duplicateObjectRequest,
   eraseMask,
-  fetchCached3DModel,
   getJob,
   getSessionObjects,
   importObjectCutout,
@@ -19,9 +17,7 @@ import {
   setObjectName,
   resetObjectTransform as resetObjectTransformRequest,
   smartPasteObject,
-  submitGenerate3D,
   synthesizeNovelView,
-  waitForJobDone,
 } from "../api/images";
 import type {
   BatchRequest,
@@ -824,8 +820,8 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [onError, onMutated],
   );
 
-  /** Ensure this object's GLB exists, then mesh-render at an inferred pose.
-   * Planar objects skip the mesh and PATCH CSS angles instead. */
+  /** Smart paste is CSS-only — map inferred orbit deltas to rotateX/Y and
+   * persist. No GLB, no mesh path (that lives in useRotationController). */
   const applyInferredRotation = useCallback(
     async (objectId: number, pose: RotationPose) => {
       const currentImageId = imageIdRef.current;
@@ -834,105 +830,42 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       }
 
       const target = objectsRef.current.find((o) => o.objectId === objectId);
-      if (!target) {
+      if (!target?.uuid) {
         return;
       }
 
-      // GLB identity faces the camera; the Source Cutout may be a side view.
-      // Identity pose means "show the photo", not "render the mesh at 0,0,0".
-      const identityPose =
-        pose.azimuthDeg === 0 &&
-        pose.relativeElevationDeg === 0 &&
-        (pose.rollDeg ?? 0) === 0;
-      if (isVolumetricObject(target.is3d) && identityPose) {
-        setObjects((prev) =>
-          prev.map((o) => (o.objectId === objectId ? { ...o, rotation: null } : o)),
-        );
-        if (target.uuid) {
-          try {
-            await clearObjectRotation(target.uuid);
-          } catch (err) {
-            if (imageIdRef.current === currentImageId) {
-              onError(err, "rotate");
-            }
-          }
-        }
-        onMutated?.();
-        return;
-      }
-      // Planar: map orbit deltas → CSS rotateY / rotateX; no GLB.
-      if (!isVolumetricObject(target.is3d)) {
-        if (!target.uuid) {
-          return;
-        }
-        const cssPose = {
-          cssRotateXDeg: pose.relativeElevationDeg,
-          cssRotateYDeg: pose.azimuthDeg,
-          cssRotateZDeg: 0,
-          cssPerspectivePx: target.cssPerspectivePx || DEFAULT_CSS_PERSPECTIVE_PX,
-        };
-        setObjects((prev) =>
-          prev.map((o) =>
-            o.objectId === objectId
-              ? {
-                  ...o,
-                  ...cssPose,
-                  rotation: null,
-                }
-              : o,
-          ),
-        );
-        try {
-          await setObjectCssTransform(target.uuid, {
-            css_rotate_x_deg: cssPose.cssRotateXDeg,
-            css_rotate_y_deg: cssPose.cssRotateYDeg,
-            css_rotate_z_deg: cssPose.cssRotateZDeg,
-            css_perspective_px: cssPose.cssPerspectivePx,
-          });
-          onMutated?.();
-        } catch (err) {
-          if (imageIdRef.current === currentImageId) {
-            onError(err, "rotate");
-          }
-        }
-        return;
-      }
-
+      const cssPose = {
+        cssRotateXDeg: pose.relativeElevationDeg,
+        cssRotateYDeg: pose.azimuthDeg,
+        cssRotateZDeg: 0,
+        cssPerspectivePx: target.cssPerspectivePx || DEFAULT_CSS_PERSPECTIVE_PX,
+      };
+      setObjects((prev) =>
+        prev.map((o) =>
+          o.objectId === objectId
+            ? {
+                ...o,
+                ...cssPose,
+                rotation: null,
+              }
+            : o,
+        ),
+      );
       try {
-        let buffer = target.glbData;
-        if (!buffer) {
-          const cached = await fetchCached3DModel(currentImageId, objectId);
-          buffer = cached;
-          if (!buffer) {
-            const existingJob = jobsRef.current.find(
-              (job) =>
-                job.kind === "generate_3d" &&
-                job.object_id === objectId &&
-                (job.status === "queued" || job.status === "running"),
-            );
-            const jobId = existingJob?.job_id ?? (await submitGenerate3D(currentImageId, objectId));
-            await waitForJobDone(jobId);
-            buffer = await fetchCached3DModel(currentImageId, objectId);
-            if (!buffer) {
-              throw new Error("3D generation finished but no model was found.");
-            }
-          }
-          if (imageIdRef.current !== currentImageId) {
-            return;
-          }
-          setObjects((prev) =>
-            prev.map((o) => (o.objectId === objectId ? { ...o, glbData: buffer! } : o)),
-          );
-        }
-
-        commitRotation(objectId, pose, target.cutoutSrc);
+        await setObjectCssTransform(target.uuid, {
+          css_rotate_x_deg: cssPose.cssRotateXDeg,
+          css_rotate_y_deg: cssPose.cssRotateYDeg,
+          css_rotate_z_deg: cssPose.cssRotateZDeg,
+          css_perspective_px: cssPose.cssPerspectivePx,
+        });
+        onMutated?.();
       } catch (err) {
         if (imageIdRef.current === currentImageId) {
           onError(err, "rotate");
         }
       }
     },
-    [commitRotation, onError, onMutated, setObjects],
+    [onError, onMutated, setObjects],
   );
 
   const renameObject = useCallback(
@@ -1109,8 +1042,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       }
 
       const scaleByPov = options.scaleByPov ?? true;
-      const smartRotate =
-        (options.smartRotate ?? true) && !isVolumetricObject(target.is3d);
+      const smartRotate = options.smartRotate ?? true;
       if (!scaleByPov && !smartRotate) {
         return Promise.resolve(false);
       }

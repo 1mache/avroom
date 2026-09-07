@@ -182,6 +182,51 @@ def test_request_recipient_verification_calls_ses_backend(monkeypatch: pytest.Mo
     assert calls == ["new-user@example.com"]
 
 
+def test_notify_account_created_calls_backend(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, str, str, str]] = []
+    monkeypatch.setattr(
+        notifications,
+        "_backend_send",
+        lambda from_addr, to, subject, body: calls.append((from_addr, to, subject, body)),
+    )
+
+    notifications.notify_account_created("new-user@example.com")
+
+    assert len(calls) == 1
+    _from_addr, to, subject, _body = calls[0]
+    assert to == "new-user@example.com"
+    assert "Welcome" in subject
+
+
+def test_notify_account_created_swallows_backend_exception(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def _boom(from_addr: str, to: str, subject: str, body: str) -> None:
+        raise ConnectionRefusedError("no smtp server")
+
+    monkeypatch.setattr(notifications, "_backend_send", _boom)
+
+    with caplog.at_level(logging.WARNING):
+        notifications.notify_account_created("new-user@example.com")  # must not raise
+
+    assert any("new-user@example.com" in record.message for record in caplog.records)
+
+
+def test_notify_account_created_noop_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("NOTIFY_ENABLED", "false")
+
+    called = False
+
+    def _spy(*_args: object) -> None:
+        nonlocal called
+        called = True
+
+    monkeypatch.setattr(notifications, "_backend_send", _spy)
+    notifications.notify_account_created("new-user@example.com")
+
+    assert called is False
+
+
 def test_notify_pipeline_event_noop_when_session_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
     called = False
 

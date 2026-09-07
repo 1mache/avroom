@@ -51,25 +51,9 @@ survives as a draggable cutout you can reposition, rotate, and copy — all in t
 
 ## How it works
 
-```mermaid
-flowchart LR
-    A[Origin Photo] --> B[Depth<br>near/far blend]
-    A --> N[Normals<br>Metric3D]
-    B --> C[Adapt<br>depth → RGB for SAM]
-    C --> D[Route<br>boundary-variance probe]
-    D --> E[Segment<br>SAM on depth map]
-    E --> F[Refine<br>sanitize + dilate]
-    F --> G[Inpaint<br>LaMa + Stable Diffusion]
-    G --> V{Gemini verify<br>artifacts left?}
-    V -- "retry with corrected prompt<br>+ params (up to 3×)" --> G
-    V -- clean --> H[Compose<br>RGBA cutout]
-    H --> I[Background + Cutout]
-    N --> P[Smart paste<br>wall / floor orientation]
-```
-
 Three rules the pipeline never breaks:
 
-- **SAM sees the depth map, not the RGB photo.** RGB over-segments on fabric creases and shadows.
+- **SAM sees both the depth map and the RGB photo.** RGB sometimes over-segments on fabric creases and shadows.
 - **Stable Diffusion refines a native-resolution crop, never the full image** — avoids
   the hallucinations and reimagining of the full room Stable diffusion would otherwise perform.
 - **Inpainting is checked, not trusted.** LaMa fills the hole, Stable Diffusion refines the

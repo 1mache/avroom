@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from core.object_metadata import ObjectMetadata, list_object_ids, load_object_metadata, save_object_metadata
+from core.object_storage import resolve_object_cutout_path
 from core.repositories import project_repo, session_repo
 from settings import get_3d_storage_dir, get_image_storage_dir
 
@@ -161,16 +162,47 @@ def _restore_room_files(
     return written
 
 
-def _restore_room_objects(room: dict[str, Any], new_uid: str) -> int:
+def _classify_is_3d(storage_dir: Path, uid: str, object_id: int) -> bool:
+    """Best-effort shape classify for an object whose archived ``is_3d`` is null.
+
+    Only object creation (`image_processing.py`, `object_import.py`) ever runs
+    the classifier -- an export made before that field existed carries `null`
+    forever otherwise, since nothing else revisits it post-creation.
+    """
+    try:
+        from core.avroom_package import load_avroom_attr
+        from core.image_processing import _get_cutout_clip_scorer
+
+        cutout_path = resolve_object_cutout_path(storage_dir, uid, object_id)
+        classify_png = load_avroom_attr(
+            "classify_object_is_3d_from_png_bytes",
+            "avroom_object_removal.core.object_shape_classifier",
+        )
+        return bool(classify_png(cutout_path.read_bytes(), scorer=_get_cutout_clip_scorer()))
+    except Exception:
+        logger.exception(
+            "Object shape classify failed on project import; defaulting is_3d=True: "
+            "session_id=%s object_id=%d",
+            uid,
+            object_id,
+        )
+        return True
+
+
+def _restore_room_objects(room: dict[str, Any], new_uid: str, storage_dir: Path) -> int:
     """Persist every object in *room* under *new_uid*, with fresh uuids and remapped clone lineage."""
     uuid_map = {obj["uuid"]: str(uuid.uuid4()) for obj in room.get("objects", [])}
     for obj in room.get("objects", []):
         clone_root_uuid = obj.get("clone_root_uuid")
+        is_3d = obj.get("is_3d")
+        if is_3d is None:
+            is_3d = _classify_is_3d(storage_dir, new_uid, obj["object_id"])
         fields = {
             **obj,
             "uuid": uuid_map[obj["uuid"]],
             "session_id": new_uid,
             "clone_root_uuid": uuid_map.get(clone_root_uuid) if clone_root_uuid else None,
+            "is_3d": is_3d,
         }
         save_object_metadata(ObjectMetadata(**fields))
     return len(uuid_map)
@@ -217,7 +249,7 @@ def restore_project_archive(zip_path: Path, user_id: str) -> str:
             file_count += _restore_room_files(
                 zf, old_uid=old_uid, new_uid=new_uid, storage_dir=storage_dir, glb_dir=glb_dir
             )
-            object_count += _restore_room_objects(room, new_uid)
+            object_count += _restore_room_objects(room, new_uid, storage_dir)
             session_repo.restore_session_state(
                 new_uid,
                 name=room.get("name"),

@@ -560,15 +560,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     [jobs.selectedObjectId, jobs.toggleHidden, rotation.cancelRotation],
   );
 
-  const handleToggleShowOriginal = useCallback((objectId: number) => {
-    setShowOriginalIds((prev) => {
-      const next = new Set(prev);
-      if (!next.delete(objectId)) {
-        next.add(objectId);
-      }
-      return next;
-    });
-  }, []);
+  // "Show original" permanently drops the baked rotation (back to the
+  // pristine cutout) rather than just previewing it -- a one-way revert,
+  // not a toggle. jobs.revertRotation persists this via DELETE .../rotation.
+  const handleToggleShowOriginal = useCallback(
+    (objectId: number) => {
+      void jobs.revertRotation(objectId);
+    },
+    [jobs.revertRotation],
+  );
 
   const fireSegmentFromSeeds = useCallback(
     (seeds: ClickPosition[]) => {

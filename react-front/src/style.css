@@ -419,6 +419,21 @@ input {
   color: var(--ink);
 }
 
+.toolbar-settings-radios {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.toolbar-settings-radios .tool-radio {
+  flex: 1;
+}
+
+.toolbar-settings-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
 .toolbar-settings-action {
   display: flex;
   align-items: center;

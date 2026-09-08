@@ -51,6 +51,12 @@ _ALPHA_THRESHOLD: int = 10
 # geometry.  1.2 adds a 20 % border on each side of the shorter axis.
 _TIGHT_CROP_PADDING_RATIO: float = 1.2
 
+# A small real-world object (a knob, a vase in a wide room shot) can crop to
+# well under 100px. Uploading that directly starves the diffusion model of
+# detail and it reconstructs a near-flat blob/plate instead of real geometry.
+# Upscale the padded square up to this floor (never downscale) before upload.
+_MIN_UPLOAD_SIDE_PX: int = 512
+
 
 def _prepare_cutout_for_hunyuan(
     pil_image: Image.Image,
@@ -121,6 +127,15 @@ def _prepare_cutout_for_hunyuan(
                 paste_x,
                 paste_y,
             )
+            if canvas_size < _MIN_UPLOAD_SIDE_PX:
+                padded = padded.resize(
+                    (_MIN_UPLOAD_SIDE_PX, _MIN_UPLOAD_SIDE_PX), Image.LANCZOS
+                )
+                logger.debug(
+                    "Upscaled small crop for upload: %d -> %d",
+                    canvas_size,
+                    _MIN_UPLOAD_SIDE_PX,
+                )
             img = padded
         else:
             logger.warning("getbbox() returned None (fully transparent image); skipping crop.")

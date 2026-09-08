@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  clearObjectRotation,
   deleteJob,
   deleteObject as deleteObjectRequest,
   deleteObject3d as deleteObject3dRequest,
@@ -363,6 +364,34 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
       } catch (err) {
         if (imageIdRef.current === currentImageId) {
           onError(err, "generic");
+        }
+      }
+    },
+    [onError, onMutated],
+  );
+
+  /** Permanently drops the baked rotation result -- back to the pristine
+   * cutout, as if this object was never rotated. Not a preview toggle. */
+  const revertRotation = useCallback(
+    async (objectId: number) => {
+      const currentImageId = imageIdRef.current;
+      const target = objectsRef.current.find((o) => o.objectId === objectId);
+      if (!currentImageId || !target?.uuid) {
+        return;
+      }
+
+      try {
+        await clearObjectRotation(target.uuid);
+        if (imageIdRef.current !== currentImageId) {
+          return;
+        }
+        setObjects((prev) =>
+          prev.map((o) => (o.objectId === objectId ? { ...o, rotation: null } : o)),
+        );
+        onMutated?.();
+      } catch (err) {
+        if (imageIdRef.current === currentImageId) {
+          onError(err, "rotate");
         }
       }
     },
@@ -1131,6 +1160,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     importObject,
     deleteObject,
     clearObject3d,
+    revertRotation,
     resetObjectChanges,
     runSmartPasteAfterDrag,
     isDeleting,

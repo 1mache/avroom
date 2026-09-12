@@ -64,6 +64,7 @@ import { Toolbar } from "../workspace/Toolbar";
 import type { ArmablePickTool, PickTool } from "../../types/tools";
 import { useCutoutStyles } from "../../hooks/useCutoutStyles";
 import { useSessionHistory } from "../../hooks/useSessionHistory";
+import { useSmartPasteSettings } from "../../hooks/useSmartPasteSettings";
 
 /**
  * The toolbar's one-line "what is happening right now" readout.
@@ -184,10 +185,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // Per-object: show the pristine cutout instead of the rotated result.
   const [showOriginalIds, setShowOriginalIds] = useState<ReadonlySet<number>>(new Set());
 
-  const [smartPaste, setSmartPaste] = useState(false);
-  const [scaleByPov, setScaleByPov] = useState(true);
-  const [smartRotate, setSmartRotate] = useState(true);
-  const [autoGenerate3d, setAutoGenerate3d] = useState(false);
   const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
   const [isCopyingRoom, setIsCopyingRoom] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -215,6 +212,29 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     },
     [conflictNotices],
   );
+
+  const startMapsWarm = useCallback(() => {
+    if (warmedSessionIds.has(uid)) {
+      setMapsWarming(false);
+      return;
+    }
+    const generation = ++mapsWarmGenerationRef.current;
+    setMapsWarming(true);
+    void warmSessionMaps(uid)
+      .then(() => {
+        warmedSessionIds.add(uid);
+      })
+      .catch((err: unknown) => {
+        console.warn("Session map warm failed (non-fatal); first cut may be slower.", err);
+      })
+      .finally(() => {
+        if (mapsWarmGenerationRef.current === generation) {
+          setMapsWarming(false);
+        }
+      });
+  }, [uid]);
+
+  const smartPaste = useSmartPasteSettings({ onEnabled: startMapsWarm });
 
   // useSessionSync needs jobs' setters, and jobs' onMutated needs to trigger a
   // sync check — a ref breaks the circular dependency between the two hooks.
@@ -279,13 +299,13 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     onError: handleJobError,
     onMutated: handleMutated,
     onConflict: handleJobConflict,
-    autoGenerate3d,
+    autoGenerate3d: smartPaste.autoGenerate3d,
   });
 
   const armedBatch = useArmedBatch({
     imageId,
     naturalSize,
-    autoGenerate3d,
+    autoGenerate3d: smartPaste.autoGenerate3d,
     onMutated: handleMutated,
     onError: handleJobError,
   });
@@ -340,49 +360,14 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
   // --- session map warm ----------------------------------------------------
 
-  const startMapsWarm = useCallback(() => {
-    if (warmedSessionIds.has(uid)) {
-      setMapsWarming(false);
-      return;
-    }
-    const generation = ++mapsWarmGenerationRef.current;
-    setMapsWarming(true);
-    void warmSessionMaps(uid)
-      .then(() => {
-        warmedSessionIds.add(uid);
-      })
-      .catch((err: unknown) => {
-        console.warn("Session map warm failed (non-fatal); first cut may be slower.", err);
-      })
-      .finally(() => {
-        if (mapsWarmGenerationRef.current === generation) {
-          setMapsWarming(false);
-        }
-      });
-  }, [uid]);
-
-  const handleToggleSmartPaste = useCallback(() => {
-    setSmartPaste((on) => {
-      const next = !on;
-      if (next) {
-        startMapsWarm();
-      }
-      return next;
-    });
-  }, [startMapsWarm]);
-
-  const handleToggleScaleByPov = useCallback(() => {
-    setScaleByPov((on) => !on);
-  }, []);
-
-  const handleToggleSmartRotate = useCallback(() => {
-    setSmartRotate((on) => !on);
-  }, []);
 
   const runSmartPasteAfterDrag = useCallback(
     (objectId: number, x: number, y: number) =>
-      jobs.runSmartPasteAfterDrag(objectId, x, y, { scaleByPov, smartRotate }),
-    [jobs.runSmartPasteAfterDrag, scaleByPov, smartRotate],
+      jobs.runSmartPasteAfterDrag(objectId, x, y, {
+        scaleByPov: smartPaste.scaleByPov,
+        smartRotate: smartPaste.smartRotate,
+      }),
+    [jobs.runSmartPasteAfterDrag, smartPaste.scaleByPov, smartPaste.smartRotate],
   );
 
   // --- session load -------------------------------------------------------
@@ -525,7 +510,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     renderedRect,
     getFocusZoomScale: () => focusZoomRef.current.scale,
     showOriginalIds,
-    smartPasteEnabled: smartPaste,
+    smartPasteEnabled: smartPaste.enabled,
     updateOffset: jobs.updateOffset,
     runSmartPasteAfterDrag,
     onSettled: capturePreview,
@@ -1276,64 +1261,59 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   return (
     <div className="workspace">
       <Toolbar
-        sessionName={sessionName}
-        onSessionNameChange={setSessionName}
-        onSessionNameKeyDown={handleSessionNameKeyDown}
-        onBack={onExit}
-        hasSelection={jobs.selectedObjectId !== null}
-        cutMode={tool === "cut"}
-        onCut={handleCut}
-        multiPoint={multiPoint}
-        onToggleMultiPoint={handleToggleMultiPoint}
-        hasPendingSegmentSeeds={pendingSeeds.length > 0}
-        onUndoLastSeed={handleUndoLastSeed}
-        areaMode={tool === "area"}
-        onArea={handleArea}
-        eraserMode={tool === "erase"}
-        onEraser={handleEraser}
-        hasPendingEraseRegions={pendingEraseRegions.length > 0}
-        batchMode={armedBatch.batchMode}
-        onToggleBatchMode={handleToggleBatchMode}
-        armedQueueCount={armedBatch.jobs.length}
-        queuePanelOpen={armedBatch.panelOpen}
-        onToggleQueuePanel={() => armedBatch.setPanelOpen((open) => !open)}
-        batchBusy={jobs.isBatching || armedBatch.isApproving}
-        hasPendingBatch={
-          armedBatch.batchMode
+        session={{
+          name: sessionName,
+          onNameChange: setSessionName,
+          onNameKeyDown: handleSessionNameKeyDown,
+          onBack: onExit,
+          isCopyingRoom,
+          onCopyRoom: () => void handleCopyRoom(),
+          hasSnapshot: Boolean(naturalSize && (jobs.backgroundSrc ?? originalSrc)),
+          isSavingSnapshot,
+          onDownloadSnapshot: () => void handleDownloadSnapshot(),
+          status,
+        }}
+        picking={{
+          cutMode: tool === "cut",
+          onCut: handleCut,
+          multiPoint,
+          onToggleMultiPoint: handleToggleMultiPoint,
+          hasPendingSegmentSeeds: pendingSeeds.length > 0,
+          onUndoLastSeed: handleUndoLastSeed,
+          areaMode: tool === "area",
+          onArea: handleArea,
+          eraserMode: tool === "erase",
+          onEraser: handleEraser,
+          hasPendingEraseRegions: pendingEraseRegions.length > 0,
+        }}
+        batch={{
+          batchMode: armedBatch.batchMode,
+          onToggleBatchMode: handleToggleBatchMode,
+          armedQueueCount: armedBatch.jobs.length,
+          queuePanelOpen: armedBatch.panelOpen,
+          onToggleQueuePanel: () => armedBatch.setPanelOpen((open) => !open),
+          busy: jobs.isBatching || armedBatch.isApproving,
+          hasPending: armedBatch.batchMode
             ? armedBatch.jobs.length > 0 || pendingSeeds.length > 0
             : pendingBatchSource !== null ||
               pendingSeeds.length > 0 ||
-              pendingEraseRegions.length > 0
-        }
-        onSubmitBatch={handleSubmitPendingBatch}
-        verifyMode={verifyMode}
-        onVerifyModeChange={setVerifyMode}
-        rotateMode={rotation.rotateMode}
-        isPreparing3D={rotation.isPreparing3D || Boolean(rotation.activeGenerate3DJobId)}
-        onRotate={rotation.handleRotate}
-        isDuplicating={jobs.isDuplicating}
-        onCopy={handleCopy}
+              pendingEraseRegions.length > 0,
+          onSubmit: handleSubmitPendingBatch,
+          verifyMode,
+          onVerifyModeChange: setVerifyMode,
+        }}
+        object={{
+          hasSelection: jobs.selectedObjectId !== null,
+          rotateMode: rotation.rotateMode,
+          isPreparing3D: rotation.isPreparing3D || Boolean(rotation.activeGenerate3DJobId),
+          onRotate: rotation.handleRotate,
+          isDuplicating: jobs.isDuplicating,
+          onCopy: handleCopy,
+          isDeleting: jobs.isDeleting,
+          onDelete: handleDeleteObject,
+        }}
         smartPaste={smartPaste}
-        onToggleSmartPaste={handleToggleSmartPaste}
-        scaleByPov={scaleByPov}
-        onToggleScaleByPov={handleToggleScaleByPov}
-        smartRotate={smartRotate}
-        onToggleSmartRotate={handleToggleSmartRotate}
-        autoGenerate3d={autoGenerate3d}
-        onToggleAutoGenerate3d={() => setAutoGenerate3d((on) => !on)}
-        isDeleting={jobs.isDeleting}
-        onDeleteObject={handleDeleteObject}
-        isCopyingRoom={isCopyingRoom}
-        onCopyRoom={() => void handleCopyRoom()}
-        canUndo={history.canUndo}
-        canRedo={history.canRedo}
-        historyBusy={history.busy}
-        onBacktrack={history.backtrack}
-        onForward={history.forward}
-        hasSnapshot={Boolean(naturalSize && (jobs.backgroundSrc ?? originalSrc))}
-        isSavingSnapshot={isSavingSnapshot}
-        onDownloadSnapshot={() => void handleDownloadSnapshot()}
-        status={status}
+        history={history}
       />
 
       <main

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 
+import type { SmartPasteSettings } from "../../hooks/useSmartPasteSettings";
 import type { VerifyMode } from "../../types/api";
 import {
   AreaIcon,
@@ -21,12 +22,23 @@ import {
   TrashIcon,
 } from "../icons";
 
-export interface ToolbarProps {
-  sessionName: string;
-  onSessionNameChange: (name: string) => void;
-  onSessionNameKeyDown: React.KeyboardEventHandler<HTMLInputElement>;
+/** Room identity and whole-room actions: the left end of the bar, plus status. */
+export interface ToolbarSession {
+  name: string;
+  onNameChange: (name: string) => void;
+  onNameKeyDown: React.KeyboardEventHandler<HTMLInputElement>;
   onBack: () => void;
-  hasSelection: boolean;
+  isCopyingRoom: boolean;
+  onCopyRoom: () => void;
+  hasSnapshot: boolean;
+  isSavingSnapshot: boolean;
+  onDownloadSnapshot: () => void;
+  /** Short readout of in-flight work, e.g. "removing 2". Null when idle. */
+  status: string | null;
+}
+
+/** The tools that arm a gesture on the photo. Only one is ever armed. */
+export interface ToolbarPicking {
   /** Scissors is armed: the next click on the photo starts a cutout. */
   cutMode: boolean;
   onCut: () => void;
@@ -39,47 +51,62 @@ export interface ToolbarProps {
   eraserMode: boolean;
   onEraser: () => void;
   hasPendingEraseRegions: boolean;
+}
+
+/** Arming several operations before approving them in one go. */
+export interface ToolbarBatch {
   batchMode: boolean;
   onToggleBatchMode: () => void;
   armedQueueCount: number;
   queuePanelOpen: boolean;
   onToggleQueuePanel: () => void;
-  batchBusy: boolean;
+  busy: boolean;
   /** A box batch or multi-point seeds are staged and waiting for submit. */
-  hasPendingBatch: boolean;
-  onSubmitBatch: () => void;
+  hasPending: boolean;
+  onSubmit: () => void;
   /** CLIP vs picker for the next cutout. */
   verifyMode: VerifyMode;
   onVerifyModeChange: (mode: VerifyMode) => void;
+}
+
+/** Actions scoped to whichever object is selected. */
+export interface ToolbarObject {
+  hasSelection: boolean;
   /** The 3D angle picker is open; pressing rotate again applies the angle. */
   rotateMode: boolean;
   isPreparing3D: boolean;
   onRotate: () => void;
   isDuplicating: boolean;
   onCopy: () => void;
-  smartPaste: boolean;
-  onToggleSmartPaste: () => void;
-  scaleByPov: boolean;
-  onToggleScaleByPov: () => void;
-  smartRotate: boolean;
-  onToggleSmartRotate: () => void;
-  autoGenerate3d: boolean;
-  onToggleAutoGenerate3d: () => void;
   isDeleting: boolean;
-  onDeleteObject: () => void;
-  /** Copy the whole room into the same project. */
-  isCopyingRoom: boolean;
-  onCopyRoom: () => void;
+  onDelete: () => void;
+}
+
+/** Backtrack / forward through the room's background history. */
+export interface ToolbarHistory {
   canUndo: boolean;
   canRedo: boolean;
-  historyBusy: boolean;
-  onBacktrack: () => void;
-  onForward: () => void;
-  hasSnapshot: boolean;
-  isSavingSnapshot: boolean;
-  onDownloadSnapshot: () => void;
-  /** Short readout of in-flight work, e.g. "removing 2". Null when idle. */
-  status: string | null;
+  busy: boolean;
+  backtrack: () => void;
+  forward: () => void;
+}
+
+/**
+ * Six groups rather than the 53 flat props this used to take.
+ *
+ * The grouping is not cosmetic: each one matches a visible section of the
+ * bar, and `history` and `smartPaste` are exactly the shapes
+ * `useSessionHistory` and `useSmartPasteSettings` already return, so the
+ * call site passes them straight through instead of unpacking and
+ * re-packing every field.
+ */
+export interface ToolbarProps {
+  session: ToolbarSession;
+  picking: ToolbarPicking;
+  batch: ToolbarBatch;
+  object: ToolbarObject;
+  smartPaste: SmartPasteSettings;
+  history: ToolbarHistory;
 }
 
 /**
@@ -88,59 +115,73 @@ export interface ToolbarProps {
  * object is selected rather than disappearing, so the row never reflows.
  */
 export const Toolbar: React.FC<ToolbarProps> = ({
-  sessionName,
-  onSessionNameChange,
-  onSessionNameKeyDown,
-  onBack,
-  hasSelection,
-  cutMode,
-  onCut,
-  multiPoint,
-  onToggleMultiPoint,
-  hasPendingSegmentSeeds,
-  onUndoLastSeed,
-  areaMode,
-  onArea,
-  eraserMode,
-  onEraser,
-  hasPendingEraseRegions,
-  batchMode,
-  onToggleBatchMode,
-  armedQueueCount,
-  queuePanelOpen,
-  onToggleQueuePanel,
-  batchBusy,
-  hasPendingBatch,
-  onSubmitBatch,
-  verifyMode,
-  onVerifyModeChange,
-  rotateMode,
-  isPreparing3D,
-  onRotate,
-  isDuplicating,
-  onCopy,
-  smartPaste,
-  onToggleSmartPaste,
-  scaleByPov,
-  onToggleScaleByPov,
-  smartRotate,
-  onToggleSmartRotate,
-  autoGenerate3d,
-  onToggleAutoGenerate3d,
-  isDeleting,
-  onDeleteObject,
-  isCopyingRoom,
-  onCopyRoom,
-  canUndo,
-  canRedo,
-  historyBusy,
-  onBacktrack,
-  onForward,
-  hasSnapshot,
-  isSavingSnapshot,
-  onDownloadSnapshot,
-  status,
+  session,
+  picking,
+  batch,
+  object,
+  smartPaste: paste,
+  history,
 }) => {
+  // Unpacked so the markup below reads exactly as it did when these arrived
+  // as 53 separate props; the grouping is for the call site's benefit.
+  const {
+    name: sessionName,
+    onNameChange: onSessionNameChange,
+    onNameKeyDown: onSessionNameKeyDown,
+    onBack,
+    isCopyingRoom,
+    onCopyRoom,
+    hasSnapshot,
+    isSavingSnapshot,
+    onDownloadSnapshot,
+    status,
+  } = session;
+  const {
+    cutMode,
+    onCut,
+    multiPoint,
+    onToggleMultiPoint,
+    hasPendingSegmentSeeds,
+    onUndoLastSeed,
+    areaMode,
+    onArea,
+    eraserMode,
+    onEraser,
+    hasPendingEraseRegions,
+  } = picking;
+  const {
+    batchMode,
+    onToggleBatchMode,
+    armedQueueCount,
+    queuePanelOpen,
+    onToggleQueuePanel,
+    busy: batchBusy,
+    hasPending: hasPendingBatch,
+    onSubmit: onSubmitBatch,
+    verifyMode,
+    onVerifyModeChange,
+  } = batch;
+  const {
+    hasSelection,
+    rotateMode,
+    isPreparing3D,
+    onRotate,
+    isDuplicating,
+    onCopy,
+    isDeleting,
+    onDelete: onDeleteObject,
+  } = object;
+  const {
+    enabled: smartPaste,
+    scaleByPov,
+    smartRotate,
+    autoGenerate3d,
+    toggleEnabled: onToggleSmartPaste,
+    toggleScaleByPov: onToggleScaleByPov,
+    toggleSmartRotate: onToggleSmartRotate,
+    toggleAutoGenerate3d: onToggleAutoGenerate3d,
+  } = paste;
+  const { canUndo, canRedo, busy: historyBusy, backtrack: onBacktrack, forward: onForward } = history;
   const objectToolsDisabled = !hasSelection;
   const historyDisabled = historyBusy || Boolean(status);
   const [settingsOpen, setSettingsOpen] = useState(false);

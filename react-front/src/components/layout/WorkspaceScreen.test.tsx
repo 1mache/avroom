@@ -51,9 +51,16 @@ vi.mock("../../api/images", async (importOriginal) => {
 
 const { WorkspaceScreen } = await import("./WorkspaceScreen");
 
-/** Mount and wait for the session-load effect to settle. */
-async function mountWorkspace() {
-  const view = render(<WorkspaceScreen uid="sess-1" onExit={() => {}} />);
+/**
+ * Mount and wait for the session-load effect to settle.
+ *
+ * `uid` is overridable because the component keeps a module-level set of
+ * already-warmed session ids, which survives unmount by design — a test that
+ * needs to observe the warming overlay has to use a session id no earlier
+ * test has warmed.
+ */
+async function mountWorkspace(uid = "sess-1") {
+  const view = render(<WorkspaceScreen uid={uid} onExit={() => {}} />);
   await waitFor(() => expect(getUidCacheStatus).toHaveBeenCalled());
   return view;
 }
@@ -248,5 +255,62 @@ describe("WorkspaceScreen room history", () => {
     await user.keyboard("{Control>}z{/Control}");
 
     expect(undoSessionBackground).not.toHaveBeenCalled();
+  });
+});
+
+describe("WorkspaceScreen chrome", () => {
+  it("renders the stage with the room photo", async () => {
+    await mountWorkspace();
+
+    const photo = document.querySelector(".stage-photo");
+    expect(photo).toBeInTheDocument();
+    expect(photo).toHaveAttribute("src", expect.stringContaining("/images/sess-1/original"));
+  });
+
+  it("covers the stage while depth maps warm, and uncovers when they finish", async () => {
+    let finishWarm: () => void = () => {};
+    warmSessionMaps.mockImplementation(
+      () => new Promise<Record<string, never>>((resolve) => {
+        finishWarm = () => resolve({});
+      }),
+    );
+
+    await mountWorkspace("sess-never-warmed");
+    expect(document.querySelector(".stage-warm-overlay")).toBeInTheDocument();
+
+    finishWarm();
+
+    await waitFor(() =>
+      expect(document.querySelector(".stage-warm-overlay")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("shows the object rail", async () => {
+    await mountWorkspace();
+    expect(document.querySelector(".rail")).toBeInTheDocument();
+  });
+
+  it("surfaces a failed history step in the error modal, and closes it", async () => {
+    const user = userEvent.setup();
+    undoSessionBackground.mockRejectedValueOnce(new Error("Backend exploded"));
+    getUidCacheStatus.mockImplementation(async () => ({ ...cacheStatus, can_undo: true }));
+    await mountWorkspace();
+    await waitFor(() => expect(tool(UNDO)).toBeEnabled());
+
+    await user.click(tool(UNDO));
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent(/Backend exploded/);
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+  });
+
+  it("shows no modal and no notices on a clean load", async () => {
+    await mountWorkspace();
+
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(document.querySelector(".notice-stack")).not.toBeInTheDocument();
   });
 });

@@ -2,6 +2,13 @@ from __future__ import annotations
 
 """End-to-end harness for the depth-based rescale feature.
 
+Not a pytest module, despite having lived in ``tests/`` under a ``test_``
+name until it was moved here: it takes command-line arguments, needs real
+saved sessions on disk, and reports through its own ``Checklist`` rather than
+assertions. pytest collected zero tests from it, so the rescale path it
+covers had no automated cover at all -- turning this into real pytest cases
+with fixtures is still worth doing.
+
 Picks a saved session and one of its object cutouts from the configured image
 storage directory, copies that session's artifacts into a throwaway sandbox,
 and drives ``POST /images/objects/{uuid}/rescale-by-depth`` through the real
@@ -23,10 +30,10 @@ Before/after cutouts and composites over the session background are written to
 
 Run from the repo root with the project virtualenv::
 
-    .venv/Scripts/python.exe fastApi-app/tests/test_rescale_by_depth.py
-    .venv/Scripts/python.exe fastApi-app/tests/test_rescale_by_depth.py --list
-    .venv/Scripts/python.exe fastApi-app/tests/test_rescale_by_depth.py --session <uid> --object-id 0
-    .venv/Scripts/python.exe fastApi-app/tests/test_rescale_by_depth.py --x 800 --y 1200 --keep
+    .venv/Scripts/python.exe fastApi-app/scripts/rescale_by_depth_harness.py
+    .venv/Scripts/python.exe fastApi-app/scripts/rescale_by_depth_harness.py --list
+    .venv/Scripts/python.exe fastApi-app/scripts/rescale_by_depth_harness.py --session <uid> --object-id 0
+    .venv/Scripts/python.exe fastApi-app/scripts/rescale_by_depth_harness.py --x 800 --y 1200 --keep
 """
 
 import argparse

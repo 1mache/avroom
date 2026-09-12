@@ -9,9 +9,9 @@ flowchart LR
     user(["User in browser"])
     spa["React SPA<br/>react-front/"]
     api["FastAPI service<br/>fastApi-app/"]
-    pipeline["avroom_object_removal<br/>TestModules/src/"]
+    pipeline["avroom_object_removal<br/>ai-pipeline/src/"]
     storage[("images/<br/>fastApi-app/tmp/images/")]
-    outputs[("debug outputs<br/>TestModules/outputs/")]
+    outputs[("debug outputs<br/>ai-pipeline/outputs/")]
 
     user -->|HTTP| spa
     spa -->|"POST /images/upload<br/>POST /images/segment<br/>POST /images/inpaint<br/>GET /images/{uid}/objects<br/>POST /3d/test-3d"| api
@@ -39,11 +39,11 @@ flowchart LR
 - Performs the actual segmentation/inpainting by calling the AI pipeline directly from [`fastApi-app/core/image_processing.py`](../fastApi-app/core/image_processing.py).
 - See [backend/](backend/README.md) for details.
 
-### AI pipeline — [TestModules/](../TestModules/)
+### AI pipeline — [ai-pipeline/](../ai-pipeline/)
 
-- Distributed as Python package `avroom_object_removal` (sources under `TestModules/src/`, imported as `avroom_object_removal.*`).
-- Installed editable via the root [`requirements.txt`](../requirements.txt) line 1: `-e ./TestModules`.
-- Public surface is `ObjectRemover` plus four per-domain Facades (`DepthMappingFacade`, `ImageSegmentationFacade`, `ImageInpaintingFacade`, `Reconstruction3DFacade`) and their Strategy ABCs — all re-exported from [`TestModules/src/__init__.py`](../TestModules/src/__init__.py).
+- Distributed as Python package `avroom_object_removal` (sources under `ai-pipeline/src/`, imported as `avroom_object_removal.*`).
+- Installed editable via the root [`requirements.txt`](../requirements.txt) line 1: `-e ./ai-pipeline`.
+- Public surface is `ObjectRemover` plus four per-domain Facades (`DepthMappingFacade`, `ImageSegmentationFacade`, `ImageInpaintingFacade`, `Reconstruction3DFacade`) and their Strategy ABCs — all re-exported from [`ai-pipeline/src/__init__.py`](../ai-pipeline/src/__init__.py).
 - `ObjectRemover.remove_object` still supports the legacy one-step path. Normal app flow now uses `ObjectSegmentor` for candidate masks, then `BackgroundInpainter` after user chooses one.
 - `Reconstruction3DFacade` is a separate surface for image-to-3D (GLB), not invoked by `ObjectRemover`. By default it uses **Hunyuan3D-2.1** (`Hunyuan3D2ReconstructionStrategy`, a Hugging Face Space via `gradio_client`), with automatic fallback to **TripoSR** (`TriposrReconstructionStrategy`) if the Space call fails; other strategies (OpenLRM, Trellis, VFusion3D) can be injected explicitly. It runs from `POST /3d/test-3d` and `POST /images/novel-view` (dispatched through `core/inference_pool`) — not from the `/images/click`/`/images/inpaint` object-removal path.
 - See [ai-pipeline/](ai-pipeline/README.md) for details.
@@ -79,7 +79,7 @@ The backend ↔ pipeline contract is now split:
 - The frontend builds to static assets via `vite build`; in dev, `npm run dev` (port 5173) talks to a local FastAPI (port 8000 by default).
 - The FastAPI service runs as a normal ASGI app (`main:app` per [`fastApi-app/pyproject.toml`](../fastApi-app/pyproject.toml)). It needs CUDA + torch + the SAM checkpoint to actually run inference, otherwise the pipeline import will succeed but the call will fail at SAM/SD load time.
 - GPU work runs **inline** by default (`INFERENCE_WORKERS=0`) or in an optional **worker pool** (`INFERENCE_WORKERS=N`). Same-session canvas writer and region leases always live in the API process — see [backend/concurrency.md](backend/concurrency.md).
-- The AI pipeline writes debug PNGs to `TestModules/outputs/` during every call (see [ai-pipeline/core/README.md](ai-pipeline/core/README.md)).
+- The AI pipeline writes debug PNGs to `ai-pipeline/outputs/` during every call (see [ai-pipeline/core/README.md](ai-pipeline/core/README.md)).
 
 ## Where to read next
 

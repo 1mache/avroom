@@ -1,4 +1,4 @@
--e ./TestModules
+-e ./ai-pipeline
 accelerate==1.13.0
 alembic==1.14.0
 annotated-doc==0.0.4

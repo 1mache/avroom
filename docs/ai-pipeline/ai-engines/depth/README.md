@@ -6,7 +6,7 @@
 
 **In one line:** Two Depth Anything variants blended so walls and foreground stay coherent without harsh seams.
 
-Code: [`TestModules/src/ai_engines/depth/`](../../../../TestModules/src/ai_engines/depth/).
+Code: [`ai-pipeline/src/ai_engines/depth/`](../../../../ai-pipeline/src/ai_engines/depth/).
 
 ## Detail pages
 

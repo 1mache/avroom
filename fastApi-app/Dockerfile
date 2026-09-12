@@ -2,7 +2,7 @@
 # built React SPA served from the same origin.
 #
 # Build context is the REPO ROOT, not fastApi-app/ (requirements.txt and
-# TestModules/ live there). docker-compose.yml's `api` service already sets
+# ai-pipeline/ live there). docker-compose.yml's `api` service already sets
 # `context: .` accordingly.
 
 # ---------------------------------------------------------------------------
@@ -58,7 +58,7 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HOME=/root/.cache/huggingface
 
 # System libraries, each for a specific dependency:
-#   git             - requirements.txt has `geocalib @ git+...` and TestModules
+#   git             - requirements.txt has `geocalib @ git+...` and ai-pipeline
 #                     has `torchmcubes @ git+...`
 #   build-essential - torchmcubes compiles a C++ extension at install time
 #   libgl1, libglib2.0-0 - opencv-python
@@ -103,8 +103,8 @@ RUN pip install --no-cache-dir \
 # Dependency layer: copy only what pip reads, so editing application code does
 # not invalidate the (very slow) dependency install.
 COPY requirements.txt ./
-COPY TestModules/pyproject.toml ./TestModules/
-COPY TestModules/src/ ./TestModules/src/
+COPY ai-pipeline/pyproject.toml ./ai-pipeline/
+COPY ai-pipeline/src/ ./ai-pipeline/src/
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Application code.

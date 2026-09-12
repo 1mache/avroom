@@ -11,7 +11,7 @@
 | `MAX_COMPOSE_DILATE_PER_RETRY` | `12` | Safety cap on AI-requested compose paste expansion per retry |
 | `MAX_CUMULATIVE_MASK_DILATE` | `32` | Total inpaint mask expansion allowed across retries |
 
-Restart uvicorn (or inference workers) after editing `TestModules/` — `--reload` watches `fastApi-app/` only.
+Restart uvicorn (or inference workers) after editing `ai-pipeline/` — `--reload` watches `fastApi-app/` only.
 
 ## Gemini
 
@@ -23,4 +23,4 @@ Reuses `openai/clip-vit-base-patch32` via content-validation `score_labels`. Inj
 
 ## Tests
 
-- [`TestModules/tests/test_inpainting_verification.py`](../../../../TestModules/tests/test_inpainting_verification.py)
+- [`ai-pipeline/tests/test_inpainting_verification.py`](../../../../ai-pipeline/tests/test_inpainting_verification.py)

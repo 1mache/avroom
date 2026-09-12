@@ -233,6 +233,6 @@ These don't live in `settings.py`, but the AI pipeline reads them at runtime:
 - `SAM_AUTO_DOWNLOAD` — set to `0`/`false`/`no` to disable the download fallback.
 - `SAM_CHECKPOINT_URL` — override the default `dl.fbaipublicfiles.com` URL.
 
-Source: [`sam_segmentation_strategy.py`](../../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) lines 29–62.
+Source: [`sam_segmentation_strategy.py`](../../ai-pipeline/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) lines 29–62.
 
 `DEBUG_ENDPOINTS` **does** live in `settings.py` — `get_debug_endpoints_enabled()` (`_env_bool("DEBUG_ENDPOINTS", True)`) gates the `/debug` router; see [api-endpoints.md](api-endpoints.md#debug-endpoints).

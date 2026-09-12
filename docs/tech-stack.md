@@ -4,7 +4,7 @@ Concrete versions of every meaningful dependency. Numbers come from the lockfile
 
 ## Languages and runtimes
 
-- **Python**: `>=3.11` (declared in [`TestModules/pyproject.toml`](../TestModules/pyproject.toml) line 9).
+- **Python**: `>=3.11` (declared in [`ai-pipeline/pyproject.toml`](../ai-pipeline/pyproject.toml) line 9).
 - **TypeScript**: `~5.9.3` (dev dep in [`react-front/package.json`](../react-front/package.json) line 12).
 - **Node.js**: not pinned in the repo; whatever Vite 5 supports.
 
@@ -67,20 +67,20 @@ The root [`requirements.txt`](../requirements.txt) is the canonical source. High
 
 | Package | Version | Used by |
 |---|---|---|
-| `segment-anything` | `1.0` | [`SamSegmentationStrategy`](../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) |
-| `simple-lama-inpainting` | `0.1.2` | [`LamaInpaintingStrategy`](../TestModules/src/ai_engines/inpainting/strategies/lama_inpainting_strategy.py) |
-| `gradio_client` | `>=1.4` | [`Hunyuan3D2ReconstructionStrategy`](../TestModules/src/ai_engines/reconstruction_3d/strategies/hunyuan3d2_reconstruction_strategy.py) (default 3D backend) and [`TrellisReconstructionStrategy`](../TestModules/src/ai_engines/reconstruction_3d/strategies/trellis_reconstruction_strategy.py) (optional, explicit injection only) |
+| `segment-anything` | `1.0` | [`SamSegmentationStrategy`](../ai-pipeline/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) |
+| `simple-lama-inpainting` | `0.1.2` | [`LamaInpaintingStrategy`](../ai-pipeline/src/ai_engines/inpainting/strategies/lama_inpainting_strategy.py) |
+| `gradio_client` | `>=1.4` | [`Hunyuan3D2ReconstructionStrategy`](../ai-pipeline/src/ai_engines/reconstruction_3d/strategies/hunyuan3d2_reconstruction_strategy.py) (default 3D backend) and [`TrellisReconstructionStrategy`](../ai-pipeline/src/ai_engines/reconstruction_3d/strategies/trellis_reconstruction_strategy.py) (optional, explicit injection only) |
 | `imageio[ffmpeg]` | `>=2.31.0` | Vendored OpenLRM imports (`_backends/openlrm_v10/lrm/`) |
-| `PyMCubes` | `>=0.1.4` | [`OpenLrmReconstructionStrategy`](../TestModules/src/ai_engines/reconstruction_3d/strategies/openlrm_reconstruction_strategy.py) (marching cubes) |
-| `trimesh` | `>=4.0.0` | [`OpenLrmReconstructionStrategy`](../TestModules/src/ai_engines/reconstruction_3d/strategies/openlrm_reconstruction_strategy.py) (mesh I/O + GLB) |
+| `PyMCubes` | `>=0.1.4` | [`OpenLrmReconstructionStrategy`](../ai-pipeline/src/ai_engines/reconstruction_3d/strategies/openlrm_reconstruction_strategy.py) (marching cubes) |
+| `trimesh` | `>=4.0.0` | [`OpenLrmReconstructionStrategy`](../ai-pipeline/src/ai_engines/reconstruction_3d/strategies/openlrm_reconstruction_strategy.py) (mesh I/O + GLB) |
 
 ### Local package
 
 ```1:1:requirements.txt
--e ./TestModules
+-e ./ai-pipeline
 ```
 
-Installs `avroom_object_removal` editable (sources in `TestModules/src/`). The package owns the depth, segmentation, inpainting, and 3D reconstruction domains; there is no longer a separate Trellis package — see [ai-pipeline/ai-engines/reconstruction-3d/README.md](ai-pipeline/ai-engines/reconstruction-3d/README.md).
+Installs `avroom_object_removal` editable (sources in `ai-pipeline/src/`). The package owns the depth, segmentation, inpainting, and 3D reconstruction domains; there is no longer a separate Trellis package — see [ai-pipeline/ai-engines/reconstruction-3d/README.md](ai-pipeline/ai-engines/reconstruction-3d/README.md).
 
 ## AI models (downloaded at runtime)
 
@@ -88,21 +88,21 @@ These are **not** Python packages — they're pulled from Hugging Face / Faceboo
 
 | Model | Used as | Source |
 |---|---|---|
-| `depth-anything/Depth-Anything-V2-Small-hf` | Near-field depth | [`NearFarBlendedDepthMappingStrategy.DEFAULT_NEAR_MODEL`](../TestModules/src/ai_engines/depth/strategies/near_far_blended_depth_mapping_strategy.py) line 30 |
-| `LiheYoung/depth-anything-small-hf` | Far-field depth + default | [`NearFarBlendedDepthMappingStrategy.DEFAULT_FAR_MODEL`](../TestModules/src/ai_engines/depth/strategies/near_far_blended_depth_mapping_strategy.py) line 31, [`DepthAnythingMappingStrategy.DEFAULT_MODEL`](../TestModules/src/ai_engines/depth/strategies/depth_anything_mapping_strategy.py) line 40 |
-| `sam_vit_b_01ec64.pth` (SAM ViT-B) | Segmentation | [`SamSegmentationStrategy`](../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) lines 19–20, default URL `https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth` |
-| `runwayml/stable-diffusion-inpainting` | Texture refinement | [`StableDiffusionInpaintingStrategy`](../TestModules/src/ai_engines/inpainting/strategies/stable_diffusion_inpainting_strategy.py) line 16 |
-| LaMa weights (bundled with `simple_lama_inpainting`) | Structural inpainting | [`LamaInpaintingStrategy._load_simple_lama`](../TestModules/src/ai_engines/inpainting/strategies/lama_inpainting_strategy.py) lines 16–25 |
-| `es3d-fi/hunyuan3d-2-1` (HF Space, mirror of `tencent/Hunyuan3D-2.1`, image-to-3D) | Default 3D reconstruction backend, used from `POST /3d/test-3d` and `POST /images/novel-view` | [`Hunyuan3D2ReconstructionStrategy.DEFAULT_SPACE_ID`](../TestModules/src/ai_engines/reconstruction_3d/strategies/hunyuan3d2_reconstruction_strategy.py) line 155 |
-| `stabilityai/TripoSR` (HF weights + config) | Automatic fallback 3D reconstruction if the Hunyuan3D-2.1 Space call fails | [`TriposrReconstructionStrategy`](../TestModules/src/ai_engines/reconstruction_3d/strategies/triposr_reconstruction_strategy.py) lines 94–116 |
+| `depth-anything/Depth-Anything-V2-Small-hf` | Near-field depth | [`NearFarBlendedDepthMappingStrategy.DEFAULT_NEAR_MODEL`](../ai-pipeline/src/ai_engines/depth/strategies/near_far_blended_depth_mapping_strategy.py) line 30 |
+| `LiheYoung/depth-anything-small-hf` | Far-field depth + default | [`NearFarBlendedDepthMappingStrategy.DEFAULT_FAR_MODEL`](../ai-pipeline/src/ai_engines/depth/strategies/near_far_blended_depth_mapping_strategy.py) line 31, [`DepthAnythingMappingStrategy.DEFAULT_MODEL`](../ai-pipeline/src/ai_engines/depth/strategies/depth_anything_mapping_strategy.py) line 40 |
+| `sam_vit_b_01ec64.pth` (SAM ViT-B) | Segmentation | [`SamSegmentationStrategy`](../ai-pipeline/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) lines 19–20, default URL `https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth` |
+| `runwayml/stable-diffusion-inpainting` | Texture refinement | [`StableDiffusionInpaintingStrategy`](../ai-pipeline/src/ai_engines/inpainting/strategies/stable_diffusion_inpainting_strategy.py) line 16 |
+| LaMa weights (bundled with `simple_lama_inpainting`) | Structural inpainting | [`LamaInpaintingStrategy._load_simple_lama`](../ai-pipeline/src/ai_engines/inpainting/strategies/lama_inpainting_strategy.py) lines 16–25 |
+| `es3d-fi/hunyuan3d-2-1` (HF Space, mirror of `tencent/Hunyuan3D-2.1`, image-to-3D) | Default 3D reconstruction backend, used from `POST /3d/test-3d` and `POST /images/novel-view` | [`Hunyuan3D2ReconstructionStrategy.DEFAULT_SPACE_ID`](../ai-pipeline/src/ai_engines/reconstruction_3d/strategies/hunyuan3d2_reconstruction_strategy.py) line 155 |
+| `stabilityai/TripoSR` (HF weights + config) | Automatic fallback 3D reconstruction if the Hunyuan3D-2.1 Space call fails | [`TriposrReconstructionStrategy`](../ai-pipeline/src/ai_engines/reconstruction_3d/strategies/triposr_reconstruction_strategy.py) lines 94–116 |
 | `zxhezexin/openlrm-small-obj-1.0` (HF weights + config) | Optional 3D reconstruction strategy (explicit injection only) | [reconstruction-3d/operations.md](ai-pipeline/ai-engines/reconstruction-3d/operations.md) — cache dirs and `OPENLRM_WEIGHT_CACHE` |
-| `microsoft/TRELLIS.2` (HF Space, image-to-3D) | Optional 3D reconstruction strategy (explicit injection only, never constructed by the facade default or fallback) | [`TrellisReconstructionStrategy.DEFAULT_SPACE_ID`](../TestModules/src/ai_engines/reconstruction_3d/strategies/trellis_reconstruction_strategy.py) line 36 |
+| `microsoft/TRELLIS.2` (HF Space, image-to-3D) | Optional 3D reconstruction strategy (explicit injection only, never constructed by the facade default or fallback) | [`TrellisReconstructionStrategy.DEFAULT_SPACE_ID`](../ai-pipeline/src/ai_engines/reconstruction_3d/strategies/trellis_reconstruction_strategy.py) line 36 |
 
-SAM checkpoint resolution order is `SAM_CHECKPOINT_PATH` env var → `TestModules/checkpoints/sam_vit_b_01ec64.pth` → auto-download (unless `SAM_AUTO_DOWNLOAD=0`). Heavy model loads (depth pipeline, SAM predictor, LaMa, SD pipe) are each cached behind a module-level `functools.lru_cache(maxsize=1)`/`maxsize=4` factory so they're loaded exactly once per process. The OpenLRM inferrer is also lazy-loaded behind `functools.lru_cache(maxsize=1)` in [`openlrm_reconstruction_strategy.py`](../TestModules/src/ai_engines/reconstruction_3d/strategies/openlrm_reconstruction_strategy.py) lines 40–49.
+SAM checkpoint resolution order is `SAM_CHECKPOINT_PATH` env var → `ai-pipeline/checkpoints/sam_vit_b_01ec64.pth` → auto-download (unless `SAM_AUTO_DOWNLOAD=0`). Heavy model loads (depth pipeline, SAM predictor, LaMa, SD pipe) are each cached behind a module-level `functools.lru_cache(maxsize=1)`/`maxsize=4` factory so they're loaded exactly once per process. The OpenLRM inferrer is also lazy-loaded behind `functools.lru_cache(maxsize=1)` in [`openlrm_reconstruction_strategy.py`](../ai-pipeline/src/ai_engines/reconstruction_3d/strategies/openlrm_reconstruction_strategy.py) lines 40–49.
 
 ## Hardware
 
-- The pipeline auto-detects CUDA. SD and SAM call `torch.cuda.is_available()` and switch between `float16`/`float32` accordingly ([`stable_diffusion_inpainting_strategy.py`](../TestModules/src/ai_engines/inpainting/strategies/stable_diffusion_inpainting_strategy.py) lines 41, 77–84, [`sam_segmentation_strategy.py`](../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) lines 107–114).
+- The pipeline auto-detects CUDA. SD and SAM call `torch.cuda.is_available()` and switch between `float16`/`float32` accordingly ([`stable_diffusion_inpainting_strategy.py`](../ai-pipeline/src/ai_engines/inpainting/strategies/stable_diffusion_inpainting_strategy.py) lines 41, 77–84, [`sam_segmentation_strategy.py`](../ai-pipeline/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) lines 107–114).
 - CPU inference works but is slow.
 
 ## Build / dev commands
@@ -113,4 +113,4 @@ SAM checkpoint resolution order is `SAM_CHECKPOINT_PATH` env var → `TestModule
 | Frontend build | `npm run build` (= `tsc && vite build`) | `react-front/` |
 | Frontend preview | `npm run preview` | `react-front/` |
 | Backend run | `uvicorn main:app --reload` | `fastApi-app/` |
-| Pipeline install | `pip install -e ./TestModules` | repo root |
+| Pipeline install | `pip install -e ./ai-pipeline` | repo root |

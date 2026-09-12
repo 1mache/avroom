@@ -6,7 +6,7 @@
 
 **In one line:** Probe tiny mask → measure depth variance on its contour → decide expand pixels and SD strength.
 
-Code: [`TestModules/src/routing/`](../../../TestModules/src/routing/).
+Code: [`ai-pipeline/src/routing/`](../../../ai-pipeline/src/routing/).
 
 ## Detail pages
 

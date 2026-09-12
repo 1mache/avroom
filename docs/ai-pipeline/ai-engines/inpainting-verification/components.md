@@ -1,6 +1,6 @@
 # Inpainting verification components
 
-Source: [`TestModules/src/ai_engines/inpainting_verification/`](../../../../TestModules/src/ai_engines/inpainting_verification/).
+Source: [`ai-pipeline/src/ai_engines/inpainting_verification/`](../../../../ai-pipeline/src/ai_engines/inpainting_verification/).
 
 ## Facade
 

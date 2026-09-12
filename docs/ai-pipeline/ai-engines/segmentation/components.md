@@ -1,6 +1,6 @@
 # Segmentation components
 
-Source: [`TestModules/src/ai_engines/segmentation/`](../../../../TestModules/src/ai_engines/segmentation/).
+Source: [`ai-pipeline/src/ai_engines/segmentation/`](../../../../ai-pipeline/src/ai_engines/segmentation/).
 
 - **`ImageSegmentationFacade`** — Public entry point. `get_mask_at_point(...)` for single-best-candidate use (core, router). `get_all_masks_for_position(...)` for all-candidate use (`ObjectSegmentor`). `get_all_masks_for_image(...)` for prompt-free "segment everything" use (`/debug/sam-everything` only).
 - **`ImageSegmentationStrategy`** — ABC with two abstract methods (`predict_mask`, `predict_all_masks`) plus one non-abstract method, `predict_everything` (default raises `NotImplementedError` — prompt-free segmentation is SAM-specific, not a general strategy capability).

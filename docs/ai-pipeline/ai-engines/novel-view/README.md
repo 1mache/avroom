@@ -12,7 +12,7 @@
 
 **In one line:** Cutout (+ optional GLB) + pose → uint8 BGRA `(H, W, 4)` novel-view image.
 
-Code: [`TestModules/src/ai_engines/novel_view/`](../../../../TestModules/src/ai_engines/novel_view/).
+Code: [`ai-pipeline/src/ai_engines/novel_view/`](../../../../ai-pipeline/src/ai_engines/novel_view/).
 
 ## Detail pages
 

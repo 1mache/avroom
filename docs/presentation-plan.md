@@ -80,14 +80,14 @@ the screenshots are the "proof".
 
 ### SLIDE 5a — The Strategy contract (screenshot)
 
-- File: [reconstruction_3d_strategy.py](ai-pipeline/../../TestModules/src/ai_engines/reconstruction_3d/reconstruction_3d_strategy.py)
+- File: [reconstruction_3d_strategy.py](ai-pipeline/../../ai-pipeline/src/ai_engines/reconstruction_3d/reconstruction_3d_strategy.py)
 - Screenshot lines **16–41**: the `Reconstruction3DStrategy` ABC — one `generate()` method,
   same signature for every backend. This is what makes them interchangeable.
 - Caption: "Every 3D backend implements this. Nothing else."
 
 ### SLIDE 5b — Swapping backends in one line (screenshot)
 
-- File: `TestModules/src/ai_engines/reconstruction_3d/reconstruction_3d_facade.py`
+- File: `ai-pipeline/src/ai_engines/reconstruction_3d/reconstruction_3d_facade.py`
 - Screenshot lines **30–36** (the `__init__`): default = `Hunyuan3D2ReconstructionStrategy()`,
   fallback = `TriposrReconstructionStrategy()`.
 - Screenshot lines **57–85** (the `generate` try/fallback) — primary fails → fallback runs →
@@ -98,7 +98,7 @@ the screenshots are the "proof".
 
 ### SLIDE 5c — A concrete backend: Hunyuan3D-2.1 over a HF Space (screenshot)
 
-- File: `TestModules/src/ai_engines/reconstruction_3d/strategies/hunyuan3d2_reconstruction_strategy.py`
+- File: `ai-pipeline/src/ai_engines/reconstruction_3d/strategies/hunyuan3d2_reconstruction_strategy.py`
 - Screenshot the `_generate_with_fallback` method, lines **258–358**: two-step Space API
   (`/generation_all` → `/shape_generation`), lazy client (`_client` property, lines 172–189),
   error wrapping (`Hunyuan3D2GenerationError`).

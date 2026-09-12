@@ -1,6 +1,6 @@
 # Novel view components
 
-Source: [`TestModules/src/ai_engines/novel_view/`](../../../../TestModules/src/ai_engines/novel_view/).
+Source: [`ai-pipeline/src/ai_engines/novel_view/`](../../../../ai-pipeline/src/ai_engines/novel_view/).
 
 - **`NovelViewFacade`** — Wraps exactly one `NovelViewStrategy`; forwards `synthesize(...)`. Defaults to `StableZero123NovelViewStrategy`.
 - **`NovelViewRotationAdapter`** — Converts optional readable pose directions (`CLOCKWISE` / `C_CLOCKWISE`, `UP` / `DOWN`, `ZOOM_IN` / `ZOOM_OUT`) into signed azimuth, relative elevation, and radius. Exposes named magnitude constants (`SIDE`, `BACK`, `LOW_TILT`, `ZOOM_STEP`, etc.).

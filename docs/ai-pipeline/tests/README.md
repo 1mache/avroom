@@ -6,7 +6,7 @@
 
 **In one line:** Point scripts at sample imagery and inspect dumped PNGs or GLBs.
 
-Code: [`TestModules/tests/`](../../../TestModules/tests/).
+Code: [`ai-pipeline/tests/`](../../../ai-pipeline/tests/).
 
 ## Detail pages
 

@@ -1,6 +1,6 @@
 # Reconstruction 3D components
 
-Source: [`TestModules/src/ai_engines/reconstruction_3d/`](../../../../TestModules/src/ai_engines/reconstruction_3d/).
+Source: [`ai-pipeline/src/ai_engines/reconstruction_3d/`](../../../../ai-pipeline/src/ai_engines/reconstruction_3d/).
 
 - **`Reconstruction3DFacade`** — Holds one primary `Reconstruction3DStrategy` (default `Hunyuan3D2ReconstructionStrategy`) plus one fixed fallback (`TriposrReconstructionStrategy`, always TripoSR regardless of the injected primary). `generate(...)` calls the primary, retries the fallback on any exception, and raises a `RuntimeError` naming both failures if the fallback also raises.
 - **`Reconstruction3DStrategy`** — ABC for image→GLB backends.

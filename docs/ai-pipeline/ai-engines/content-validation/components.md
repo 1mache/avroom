@@ -1,6 +1,6 @@
 # Content validation components
 
-Source: [`TestModules/src/ai_engines/content_validation/`](../../../../TestModules/src/ai_engines/content_validation/).
+Source: [`ai-pipeline/src/ai_engines/content_validation/`](../../../../ai-pipeline/src/ai_engines/content_validation/).
 
 ## Facade
 
@@ -23,8 +23,8 @@ Source: [`TestModules/src/ai_engines/content_validation/`](../../../../TestModul
 
 ## Core orchestrator
 
-- **`ContentImageValidator`** ([`TestModules/src/core/content_image_validator.py`](../../../../TestModules/src/core/content_image_validator.py)) — decodes bytes/path to BGR and delegates to the facade. Standalone pre-pipeline gate.
-- **`select_best_cutout`** ([`TestModules/src/core/cutout_selector.py`](../../../../TestModules/src/core/cutout_selector.py)) — ranks SAM BGRA cutouts for a click using CLIP `binary_prob`. Not a new engine; core logic on top of the CLIP strategy.
+- **`ContentImageValidator`** ([`ai-pipeline/src/core/content_image_validator.py`](../../../../ai-pipeline/src/core/content_image_validator.py)) — decodes bytes/path to BGR and delegates to the facade. Standalone pre-pipeline gate.
+- **`select_best_cutout`** ([`ai-pipeline/src/core/cutout_selector.py`](../../../../ai-pipeline/src/core/cutout_selector.py)) — ranks SAM BGRA cutouts for a click using CLIP `binary_prob`. Not a new engine; core logic on top of the CLIP strategy.
 
 ## FastAPI bridge
 

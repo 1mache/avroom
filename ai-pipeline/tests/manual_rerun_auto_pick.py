@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[2]
-OUT = REPO / "TestModules" / "outputs" / "auto_mask_pick"
+OUT = REPO / "ai-pipeline" / "outputs" / "auto_mask_pick"
 ORIGINAL = REPO / "fastApi-app" / "tmp" / "images" / "058f79db-c453-4751-8da0-196cb67a5516.jpeg"
 CLICK = (100, 728)
 

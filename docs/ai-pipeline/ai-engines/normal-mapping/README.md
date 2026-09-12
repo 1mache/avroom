@@ -6,7 +6,7 @@
 
 **In one line:** Metric3D v2 (ViT hub) predicts float normals; `colorize_normals` turns them into a viewable PNG.
 
-Code: [`TestModules/src/ai_engines/normal_mapping/`](../../../../TestModules/src/ai_engines/normal_mapping/).
+Code: [`ai-pipeline/src/ai_engines/normal_mapping/`](../../../../ai-pipeline/src/ai_engines/normal_mapping/).
 
 ## Detail pages
 

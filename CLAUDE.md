@@ -14,7 +14,7 @@ Product language (Room, Origin Photo, Cutout, Copy, Object Selector, …) is loc
 
 ```
 avroom/
-├── TestModules/          # The real AI pipeline (Python package: avroom_object_removal)
+├── ai-pipeline/          # The real AI pipeline (Python package: avroom_object_removal)
 │   ├── src/              # Package source (maps to avroom_object_removal namespace)
 │   │   ├── core/         # ObjectRemover, interfaces
 │   │   ├── ai_engines/   # depth/, segmentation/, inpainting/
@@ -46,7 +46,7 @@ avroom/
 ### Backend (FastAPI / IPE)
 
 ```bash
-# Install all Python deps (includes editable TestModules install)
+# Install all Python deps (includes editable ai-pipeline install)
 pip install -r requirements.txt
 
 # Start local Postgres (session/object metadata) — required before the app or its tests will run
@@ -71,16 +71,16 @@ npm run dev      # Dev server at http://localhost:5173
 npm run build    # Production build (tsc + vite)
 ```
 
-### Tests (TestModules)
+### Tests (ai-pipeline)
 
 ```bash
 # Run individual pipeline tests from repo root
-python TestModules/tests/test_pipeline_runner.py
-python TestModules/tests/samMasksTest.py
-python TestModules/tests/depthModelTest.py
+python ai-pipeline/tests/test_pipeline_runner.py
+python ai-pipeline/tests/samMasksTest.py
+python ai-pipeline/tests/depthModelTest.py
 
 # Download model weights if missing
-python TestModules/tests/downloadTestModelWeights.py
+python ai-pipeline/tests/downloadTestModelWeights.py
 ```
 
 ## FastAPI Logging
@@ -106,7 +106,7 @@ Use `logger = logging.getLogger(__name__)` at module level. No `print()`. Level 
 Reuse these instead of re-implementing them per module:
 
 - `core/image_codec.py` — `encode_png(array, label)` and `to_base64_ascii(bytes)`. Never hand-roll `cv2.imencode` / `base64.b64encode(...).decode("ascii")` in a route or pipeline function.
-- `core/avroom_package.py` — `load_avroom_attr(attr, module=...)` for every deferred `avroom_object_removal` import; it converts a missing install into one `RuntimeError` with the `pip install -e ./TestModules` hint.
+- `core/avroom_package.py` — `load_avroom_attr(attr, module=...)` for every deferred `avroom_object_removal` import; it converts a missing install into one `RuntimeError` with the `pip install -e ./ai-pipeline` hint.
 - `core/object_storage.py` — all `{uid}_{object_id}_…` path construction, plus `legacy_object_cutout_path` / `legacy_object_glb_path` for pre-numbering names and `remove_file(path) -> int` for "delete if present, count it" loops.
 - `core/depth_cache.py` — `memory_image_key(bytes)` builds the `memory://<sha256>` key the AI pipeline caches model state under.
 - `settings.py` — `_read_json` / `_write_json` / `load_session_uids` back every JSON sidecar (sessions, names, timestamps); `_env_int` / `_env_float` / `_env_bool` back every env-var getter.
@@ -305,7 +305,7 @@ Segment, inpaint, and 3D generation are **queued, not blocking**. `POST /images/
 
 ## AI Pipeline Architecture (Critical)
 
-`ObjectRemover` (`TestModules/src/core/objectRemover.py`) orchestrates the legacy full pipeline. Normal UI flow now uses `ObjectSegmentor` first, lets the user choose a mask, then passes selected `refined_mask` to `BackgroundInpainter`.
+`ObjectRemover` (`ai-pipeline/src/core/objectRemover.py`) orchestrates the legacy full pipeline. Normal UI flow now uses `ObjectSegmentor` first, lets the user choose a mask, then passes selected `refined_mask` to `BackgroundInpainter`.
 
 1. **Depth** — `OptimizedDepthFacade` blends two depth models (Depth-Anything-V2 for near, LiheYoung for far) using V2 depth values as alpha weights. This prevents wall seams.
 2. **Adapt** — `SamImageAdapter` converts the grayscale depth map to 3-channel RGB for SAM input. Result is cached per image+point.
@@ -322,9 +322,9 @@ Segment, inpaint, and 3D generation are **queued, not blocking**. `POST /images/
 - **Sanitize before any dilation.** Dilating a dirty SAM mask bridges detached speckles into floor/chair. Use `sanitize_then_expand` / keep-click-component first; the ~3 px refine is only an edge pad.
 - **SD runs on a native-resolution crop, never the squashed full frame.** `StableDiffusionInpaintingStrategy` crops around the mask with `mask_crop_window`, generates at /8-snapped native dims, and pastes only mask pixels back. Squashing a 1600×1200 frame to 512×512 causes a 3× upscale smear and a paste seam that no SD knob can fix. Only mask pixels are written back; surroundings stay byte-identical so Gemini's dual-crop verifier sees an uncorrupted reference.
 
-## FastAPI ↔ TestModules Integration
+## FastAPI ↔ ai-pipeline Integration
 
-`fastApi-app/core/image_processing.py` imports `ObjectRemover` from the `avroom_object_removal` package (installed via `pip install -e ./TestModules`). If the package is missing, the server raises `RuntimeError` with an install hint. Image bytes are passed directly to `remover.remove_object(image_path=..., image_bytes=...)` using a `memory://sha256` key so models can cache without disk reads.
+`fastApi-app/core/image_processing.py` imports `ObjectRemover` from the `avroom_object_removal` package (installed via `pip install -e ./ai-pipeline`). If the package is missing, the server raises `RuntimeError` with an install hint. Image bytes are passed directly to `remover.remove_object(image_path=..., image_bytes=...)` using a `memory://sha256` key so models can cache without disk reads.
 
 Uploaded images are stored in `fastApi-app/tmp/images/{uuid}.ext`. Debug overlays go to `fastApi-app/tmp/images/`.
 
@@ -353,7 +353,7 @@ Not wired into segment/inpaint/removal pipelines.
 
 ## 3D Reconstruction (Hunyuan3D-2.1)
 
-`TestModules/src/ai_engines/reconstruction_3d/` (part of the `avroom_object_removal` package — there is no separate 3D package anymore) owns image-to-GLB generation via `Reconstruction3DFacade`. **Default primary backend is `Hunyuan3D2ReconstructionStrategy`**, which calls Tencent's Hunyuan3D-2.1 model **via a public Hugging Face Space** (`gradio_client`, default space id `es3d-fi/hunyuan3d-2-1`, a mirror of `tencent/Hunyuan3D-2.1`). If the primary call raises, the facade automatically retries once against `TriposrReconstructionStrategy` (local PyTorch, `stabilityai/TripoSR` weights) with identical arguments before giving up. These are the only two strategies — OpenLRM, Trellis, and VFusion3D (never constructed by the facade, unreachable except by manual injection nobody did) were deleted as dead code.
+`ai-pipeline/src/ai_engines/reconstruction_3d/` (part of the `avroom_object_removal` package — there is no separate 3D package anymore) owns image-to-GLB generation via `Reconstruction3DFacade`. **Default primary backend is `Hunyuan3D2ReconstructionStrategy`**, which calls Tencent's Hunyuan3D-2.1 model **via a public Hugging Face Space** (`gradio_client`, default space id `es3d-fi/hunyuan3d-2-1`, a mirror of `tencent/Hunyuan3D-2.1`). If the primary call raises, the facade automatically retries once against `TriposrReconstructionStrategy` (local PyTorch, `stabilityai/TripoSR` weights) with identical arguments before giving up. These are the only two strategies — OpenLRM, Trellis, and VFusion3D (never constructed by the facade, unreachable except by manual injection nobody did) were deleted as dead code.
 
 Public API: `Reconstruction3DFacade().generate(image, *, quality=ReconstructionQuality.HIGH, output="bytes")`. Accepts BGRA `np.ndarray` from `ObjectRemover`, PNG `bytes`, `PIL.Image`, or `pathlib.Path`. Returns GLB as `bytes` / `Path` / `BytesIO`.
 
@@ -412,7 +412,7 @@ The product has five screens: **Project Selector** (`ProjectsScreen`), **Room Se
 - **The photo is the screen.** `.stage` fills everything under the toolbar and the image is `object-fit: contain`, so it renders at max size without distortion and letterboxes when the aspect ratio demands it. `.stage-canvas-edge` traces the rendered image rect with a hairline + cast shadow so the photo reads as a sheet on the graphite surround.
 - **`Toolbar`** (`components/workspace/Toolbar.tsx`) is the only permanent chrome, always visible: back arrow (returns to the dashboard), editable session name (Enter saves), then icon-only tools — cutout (scissors), rotate, copy, smart-paste toggle — and a red trash at the far right. Icons carry no text; they name themselves on hover through the shared `[data-tip]` CSS tooltip. Everything object-scoped (rotate, copy, smart paste, delete) greys out instead of disappearing when nothing is selected, so the row never reflows.
 - **Cutout is armed, not confirmed.** Pressing scissors sets `cutMode`; the next click on the photo becomes the segmentation seed and fires `runSegment` immediately, disarming the tool. Escape cancels. There is no separate "Cut Out" button any more.
-- **Smart paste is implemented** (a toolbar switch plus a settings panel with two independent toggles, `scaleByPov` / `smartRotate`). When armed, drag-end fires `POST /images/objects/{uuid}/smart-paste` *after* the offset PATCH (`useObjectDrag` → `useSessionJobs.runSmartPasteAfterDrag`). Backend `SmartPaster` (`TestModules/src/core/smart_paster.py`) runs two independent steps: **scale** from the *depth map* — depth at the drop point vs the object's stored `average_depth` (`compute_depth_rescale`), persisted as `display_scale` metadata only, cutout PNG never rewritten — and **auto-rotate** from the *normal map*, sampling the surface normal at the source cutout center vs the drop point (`orbit_pose_from_normals` in `core/normal_align.py`) to return `azimuth_deg`/`relative_elevation_deg`, null when normals are unavailable or the delta is under the deadzone. **The inferred pose is applied as CSS 3D only** (`useSessionJobs.applyInferredRotation` → `utils/css3dTransform.ts`, persisted via PATCH) for *every* object regardless of `is_3d` — smart paste never touches the GLB/mesh novel-view path, which belongs solely to the manual Rotate button (`useRotationController`). `docs/backend/api-endpoints.md` still claims volumetric objects mesh-render on smart paste; that claim is stale.
+- **Smart paste is implemented** (a toolbar switch plus a settings panel with two independent toggles, `scaleByPov` / `smartRotate`). When armed, drag-end fires `POST /images/objects/{uuid}/smart-paste` *after* the offset PATCH (`useObjectDrag` → `useSessionJobs.runSmartPasteAfterDrag`). Backend `SmartPaster` (`ai-pipeline/src/core/smart_paster.py`) runs two independent steps: **scale** from the *depth map* — depth at the drop point vs the object's stored `average_depth` (`compute_depth_rescale`), persisted as `display_scale` metadata only, cutout PNG never rewritten — and **auto-rotate** from the *normal map*, sampling the surface normal at the source cutout center vs the drop point (`orbit_pose_from_normals` in `core/normal_align.py`) to return `azimuth_deg`/`relative_elevation_deg`, null when normals are unavailable or the delta is under the deadzone. **The inferred pose is applied as CSS 3D only** (`useSessionJobs.applyInferredRotation` → `utils/css3dTransform.ts`, persisted via PATCH) for *every* object regardless of `is_3d` — smart paste never touches the GLB/mesh novel-view path, which belongs solely to the manual Rotate button (`useRotationController`). `docs/backend/api-endpoints.md` still claims volumetric objects mesh-render on smart paste; that claim is stale.
 - **Trash arms a confirm dialog, then permanently deletes.** Clicking it opens a `ConfirmDialog` in `WorkspaceScreen`, not an immediate delete — deletion calls `DELETE /images/objects/{uuid}` and can't be undone. On confirm, `useSessionJobs.deleteObject` awaits the request (uuid-keyed, same precondition as duplicate — pre-UUID objects can't be deleted), then removes the object locally on success; failure surfaces through the generic error modal. The backend removes the cutout, GLB, novel-view caches, and metadata, but **never repaints the background** — the inpainted hole stays. Object ids can be reused after deletion (`next_object_id` is `max(existing)+1`).
 - **`ObjectRail`** (`components/workspace/ObjectRail.tsx`) replaces the old `ObjectPanel`. It hides in the right screen edge and slides out on hover of that edge, retracting after a ~220 ms grace once the pointer leaves (suppressed while a rename input is focused). Retracted, its spine still shows one notch per object — bright for the selected one, grey for hidden, pulsing while work is in flight, red for a failed job. Each row carries an eye toggle, and a revert toggle when that object has a rotation result. It also takes the session's `jobs` list directly (not a `pending: PendingEntry[]` prop anymore — see "Concurrent job state" below): queued/running jobs render as spinner rows labeled by kind (`Segmenting`/`Removing`/`Building 3D`), failed jobs render as dismissible red rows (`onDismissJob`, `DELETE /jobs/{job_id}`).
 - **Design tokens** live at the top of `src/style.css`: graphite chrome (`--chrome-*`), cyan accent (`--cyan`, `--cyan-bright`), IBM Plex Sans for UI and IBM Plex Mono for counters/status readouts (loaded in `index.html`). Radii stay at 2–3 px throughout.
@@ -456,11 +456,11 @@ rationale in `docs/superpowers/specs/2026-08-29-aws-integration-design.md`.
 - **`fastApi-app/Dockerfile`** — two stages. Stage 1 (`node:20-slim`) runs
   `npm run build` with `VITE_API_BASE_URL=""`; stage 2 (`python:3.11-slim`)
   installs the Python stack and copies the built `dist/` in. Build context is the
-  **repo root**, not `fastApi-app/` (requirements.txt and TestModules/ live there).
+  **repo root**, not `fastApi-app/` (requirements.txt and ai-pipeline/ live there).
   Base is deliberately *not* an `nvidia/cuda` image: PyPI torch wheels bundle their
   own CUDA runtime as `nvidia-*-cu12` deps, so only the host driver matters and it
   arrives via the NVIDIA Container Toolkit. `torch` is installed on its own earlier
-  layer because `torchmcubes` (a git dep of TestModules) imports torch in its
+  layer because `torchmcubes` (a git dep of ai-pipeline) imports torch in its
   `setup.py` at build time.
 - **`PYOPENGL_PLATFORM=osmesa`** is set in the image. `pyrender`'s offscreen
   renderer (`MeshRenderNovelViewStrategy`, novel-view rotation) needs *some* GL
@@ -514,7 +514,7 @@ rationale in `docs/superpowers/specs/2026-08-29-aws-integration-design.md`.
   lazy and guarded in `_load_tsr_model`, so nothing breaks at startup. Restore
   with `pip install "torchmcubes @ git+https://github.com/tatsy/torchmcubes.git"`
   on any host with the toolkit; no code change needed. See the NOTE in
-  `TestModules/pyproject.toml`.
+  `ai-pipeline/pyproject.toml`.
 - Still deferred: RDS, S3 blobs (`STORAGE_BACKEND=s3` exists but unused), HTTPS/
   domain, and self-hosted Hunyuan3D (needs its own 24GB+ box; the public HF Space
   is flaky and rate-limited, so this is planned for demo day). `AUTH_MODE=jwt`

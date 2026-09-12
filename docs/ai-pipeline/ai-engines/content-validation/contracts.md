@@ -47,7 +47,7 @@ Each check is a 2-label softmax: concept vs a concrete room/space alternative.
 | `score_labels(pil_image, labels)` | softmax `dict[str, float]` over the given labels |
 | `binary_prob(pil_image, positive, negative)` | `P(positive)` from a 2-label softmax |
 
-Upload `validate()` uses those methods. Core [`select_best_cutout`](../../../../TestModules/src/core/cutout_selector.py) uses `binary_prob` to rank SAM cutouts when segment `verify=auto`.
+Upload `validate()` uses those methods. Core [`select_best_cutout`](../../../../ai-pipeline/src/core/cutout_selector.py) uses `binary_prob` to rank SAM cutouts when segment `verify=auto`.
 
 ## Technical checks (FastAPI only)
 

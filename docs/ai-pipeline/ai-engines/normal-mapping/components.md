@@ -1,6 +1,6 @@
 # Normal mapping components
 
-Source: [`TestModules/src/ai_engines/normal_mapping/`](../../../../TestModules/src/ai_engines/normal_mapping/).
+Source: [`ai-pipeline/src/ai_engines/normal_mapping/`](../../../../ai-pipeline/src/ai_engines/normal_mapping/).
 
 - **`NormalMappingFacade`** — Single entry used by debug render; forwards to injected `NormalMappingStrategy`. Default strategy is `Metric3DNormalMappingStrategy`.
 - **`NormalMappingStrategy`** — ABC with `map_normals(image)`.

@@ -51,7 +51,7 @@ def _get_object_remover_class():
         if exc.name == "avroom_object_removal":
             logger.error("avroom_object_removal package not importable")
             raise RuntimeError(
-                "Missing local package `avroom_object_removal`. Install repo dependencies or run `pip install -e ./TestModules`."
+                "Missing local package `avroom_object_removal`. Install repo dependencies or run `pip install -e ./ai-pipeline`."
             ) from exc
         raise
 
@@ -158,5 +158,5 @@ Same-session segment/inpaint coordination is enforced in [`api/routes.py`](../..
 ## Notes / quirks worth knowing
 
 - `ImageProcessingOptions` is accepted by both `segment_at_click` and `process_click_on_image` but **not** forwarded to `remove_object` — it has no effect today (see lines 89–96). Treat the field as reserved for future use.
-- `process_click_on_image` opens the image with PIL only to bounds-check and write the debug overlay. The bytes themselves are passed un-decoded to the pipeline, which uses OpenCV to decode them again ([`object_remover.py`](../../TestModules/src/core/object_remover.py) lines 113–123).
+- `process_click_on_image` opens the image with PIL only to bounds-check and write the debug overlay. The bytes themselves are passed un-decoded to the pipeline, which uses OpenCV to decode them again ([`object_remover.py`](../../ai-pipeline/src/core/object_remover.py) lines 113–123).
 - `UnidentifiedImageError` from PIL is converted to `ValueError` so the API returns 422 instead of 500.

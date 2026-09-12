@@ -24,7 +24,7 @@
 
 `ContentImageValidator` saves `content_validation_input` via `DebugImageSaver` when debug output is enabled elsewhere in the pipeline.
 
-Auto mask pick (`select_best_cutout`) writes a dedicated dump under `TestModules/outputs/auto_mask_pick/` (cleared each run):
+Auto mask pick (`select_best_cutout`) writes a dedicated dump under `ai-pipeline/outputs/auto_mask_pick/` (cleared each run):
 
 - `{ii}_cutout.png` — full BGRA candidate
 - `{ii}_alpha.png` — alpha channel
@@ -35,8 +35,8 @@ Auto mask pick (`select_best_cutout`) writes a dedicated dump under `TestModules
 
 ## Tests
 
-- [`TestModules/tests/test_content_image_validator.py`](../../../../TestModules/tests/test_content_image_validator.py) — stub strategy + monkeypatched CLIP scores
-- [`TestModules/tests/test_cutout_selector.py`](../../../../TestModules/tests/test_cutout_selector.py) — stub CLIP scorer for click/area/threshold cutout pick
+- [`ai-pipeline/tests/test_content_image_validator.py`](../../../../ai-pipeline/tests/test_content_image_validator.py) — stub strategy + monkeypatched CLIP scores
+- [`ai-pipeline/tests/test_cutout_selector.py`](../../../../ai-pipeline/tests/test_cutout_selector.py) — stub CLIP scorer for click/area/threshold cutout pick
 - [`fastApi-app/tests/test_image_validation.py`](../../../../fastApi-app/tests/test_image_validation.py) — technical checks + upload route gates
 - [`fastApi-app/tests/test_segment_verify.py`](../../../../fastApi-app/tests/test_segment_verify.py) — `verify=manual` vs `auto` on `segment_candidates_on_image`
 

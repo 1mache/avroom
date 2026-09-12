@@ -1,6 +1,6 @@
 # AI Engines components
 
-Pattern everywhere under [`TestModules/src/ai_engines/`](../../../TestModules/src/ai_engines/): **Facade + Strategy**.
+Pattern everywhere under [`ai-pipeline/src/ai_engines/`](../../../ai-pipeline/src/ai_engines/): **Facade + Strategy**.
 
 ## Domain facades (stable imports)
 

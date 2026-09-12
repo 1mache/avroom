@@ -1,6 +1,6 @@
 # Inpainting components
 
-Source: [`TestModules/src/ai_engines/inpainting/`](../../../../TestModules/src/ai_engines/inpainting/).
+Source: [`ai-pipeline/src/ai_engines/inpainting/`](../../../../ai-pipeline/src/ai_engines/inpainting/).
 
 - **`ImageInpaintingFacade`** — `inpaint(image, mask, **kwargs)` entry used by core.
 - **`ImageInpaintingStrategy`** — ABC.

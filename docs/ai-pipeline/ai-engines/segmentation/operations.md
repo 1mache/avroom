@@ -11,7 +11,7 @@
 
 SAM predictor constructed once per process (`lru_cache(maxsize=1)` pattern in strategy loader).
 
-## Debug files (`TestModules/outputs/`)
+## Debug files (`ai-pipeline/outputs/`)
 
 **`get_mask_at_point` / `predict_mask` pass:**
 

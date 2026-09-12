@@ -13,13 +13,13 @@
 
 ## Debug artifacts (orchestrator)
 
-Written via `DebugImageSaver` under `TestModules/outputs/` (names without extension in code; saved as PNG):
+Written via `DebugImageSaver` under `ai-pipeline/outputs/` (names without extension in code; saved as PNG):
 
 - `optimized_depth`, `adapted_for_sam`, `tight_mask`, `debug_tight_mask_overlay`, `mask`, `debug_mask_overlay`, `final_removed_object`
 
 See also engine-level debug files under segmentation and inpainting partials.
 
-Auto mask pick (`verify=auto`) dumps to `TestModules/outputs/auto_mask_pick/` — see [content-validation operations](../ai-engines/content-validation/operations.md).
+Auto mask pick (`verify=auto`) dumps to `ai-pipeline/outputs/auto_mask_pick/` — see [content-validation operations](../ai-engines/content-validation/operations.md).
 
 ## Failure boundaries
 

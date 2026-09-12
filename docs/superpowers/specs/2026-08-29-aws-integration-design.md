@@ -3,7 +3,7 @@
 ## Context
 
 AVRoom currently runs local-only: FastAPI (fastApi-app) + AI pipeline
-(TestModules) + Postgres via docker-compose + React frontend, all on the
+(ai-pipeline) + Postgres via docker-compose + React frontend, all on the
 developer's machine. The user now has an AWS account and wants the app
 reachable on the internet, at demo/portfolio scale (not production traffic).
 
@@ -147,7 +147,7 @@ env config and an nginx cert config change).
 
 1. **`fastApi-app/Dockerfile`** (new) — CUDA-capable base image (matching
    the pinned `torch==2.10.0`/CUDA build already in `requirements.txt`),
-   installs `-e ./TestModules` and the rest of `requirements.txt`, runs
+   installs `-e ./ai-pipeline` and the rest of `requirements.txt`, runs
    uvicorn. This is the piece the `docker-compose.yml` `api` service already
    references but that has never existed.
 2. **`docker-compose.yml`** — add an `nginx` service (or fold static serving

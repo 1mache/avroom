@@ -26,7 +26,7 @@ export const pngSrc = (b64: string): string => `data:image/png;base64,${b64}`;
 
 // One HF checkpoint dropdown shared by the depth panel and the SAM panel's
 // "source=depth" knobs. Values match the strategies actually wired up in
-// TestModules/src/ai_engines/depth/strategies — see DebugScreen's model
+// ai-pipeline/src/ai_engines/depth/strategies — see DebugScreen's model
 // picker for how free text stays available alongside these.
 export const KNOWN_DEPTH_MODELS = [
   "LiheYoung/depth-anything-small-hf",

@@ -6,7 +6,7 @@
 
 **In one line:** BGR candidate + mask + SD params in → `ok` plus JSON params to replay → Hybrid retries SD up to `INPAINT_VERIFY_MAX_RETRIES`.
 
-Code: [`TestModules/src/ai_engines/inpainting_verification/`](../../../../TestModules/src/ai_engines/inpainting_verification/).
+Code: [`ai-pipeline/src/ai_engines/inpainting_verification/`](../../../../ai-pipeline/src/ai_engines/inpainting_verification/).
 
 ## Detail pages
 

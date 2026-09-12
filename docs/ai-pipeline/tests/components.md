@@ -1,6 +1,6 @@
 # Tests components
 
-Scripts live in [`TestModules/tests/`](../../../TestModules/tests/) (paths relative to repo root):
+Scripts live in [`ai-pipeline/tests/`](../../../ai-pipeline/tests/) (paths relative to repo root):
 
 | Script | Role |
 |--------|------|

@@ -1,6 +1,6 @@
 # AI Engines
 
-**What this is:** Model-facing subsystems grouped under [`TestModules/src/ai_engines/`](../../../TestModules/src/ai_engines/). Each domain exposes a facade and hides a strategy implementation.
+**What this is:** Model-facing subsystems grouped under [`ai-pipeline/src/ai_engines/`](../../../ai-pipeline/src/ai_engines/). Each domain exposes a facade and hides a strategy implementation.
 
 **When they run:** Depth, segmentation, and inpainting run inside every `ObjectRemover.remove_object` call. Reconstruction 3D runs from `POST /3d/test-3d` and `POST /images/novel-view` — not from `/images/click`.
 

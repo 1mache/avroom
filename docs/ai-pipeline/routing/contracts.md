@@ -1,6 +1,6 @@
 # Routing contracts
 
-Return payload keys consumed by [`object_remover.py`](../../../TestModules/src/core/object_remover.py):
+Return payload keys consumed by [`object_remover.py`](../../../ai-pipeline/src/core/object_remover.py):
 
 - **`input_image`** — Enum/string selecting which tensor feeds SAM for final pass (`adapted_depth` in production routing output).
 - **`expand_pixels`** — Integer dilation applied after SAM tight mask selection.

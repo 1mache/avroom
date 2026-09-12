@@ -5,12 +5,12 @@ Hugging Face (~5 GB Diffusers conversion of Stable Zero123 weights) and needs
 CUDA for practical runtime (~SD1.5 VRAM). CPU works but is very slow.
 
 Usage (from repo root):
-    python TestModules/tests/test_novel_view_stable_zero123.py [cutout.png]
+    python ai-pipeline/tests/test_novel_view_stable_zero123.py [cutout.png]
 
 If no cutout path is given, uses ``fastApi-app/res/test/toilet.png`` with a
 synthetic alpha matte when that file has no alpha channel.
 
-Debug outputs land under ``TestModules/outputs/novel_view_rotation_debug/``:
+Debug outputs land under ``ai-pipeline/outputs/novel_view_rotation_debug/``:
 
 - ``preprocessing/`` — input transforms before Zero123 sees the image
 - ``final_results/`` — model-generated novel views (one PNG per azimuth)

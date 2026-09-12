@@ -128,7 +128,7 @@ Handler: [`fastApi-app/core/jobs/handlers.py::run_erase_job`](../../fastApi-app/
 
 Blocking `def` handler. Discovers masks (`box` via SAM-everything on adapted depth, `clicks` via `verify=auto` segment, `objects` skips inpaint), peels overlapping stacks nearer-first using exclusive-region depth, inpaints sequentially with Hybrid verification, then generates GLBs. Per-object failures are skipped. Same-batch canvas updates are not treated as 409. External overlapping leases still 409 that object (skip). `verify` is forced to `auto`.
 
-Orchestrator: [`fastApi-app/core/batch_jobs.py`](../../fastApi-app/core/batch_jobs.py). Peel helpers: [`TestModules/src/core/batch_peel.py`](../../TestModules/src/core/batch_peel.py).
+Orchestrator: [`fastApi-app/core/batch_jobs.py`](../../fastApi-app/core/batch_jobs.py). Peel helpers: [`ai-pipeline/src/core/batch_peel.py`](../../ai-pipeline/src/core/batch_peel.py).
 
 ## `GET /images/{uid}/objects`
 
@@ -420,7 +420,7 @@ Renders SAM's `SamAutomaticMaskGenerator` ("segment everything", prompt-free) ou
 
 The overlay is **always** drawn on the original photo, regardless of `source`. Response is `image/png` with headers `X-Mask-Count` and `X-Elapsed-Ms` — both must be read via `expose_headers` on the CORS middleware (see [settings-and-storage.md](settings-and-storage.md)) for browser JS to see them. `422` on an unknown `source`/`depth_strategy` or an undecodable upload.
 
-Underlying capability: `SamSegmentationStrategy.predict_everything(image, *, points_per_side, pred_iou_thresh, stability_score_thresh, min_mask_region_area)` in [`TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py`](../../TestModules/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) — a non-abstract method on `ImageSegmentationStrategy` (default raises `NotImplementedError`, since prompt-free segmentation is SAM-specific) exposed at the facade level as `ImageSegmentationFacade.get_all_masks_for_image(...)`. Reuses the already-loaded `SamPredictor`'s weights via `_load_sam_mask_generator` (`functools.lru_cache`, keyed on checkpoint + all four threshold args) — no duplicate 370MB checkpoint load. Rendering uses `avroom_object_removal.utils.overlay_masks` (deterministic per-mask color via golden-ratio hue stepping, translucent fill + outline).
+Underlying capability: `SamSegmentationStrategy.predict_everything(image, *, points_per_side, pred_iou_thresh, stability_score_thresh, min_mask_region_area)` in [`ai-pipeline/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py`](../../ai-pipeline/src/ai_engines/segmentation/strategies/sam_segmentation_strategy.py) — a non-abstract method on `ImageSegmentationStrategy` (default raises `NotImplementedError`, since prompt-free segmentation is SAM-specific) exposed at the facade level as `ImageSegmentationFacade.get_all_masks_for_image(...)`. Reuses the already-loaded `SamPredictor`'s weights via `_load_sam_mask_generator` (`functools.lru_cache`, keyed on checkpoint + all four threshold args) — no duplicate 370MB checkpoint load. Rendering uses `avroom_object_removal.utils.overlay_masks` (deterministic per-mask color via golden-ratio hue stepping, translucent fill + outline).
 
 ### `POST /debug/auto-mask-pick`
 

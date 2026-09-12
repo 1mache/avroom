@@ -67,7 +67,7 @@ def _get_cutout_clip_scorer():
         if exc.name == "avroom_object_removal":
             logger.error("avroom_object_removal package not importable")
             raise RuntimeError(
-                "Missing local package `avroom_object_removal`. Install repo dependencies or run `pip install -e ./TestModules`."
+                "Missing local package `avroom_object_removal`. Install repo dependencies or run `pip install -e ./ai-pipeline`."
             ) from exc
         raise
     return ClipZeroShotContentValidationStrategy()
@@ -499,7 +499,7 @@ def _compute_depth_rescale(
     x: int,
     y: int,
 ) -> tuple[float, float, float]:
-    """Delegate depth-proportional scale math to TestModules."""
+    """Delegate depth-proportional scale math to ai-pipeline."""
     compute_fn = load_avroom_attr(
         "compute_depth_rescale",
         module="avroom_object_removal.core.cutout_rescaler",

@@ -326,8 +326,8 @@ def get_cors_allow_origins() -> list[str]:
 def get_debug_image_save() -> bool:
     """Return whether the AI pipeline's per-stage debug image dumps are written.
 
-    `TestModules`' `DebugImageSaver` writes dozens of PNGs per `/segment` call
-    to a fixed local directory (`TestModules/outputs/`) that nothing ever
+    `ai-pipeline`' `DebugImageSaver` writes dozens of PNGs per `/segment` call
+    to a fixed local directory (`ai-pipeline/outputs/`) that nothing ever
     reads back. Default on (matches today's behavior everywhere); set to
     `false` in containers, where that directory is pure waste.
     """

@@ -41,7 +41,7 @@ Runs each child strategy in order, merges `checks`/`scores`/`messages`, sets `is
 
 ## Auto cutout pick (core, not the facade)
 
-When `POST /images/segment` is called with `verify=auto`, [`select_best_cutout`](../../../../TestModules/src/core/cutout_selector.py) runs after `ObjectSegmentor`:
+When `POST /images/segment` is called with `verify=auto`, [`select_best_cutout`](../../../../ai-pipeline/src/core/cutout_selector.py) runs after `ObjectSegmentor`:
 
 1. Pre-filter: click must hit cutout alpha; mask area between 0.3% and 70% of the image.
 2. Crop BGRA to alpha bbox and composite on mid-gray.

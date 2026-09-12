@@ -8,7 +8,7 @@
 
 **In one line:** BGR room photo in → `CameraCalibrationResult` (gravity + K) → cached as `{uid}_camera_calib.json`.
 
-Code: [`TestModules/src/ai_engines/camera_calibration/`](../../../../TestModules/src/ai_engines/camera_calibration/).
+Code: [`ai-pipeline/src/ai_engines/camera_calibration/`](../../../../ai-pipeline/src/ai_engines/camera_calibration/).
 
 ## Detail pages
 

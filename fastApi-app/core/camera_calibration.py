@@ -65,7 +65,7 @@ def calibrate_upload_image(image_bytes: bytes) -> CameraCalibrationOutcome:
 
 
 def cache_dict_to_calibration_result(payload: dict[str, Any]) -> Any:
-    """Build a TestModules calibration result from cached JSON."""
+    """Build a ai-pipeline calibration result from cached JSON."""
     calibration_result_cls = load_avroom_attr("CameraCalibrationResult", _CALIBRATION_MODULE)
 
     gravity_raw = payload.get("gravity", (0.0, 1.0, 0.0))

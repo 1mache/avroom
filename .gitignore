@@ -58,10 +58,10 @@ desktop.ini
 *.h5
 
 # ---- Project data (inputs/outputs, debug artifacts) ----
-TestModules/checkpoints/
-TestModules/inputs/
-TestModules/outputs/
-TestModules/depthMaps/
+ai-pipeline/checkpoints/
+ai-pipeline/inputs/
+ai-pipeline/outputs/
+ai-pipeline/depthMaps/
 fastApi-app/images/
 
 # ---- Cursor local tooling (hooks, skills) ----
@@ -71,7 +71,7 @@ fastApi-app/images/
 poster/
 
 # ---- Vendored third-party clone (treated as local dependency) ----
-TestModules/src/ai_engines/3dRreconstruction/Hunyuan3D-2.1/
+ai-pipeline/src/ai_engines/3dRreconstruction/Hunyuan3D-2.1/
 # Python Cache
 __pycache__/ 
 *.egg-info/

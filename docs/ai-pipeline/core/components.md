@@ -1,6 +1,6 @@
 # Core components
 
-Source: [`TestModules/src/core/`](../../../TestModules/src/core/).
+Source: [`ai-pipeline/src/core/`](../../../ai-pipeline/src/core/).
 
 ## Orchestrators
 
@@ -34,5 +34,5 @@ Constructor dependency injection supplies defaults for each orchestrator:
   - `segment_at_click` → `ObjectRemover` (legacy `POST /images/click` one-step flow)
   - `segment_candidates_on_image` → `ObjectSegmentor` (modern `POST /images/segment`); `select_best_cutout` when `verify=auto`
   - `inpaint_selected_mask_on_image` → `BackgroundInpainter` (modern `POST /images/inpaint`)
-- Manual scripts under [`TestModules/tests/`](../../../TestModules/tests/).
+- Manual scripts under [`ai-pipeline/tests/`](../../../ai-pipeline/tests/).
 - **Downstream:** all pipeline domains listed on [README](README.md).

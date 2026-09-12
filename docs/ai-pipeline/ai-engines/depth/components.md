@@ -1,6 +1,6 @@
 # Depth components
 
-Source: [`TestModules/src/ai_engines/depth/`](../../../../TestModules/src/ai_engines/depth/).
+Source: [`ai-pipeline/src/ai_engines/depth/`](../../../../ai-pipeline/src/ai_engines/depth/).
 
 - **`DepthMappingFacade`** — Single entry used by core; forwards to injected `DepthMappingStrategy`. Default strategy is `EnhancedEdgeDepthMappingStrategy`.
 - **`DepthMappingStrategy`** — ABC with `map_depth(image)`.

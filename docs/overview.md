@@ -27,7 +27,7 @@ Avroom is a three-tier system:
 
 - **Frontend** — a React 19 + Vite SPA in [react-front/](../react-front/).
 - **Backend** — a FastAPI service in [fastApi-app/](../fastApi-app/).
-- **AI pipeline** — a Python package `avroom_object_removal` in [TestModules/](../TestModules/), installed editable from the root `requirements.txt` and imported in-process by the backend.
+- **AI pipeline** — a Python package `avroom_object_removal` in [ai-pipeline/](../ai-pipeline/), installed editable from the root `requirements.txt` and imported in-process by the backend.
 
 See [architecture.md](architecture.md) for the diagram and connection details.
 

@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 _PACKAGE = "avroom_object_removal"
 _INSTALL_HINT = (
     f"Missing local package `{_PACKAGE}`. "
-    "Install repo dependencies or run `pip install -e ./TestModules`."
+    "Install repo dependencies or run `pip install -e ./ai-pipeline`."
 )
 
 

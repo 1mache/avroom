@@ -68,13 +68,13 @@ def _load_tsr_model(
         raise RuntimeError(
             "TripoSR local inference requires PyTorch, vendored ``tsr``, "
             "``torchmcubes``, ``omegaconf``, and ``einops``. "
-            "Install TestModules dependencies (see requirements.txt).\n"
+            "Install ai-pipeline dependencies (see requirements.txt).\n"
             "\n"
             "NOTE: ``torchmcubes`` is intentionally absent from this package's "
             "dependencies, so this is the expected error in the deployed "
             "container rather than a broken install. It needs a full CUDA "
             "toolkit to compile, which the slim runtime image does not carry "
-            "(see the NOTE in TestModules/pyproject.toml). TripoSR is the "
+            "(see the NOTE in ai-pipeline/pyproject.toml). TripoSR is the "
             "fallback backend; the primary Hunyuan3D Space path is unaffected. "
             "To restore it here:\n"
             '    pip install "torchmcubes @ git+https://github.com/tatsy/torchmcubes.git"'
@@ -137,7 +137,7 @@ class TriposrReconstructionStrategy(Reconstruction3DStrategy):
                 self._device = "cuda:0" if torch.cuda.is_available() else "cpu"
             except ModuleNotFoundError as exc:
                 raise RuntimeError(
-                    "TripoSR requires ``torch``. Install TestModules dependencies."
+                    "TripoSR requires ``torch``. Install ai-pipeline dependencies."
                 ) from exc
         else:
             self._device = device
@@ -181,7 +181,7 @@ class TriposrReconstructionStrategy(Reconstruction3DStrategy):
         except ModuleNotFoundError as exc:
             logger.error("torch not installed")
             raise RuntimeError(
-                "TripoSR requires ``torch``. Install TestModules dependencies."
+                "TripoSR requires ``torch``. Install ai-pipeline dependencies."
             ) from exc
 
         mc_resolution = _mc_resolution_for_quality(quality)

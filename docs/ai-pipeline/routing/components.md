@@ -1,6 +1,6 @@
 # Routing components
 
-Source: [`TestModules/src/routing/`](../../../TestModules/src/routing/).
+Source: [`ai-pipeline/src/routing/`](../../../ai-pipeline/src/routing/).
 
 - **`SegmentationRoutingStrategy`** — ABC with `choose_input(rgb_image, raw_depth, adapted_depth, x, y) -> dict`.
 - **`BoundaryVarianceRoutingStrategy`** — Default used by `ObjectRemover`: probes SAM mask with zero dilation, measures depth variance along boundary ring, derives expand pixels + strength choices.

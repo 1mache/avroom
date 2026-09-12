@@ -6,7 +6,7 @@
 
 **In one line:** depth + mask + cached calib → `elevation_deg` stored on object metadata.
 
-Code: [`TestModules/src/ai_engines/elevation_estimation/`](../../../../TestModules/src/ai_engines/elevation_estimation/).
+Code: [`ai-pipeline/src/ai_engines/elevation_estimation/`](../../../../ai-pipeline/src/ai_engines/elevation_estimation/).
 
 ## Detail pages
 

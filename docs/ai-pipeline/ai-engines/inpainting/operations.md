@@ -8,7 +8,7 @@
 
 ## Stable Diffusion defaults (strategy source)
 
-Model id `runwayml/stable-diffusion-inpainting`; typical pipeline settings include fixed inference steps (~42), guidance scale (~10), native-resolution crop canvas — verify exact ints in [`stable_diffusion_inpainting_strategy.py`](../../../../TestModules/src/ai_engines/inpainting/strategies/stable_diffusion_inpainting_strategy.py).
+Model id `runwayml/stable-diffusion-inpainting`; typical pipeline settings include fixed inference steps (~42), guidance scale (~10), native-resolution crop canvas — verify exact ints in [`stable_diffusion_inpainting_strategy.py`](../../../../ai-pipeline/src/ai_engines/inpainting/strategies/stable_diffusion_inpainting_strategy.py).
 
 ## Caching
 
@@ -16,7 +16,7 @@ LaMa and SD pipelines lazily constructed via module-level caches shared across c
 
 ## Debug artifacts
 
-Hybrid saves `debug_lama_output`, `debug_sd_output` under `TestModules/outputs/` when enabled by strategy paths.
+Hybrid saves `debug_lama_output`, `debug_sd_output` under `ai-pipeline/outputs/` when enabled by strategy paths.
 
 ## Failure boundaries
 

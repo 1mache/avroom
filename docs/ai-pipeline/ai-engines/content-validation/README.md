@@ -8,7 +8,7 @@
 
 **In one line:** BGR room photo in → active strategy → `ContentValidationResult` (pass/fail + checks + messages). Public CLIP scoring is also the tool behind auto mask pick.
 
-Code: [`TestModules/src/ai_engines/content_validation/`](../../../../TestModules/src/ai_engines/content_validation/).
+Code: [`ai-pipeline/src/ai_engines/content_validation/`](../../../../ai-pipeline/src/ai_engines/content_validation/).
 
 ## Detail pages
 

@@ -22,7 +22,7 @@ SAM_DEFAULT_URL = f"https://dl.fbaipublicfiles.com/segment_anything/{SAM_CHECKPO
 
 
 def _get_default_checkpoint_path() -> Path:
-    # ai_engines/segmentation/strategies/<this file> -> 4 levels up to TestModules/.
+    # ai_engines/segmentation/strategies/<this file> -> 4 levels up to ai-pipeline/.
     current_dir = Path(__file__).resolve().parent
     return (current_dir / ".." / ".." / ".." / ".." / "checkpoints" / SAM_CHECKPOINT_NAME).resolve()
 
@@ -31,7 +31,7 @@ def _resolve_checkpoint_path() -> Path:
     """Resolve SAM checkpoint location with the legacy 3-step lookup.
 
     1. Honor ``SAM_CHECKPOINT_PATH`` env var if set (must exist).
-    2. Use ``TestModules/checkpoints/<name>`` if present.
+    2. Use ``ai-pipeline/checkpoints/<name>`` if present.
     3. Optionally auto-download from ``SAM_CHECKPOINT_URL`` (default Meta CDN)
        when ``SAM_AUTO_DOWNLOAD`` is truthy (default ``"1"``).
     """

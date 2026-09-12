@@ -2,7 +2,7 @@
 
 ## `ObjectRemover.remove_object` — full pipeline
 
-Order matches [`object_remover.py`](../../../TestModules/src/core/object_remover.py).
+Order matches [`object_remover.py`](../../../ai-pipeline/src/core/object_remover.py).
 
 1. Decode `image_bytes` if present, else load `image_path` as BGR.
 2. **Depth** — `DepthMappingFacade.map_depth(image)` produces single-channel depth.

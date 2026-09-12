@@ -16,14 +16,14 @@ class DebugImageSaver:
     """Write intermediate / debug images to a fixed `outputs/` directory.
 
     The output directory is resolved relative to the repository's
-    ``TestModules/`` folder (i.e. two parents above this file), so that all
+    ``ai-pipeline/`` folder (i.e. two parents above this file), so that all
     pipeline stages share one canonical location regardless of which entry
     point triggered them.
     """
 
     def __init__(self, output_folder_name: str = _DEFAULT_OUTPUT_FOLDER) -> None:
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        # Go two levels up: utils -> src -> TestModules.
+        # Go two levels up: utils -> src -> ai-pipeline.
         self.project_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
         self.output_dir = os.path.join(self.project_root, output_folder_name)
         os.makedirs(self.output_dir, exist_ok=True)

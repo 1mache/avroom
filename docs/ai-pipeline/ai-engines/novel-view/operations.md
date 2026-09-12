@@ -66,7 +66,7 @@ Set `HF_TOKEN` in `fastApi-app/.env` (loaded by `main.py` via `load_dotenv()`) f
 
 `POST /images/novel-view` uses `MeshRenderNovelViewStrategy` (trimesh + pyrender). Requires:
 
-- `pyrender` and `PyOpenGL` (see `requirements.txt` / `TestModules/pyproject.toml`)
+- `pyrender` and `PyOpenGL` (see `requirements.txt` / `ai-pipeline/pyproject.toml`)
 - A working offscreen OpenGL context (GPU display on Windows; on headless Linux try `PYOPENGL_PLATFORM=egl` or `osmesa`)
 
 First call per object may still be slow if the GLB must be generated; subsequent rotations of the same object only rasterize.
@@ -85,14 +85,14 @@ First call per object may still be slow if the GLB must be generated; subsequent
 From repo root (requires deps; CUDA recommended for Zero123):
 
 ```bash
-python TestModules/tests/test_novel_view_stable_zero123.py [path/to/cutout.png]
-pytest TestModules/tests/test_mesh_render_novel_view.py
+python ai-pipeline/tests/test_novel_view_stable_zero123.py [path/to/cutout.png]
+pytest ai-pipeline/tests/test_mesh_render_novel_view.py
 ```
 
 First Zero123 run downloads `kxic/stable-zero123` (~5 GB). Debug outputs:
 
-- `TestModules/outputs/novel_view_rotation_debug/preprocessing/` — stages 00–05 per azimuth
-- `TestModules/outputs/novel_view_rotation_debug/final_results/` — generated novel views
+- `ai-pipeline/outputs/novel_view_rotation_debug/preprocessing/` — stages 00–05 per azimuth
+- `ai-pipeline/outputs/novel_view_rotation_debug/final_results/` — generated novel views
 
 ## Pose direction constants (Python)
 
@@ -167,7 +167,7 @@ Responses echo optional direction fields and return the resolved signed pose val
 
 ## Errors
 
-- **`StableZero123NovelViewError`** — inference or pipeline failure inside TestModules. Load failures hint that `stabilityai/stable-zero123` is ckpt-only.
+- **`StableZero123NovelViewError`** — inference or pipeline failure inside ai-pipeline. Load failures hint that `stabilityai/stable-zero123` is ckpt-only.
 - HTTP **404** — cutout missing (run inpaint first).
 - HTTP **422** — invalid pose direction combination (e.g. negative magnitude with a direction set).
 - HTTP **500** — model load or inference failure (`logger.exception` before raise).

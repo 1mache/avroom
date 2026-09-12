@@ -105,7 +105,7 @@ uvicorn main:app --reload --port 8000
 For the pipeline call to actually succeed you also need the AI pipeline installed:
 
 ```bash
-pip install -e ./TestModules
+pip install -e ./ai-pipeline
 ```
 
 (Already declared on line 1 of the root [`requirements.txt`](../../requirements.txt).)

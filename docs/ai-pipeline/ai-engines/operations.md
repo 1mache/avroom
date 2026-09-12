@@ -11,4 +11,4 @@ Heavy stacks (HF depth pipelines, SAM predictor, LaMa, SD pipe) are created behi
 
 ## Debugging
 
-Most debug PNGs land under `TestModules/outputs/`; filenames differ per domain — see depth/segmentation/inpainting `operations.md` pages.
+Most debug PNGs land under `ai-pipeline/outputs/`; filenames differ per domain — see depth/segmentation/inpainting `operations.md` pages.

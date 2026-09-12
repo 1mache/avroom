@@ -30,7 +30,7 @@ Previous refresh (2026-08-14):
 - Documented the entire `/debug` router for the first time (it existed on the backend before this refresh but had no docs coverage): `POST /debug/validate`, `POST /debug/depth-map`, `POST /debug/sam-everything` — see [backend/api-endpoints.md](backend/api-endpoints.md#debug-endpoints), [backend/schemas.md](backend/schemas.md#debug), and the `DEBUG_ENDPOINTS` gate in [backend/settings-and-storage.md](backend/settings-and-storage.md).
 - Documented the new Pipeline Debug screen (`DebugScreen`), reachable from the dashboard header's flask icon: [frontend/components.md](frontend/components.md#debugscreen), [frontend/user-flow.md](frontend/user-flow.md#pipeline-debug-screen), [frontend/api-integration.md](frontend/api-integration.md#debug-endpoints), [frontend/state-and-types.md](frontend/state-and-types.md#typesdebugts), [frontend/styling.md](frontend/styling.md).
 - Documented `ImageValidator.validate_all` (runs every technical check without early-exit, unlike `validate()`) and SAM `predict_everything`/`get_all_masks_for_image` (prompt-free segmentation, added for the debug endpoints) plus its new quality-threshold params — see [ai-pipeline/ai-engines/segmentation/contracts.md](ai-pipeline/ai-engines/segmentation/contracts.md) and [components.md](ai-pipeline/ai-engines/segmentation/components.md).
-- Documented `TestModules/src/utils/mask_visualizer.py` (`distinct_color`, `colorize_depth`, `overlay_masks`) — [ai-pipeline/utils/components.md](ai-pipeline/utils/components.md).
+- Documented `ai-pipeline/src/utils/mask_visualizer.py` (`distinct_color`, `colorize_depth`, `overlay_masks`) — [ai-pipeline/utils/components.md](ai-pipeline/utils/components.md).
 - Fixed a stale line-number reference to the CORS middleware block in `main.py` (moved when `expose_headers` was added) and fixed a dead link to a nonexistent `.cursor/skills/` path in this file.
 
 If you change architecture, run the `update-docs` skill (see [`CLAUDE.md`](../CLAUDE.md) for how skills are invoked in this repo) to keep these files in sync with the code.
@@ -61,7 +61,7 @@ docs/
 ├── docs-map.md          - quick index of where to find what
 ├── backend/             - FastAPI service in fastApi-app/
 ├── frontend/            - React SPA in react-front/
-└── ai-pipeline/         - avroom_object_removal package in TestModules/
+└── ai-pipeline/         - avroom_object_removal package in ai-pipeline/
 ```
 
 Product language (Room, Origin Photo, Cutout, …) lives in [`CONTEXT.md`](../CONTEXT.md) at the repo root, not under `docs/`.
@@ -85,7 +85,7 @@ AI pipeline docs: each subsystem folder has a short **README** (overview); deepe
 | ------------------------------------- | ------------------------------- | ---------------------------------------------- |
 | Frontend SPA                          | [react-front/](../react-front/) | [frontend/README.md](frontend/README.md)       |
 | FastAPI backend                       | [fastApi-app/](../fastApi-app/) | [backend/README.md](backend/README.md)         |
-| AI pipeline (`avroom_object_removal`) | [TestModules/](../TestModules/) | [ai-pipeline/README.md](ai-pipeline/README.md) |
+| AI pipeline (`avroom_object_removal`) | [ai-pipeline/](../ai-pipeline/) | [ai-pipeline/README.md](ai-pipeline/README.md) |
 
 ## Source of truth
 

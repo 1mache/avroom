@@ -88,7 +88,7 @@ graph TB
         PG[(Postgres<br>sessions, objects, jobs)]
         Blobs[(Local disk<br>cutouts, GLBs, caches)]
     end
-    subgraph Pipeline["TestModules — avroom_object_removal"]
+    subgraph Pipeline["ai-pipeline — avroom_object_removal"]
         AI[ObjectRemover<br>depth · SAM · inpaint · 3D]
     end
 
@@ -98,7 +98,7 @@ graph TB
     API --> Blobs
 ```
 
-The AI pipeline is imported in-process (`pip install -e ./TestModules`), not a separate service.
+The AI pipeline is imported in-process (`pip install -e ./ai-pipeline`), not a separate service.
 Metadata (sessions, objects, jobs) lives in Postgres; blob artifacts (cutout PNGs, GLBs, novel-view
 caches) stay on local disk.
 
@@ -149,7 +149,7 @@ knobs that matter most:
 
 ```
 avroom/
-├── TestModules/    # AI pipeline (avroom_object_removal): depth, segmentation, inpainting, 3D
+├── ai-pipeline/    # AI pipeline (avroom_object_removal): depth, segmentation, inpainting, 3D
 ├── fastApi-app/    # FastAPI backend — API routes, job dispatcher, Postgres models
 └── react-front/    # React + TypeScript frontend
 ```

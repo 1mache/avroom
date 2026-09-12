@@ -6,7 +6,7 @@
 
 **In one line:** Keep numpy masks sane before inpainting and package pixels for frontend overlay previews.
 
-Code: [`TestModules/src/utils/`](../../../TestModules/src/utils/).
+Code: [`ai-pipeline/src/utils/`](../../../ai-pipeline/src/utils/).
 
 ## Detail pages
 

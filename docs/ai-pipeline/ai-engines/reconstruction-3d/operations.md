@@ -31,7 +31,7 @@ recon_trellis = Reconstruction3DFacade(TrellisReconstructionStrategy())
 
 TripoSR inference code is vendored under:
 
-- `TestModules/src/ai_engines/reconstruction_3d/_backends/triposr/`
+- `ai-pipeline/src/ai_engines/reconstruction_3d/_backends/triposr/`
 
 The strategy lazy-loads weights via Hugging Face Hub on first use (standard HF cache behavior).
 
@@ -39,7 +39,7 @@ The strategy lazy-loads weights via Hugging Face Hub on first use (standard HF c
 
 OpenLRM v1.0.0 inference code is vendored under:
 
-- `TestModules/src/ai_engines/reconstruction_3d/_backends/openlrm_v10/`
+- `ai-pipeline/src/ai_engines/reconstruction_3d/_backends/openlrm_v10/`
 
 This keeps all OpenLRM implementation details private to the `reconstruction_3d` domain (under `_backends/`, not `strategies/`) and avoids adding a git submodule.
 
@@ -61,7 +61,7 @@ OpenLRM weights are downloaded on first use via `huggingface_hub.hf_hub_download
 - **Override**: set `OPENLRM_WEIGHT_CACHE` to redirect weights (e.g. to a dedicated drive or a `.gitignore`'d folder).
 - **Hugging Face cache**: auxiliary model downloads (e.g. DINO weights) may also use the Hugging Face cache under `~/.cache/huggingface` unless `HF_HOME` is set. TripoSR weights (`stabilityai/TripoSR`) also land here.
 
-No weights are written into tracked project paths (no files under `TestModules/` are used as a cache destination).
+No weights are written into tracked project paths (no files under `ai-pipeline/` are used as a cache destination).
 
 ## Trellis backend (optional, not used by default or as fallback)
 

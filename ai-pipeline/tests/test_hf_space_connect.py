@@ -5,7 +5,7 @@ Loads ``fastApi-app/.env`` for ``HUNYUAN3D_SPACE_ID``, ``TRELLIS_SPACE_ID``, and
 
 Run from repo root (needs network)::
 
-    python -m pytest TestModules/tests/test_hf_space_connect.py -v
+    python -m pytest ai-pipeline/tests/test_hf_space_connect.py -v
 """
 
 from __future__ import annotations

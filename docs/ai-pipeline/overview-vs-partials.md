@@ -14,4 +14,4 @@ Each subsystem folder under `docs/ai-pipeline/` follows one rule:
 
 Not every subsection needs all four files; omit a partial when it would duplicate another page or add no signal.
 
-Upstream code roots remain [`TestModules/src/`](../../TestModules/src/).
+Upstream code roots remain [`ai-pipeline/src/`](../../ai-pipeline/src/).

@@ -50,7 +50,7 @@ services:
       # of it, turning a 2-minute restart into a 20-minute one.
       - hf-cache:/root/.cache/huggingface
       # SAM checkpoint, fetched once via SAM_AUTO_DOWNLOAD above.
-      - sam-checkpoints:/app/TestModules/checkpoints
+      - sam-checkpoints:/app/ai-pipeline/checkpoints
       # Actual user data: uploaded photos, cutout PNGs, generated GLBs,
       # novel-view caches. Postgres holds the metadata that points at these,
       # so this volume and the db volume must be kept or discarded together.

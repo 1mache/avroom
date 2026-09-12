@@ -93,7 +93,7 @@ class EnhancedEdgeDepthMappingStrategy(DepthMappingStrategy):
                 neighbours. 75.0 provides broad spatial reach while the colour
                 sigma keeps influence within the same depth layer.
             depth_map_saver: Optional saver for per-stage debug PNGs under
-                ``TestModules/outputs/depthMaps/``. Defaults to a new
+                ``ai-pipeline/outputs/depthMaps/``. Defaults to a new
                 :class:`DebugImageSaver` targeting that folder.
         """
         self._blend: DepthMappingStrategy = (

@@ -6,7 +6,7 @@
 
 **In one line:** LaMa does bulk structure; Stable Diffusion optionally refines texture when strength is high enough.
 
-Code: [`TestModules/src/ai_engines/inpainting/`](../../../../TestModules/src/ai_engines/inpainting/).
+Code: [`ai-pipeline/src/ai_engines/inpainting/`](../../../../ai-pipeline/src/ai_engines/inpainting/).
 
 ## Detail pages
 

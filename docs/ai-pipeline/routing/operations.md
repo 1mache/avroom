@@ -2,7 +2,7 @@
 
 ## Thresholds and morphology
 
-- **`DEFAULT_BOUNDARY_VAR_THRESH`** — Variance cutoff distinguishing regimes (see constant in [`boundary_variance_routing_strategy.py`](../../../TestModules/src/routing/strategies/boundary_variance_routing_strategy.py)).
+- **`DEFAULT_BOUNDARY_VAR_THRESH`** — Variance cutoff distinguishing regimes (see constant in [`boundary_variance_routing_strategy.py`](../../../ai-pipeline/src/routing/strategies/boundary_variance_routing_strategy.py)).
 - Boundary ring dilation kernel **7×7** — influences thickness of sampled contour band.
 
 ## Expansion formulas

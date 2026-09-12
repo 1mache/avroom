@@ -11,7 +11,7 @@
 
 **When it runs:** `ObjectSegmentor` runs on `/images/segment`, then `BackgroundInpainter` runs on `/images/inpaint` after user mask choice. `ObjectRemover` remains for legacy `/images/click` and manual test scripts.
 
-Code: [`TestModules/src/core/`](../../../TestModules/src/core/).
+Code: [`ai-pipeline/src/core/`](../../../ai-pipeline/src/core/).
 
 ## Detail pages
 

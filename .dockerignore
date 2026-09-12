@@ -1,5 +1,5 @@
 # Build context is the repo root (docker-compose.yml's `api` service sets
-# `context: .`), because requirements.txt and TestModules/ both live there.
+# `context: .`), because requirements.txt and ai-pipeline/ both live there.
 # Without this file the context is tens of GB and every build crawls.
 
 # ---- Virtualenvs (multi-GB, host-specific, never valid inside the image) ----
@@ -16,10 +16,10 @@ react-front/dist/
 # SAM downloads itself when SAM_AUTO_DOWNLOAD=1; everything else comes from
 # the HuggingFace cache volume. Baking weights into the image would make it
 # enormous and force a rebuild to update them.
-TestModules/checkpoints/
-TestModules/inputs/
-TestModules/outputs/
-TestModules/depthMaps/
+ai-pipeline/checkpoints/
+ai-pipeline/inputs/
+ai-pipeline/outputs/
+ai-pipeline/depthMaps/
 **/*.pth
 **/*.pt
 **/*.ckpt

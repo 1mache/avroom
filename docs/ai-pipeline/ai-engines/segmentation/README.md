@@ -6,7 +6,7 @@
 
 **In one line:** SAM multimask → choose tight mask → optionally dilate per router.
 
-Code: [`TestModules/src/ai_engines/segmentation/`](../../../../TestModules/src/ai_engines/segmentation/).
+Code: [`ai-pipeline/src/ai_engines/segmentation/`](../../../../ai-pipeline/src/ai_engines/segmentation/).
 
 ## Detail pages
 

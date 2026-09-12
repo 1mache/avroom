@@ -17,18 +17,19 @@ import { useLassoSelect, type LassoDraft } from "../../hooks/useLassoSelect";
 import { useConflictNotices, type ConflictContext } from "../../hooks/useConflictNotices";
 import { useDashboardPreview } from "../../hooks/useDashboardPreview";
 import { useHitTesting } from "../../hooks/useHitTesting";
+import { useObjectActions } from "../../hooks/useObjectActions";
 import { useObjectDrag } from "../../hooks/useObjectDrag";
 import { useObjectResize } from "../../hooks/useObjectResize";
 import { useRotationController } from "../../hooks/useRotationController";
 import { useSessionJobs, type JobErrorContext } from "../../hooks/useSessionJobs";
 import { useSessionSync } from "../../hooks/useSessionSync";
 import { useStageFocusZoom } from "../../hooks/useStageFocusZoom";
+import { useStageGeometry } from "../../hooks/useStageGeometry";
 import type { BatchSource, VerifyMode } from "../../types/api";
 import { collectArmedOverlays } from "../../utils/armedBatch";
 import type { JobInfo } from "../../types/api";
 import {
   effectiveDisplayBounds,
-  hasCloneSiblings,
   isDrawnOnStage,
   type ClickPosition,
 } from "../../types/session";
@@ -36,14 +37,11 @@ import {
   batchBoxStageStyle,
   findObjectAtPoint,
   getBoundsStageRect,
-  getContainedImageRect,
   inflateAroundCenter,
   rectStyle,
   toNaturalPoint,
   unzoomStagePoint,
-  type Rect,
   type ResizeHandle,
-  type Size,
 } from "../../utils/stageGeometry";
 import {
   buildSnapshotLayers,
@@ -140,8 +138,6 @@ export interface WorkspaceScreenProps {
  * and the stage/toolbar/rail render.
  */
 export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit }) => {
-  const stageRef = useRef<HTMLDivElement>(null);
-  const renderedRectRef = useRef<Rect | null>(null);
 
   // The session is fixed for this screen's lifetime (App remounts on change),
   // so imageId is simply the prop — no picking, no null state.
@@ -151,8 +147,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const [mapsWarming, setMapsWarming] = useState(true);
   const mapsWarmGenerationRef = useRef(0);
 
-  const [naturalSize, setNaturalSize] = useState<Size | null>(null);
-  const [stageSize, setStageSize] = useState<Size | null>(null);
+  const { stageRef, naturalSize, renderedRect, handleImageLoad } = useStageGeometry(uid);
 
   // pendingSeeds: foreground clicks in natural-image pixels — shown while
   // collecting multi-point seeds and kept on screen until the mask picker closes.
@@ -180,7 +175,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // Object id awaiting delete confirmation. Deletion is permanent (the
   // background keeps its inpainted hole), so the trash button arms this
   // instead of deleting directly.
-  const [pendingDeleteObjectId, setPendingDeleteObjectId] = useState<number | null>(null);
   const stageInputRef = useRef<HTMLDivElement | null>(null);
 
   const conflictNotices = useConflictNotices();
@@ -405,54 +399,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uid, startMapsWarm]);
 
-  // --- stage geometry -----------------------------------------------------
-
-  const measureStage = useCallback(() => {
-    const stage = stageRef.current;
-    if (!stage) {
-      return;
-    }
-
-    const next = { width: stage.clientWidth, height: stage.clientHeight };
-    setStageSize((previous) =>
-      previous && previous.width === next.width && previous.height === next.height
-        ? previous
-        : next,
-    );
-  }, []);
-
-  useEffect(() => {
-    const stage = stageRef.current;
-    if (!stage) {
-      return;
-    }
-
-    measureStage();
-    const observer = new ResizeObserver(measureStage);
-    observer.observe(stage);
-    return () => observer.disconnect();
-  }, [measureStage, imageId]);
-
-  const handleImageLoad: React.ReactEventHandler<HTMLImageElement> = useCallback(
-    (event) => {
-      setNaturalSize({
-        width: event.currentTarget.naturalWidth,
-        height: event.currentTarget.naturalHeight,
-      });
-      measureStage();
-    },
-    [measureStage],
-  );
-
-  const renderedRect = useMemo(
-    () => (stageSize && naturalSize ? getContainedImageRect(stageSize, naturalSize) : null),
-    [stageSize, naturalSize],
-  );
-
-  useEffect(() => {
-    renderedRectRef.current = renderedRect;
-  }, [renderedRect]);
-
   // --- dashboard thumbnail --------------------------------------------------
 
   const capturePreview = useDashboardPreview(uid, {
@@ -543,38 +489,16 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
   // --- drag-a-box batch select (hook wired after handlers below) -----------
 
-  const selectObject = useCallback(
-    (objectId: number | null) => {
-      jobs.setSelectedObjectId(objectId);
-      // Rotation is scoped to whichever object is selected — switching away
-      // closes the angle picker.
-      rotation.cancelRotation();
-      setTool("select");
-      setPendingSeeds([]);
-    },
-    [jobs.setSelectedObjectId, rotation.cancelRotation],
-  );
-
-  const handleToggleHidden = useCallback(
-    (objectId: number) => {
-      const wasSelected = jobs.selectedObjectId === objectId;
-      jobs.toggleHidden(objectId);
-      if (wasSelected) {
-        rotation.cancelRotation();
-      }
-    },
-    [jobs.selectedObjectId, jobs.toggleHidden, rotation.cancelRotation],
-  );
-
-  // "Show original" permanently drops the baked rotation (back to the
-  // pristine cutout) rather than just previewing it -- a one-way revert,
-  // not a toggle. jobs.revertRotation persists this via DELETE .../rotation.
-  const handleToggleShowOriginal = useCallback(
-    (objectId: number) => {
-      void jobs.revertRotation(objectId);
-    },
-    [jobs.revertRotation],
-  );
+  const clearPendingSeeds = useCallback(() => setPendingSeeds([]), []);
+  const objectActions = useObjectActions({
+    jobs,
+    cancelRotation: rotation.cancelRotation,
+    disarmTool,
+    clearPendingSeeds,
+    forgetShowOriginal: clearShowOriginal,
+    onError: setError,
+  });
+  const { selectObject } = objectActions;
 
   const fireSegmentFromSeeds = useCallback(
     (seeds: ClickPosition[]) => {
@@ -763,84 +687,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     void jobs.discardMaskPicker(jobId);
     setPendingSeeds([]);
   }, [jobs.currentSegmentJobId, jobs.discardMaskPicker]);
-
-  const handleCopy = useCallback(() => {
-    if (jobs.selectedObjectId === null) {
-      return;
-    }
-    if (!selectedObject?.uuid) {
-      setError("This object is from an older room and can't be duplicated.");
-      return;
-    }
-    void jobs.duplicateObject(jobs.selectedObjectId);
-  }, [jobs.duplicateObject, jobs.selectedObjectId, selectedObject]);
-
-  const requestDeleteObject = useCallback(
-    (objectId: number) => {
-      const target = jobs.objects.find((o) => o.objectId === objectId);
-      if (!target?.uuid) {
-        setError("This object is from an older room and can't be deleted.");
-        return;
-      }
-      rotation.cancelRotation();
-      if (hasCloneSiblings(target, jobs.objects)) {
-        void jobs.deleteObject(objectId);
-        return;
-      }
-      setPendingDeleteObjectId(objectId);
-    },
-    [jobs.deleteObject, jobs.objects, rotation.cancelRotation],
-  );
-
-  const handleDeleteObject = useCallback(() => {
-    if (jobs.selectedObjectId === null) {
-      return;
-    }
-    requestDeleteObject(jobs.selectedObjectId);
-  }, [jobs.selectedObjectId, requestDeleteObject]);
-
-  const handleClearObject3d = useCallback(
-    (objectId: number) => {
-      if (jobs.selectedObjectId === objectId) {
-        rotation.cancelRotation();
-      }
-      void jobs.clearObject3d(objectId);
-    },
-    [jobs.clearObject3d, jobs.selectedObjectId, rotation.cancelRotation],
-  );
-
-  const handleResetObjectChanges = useCallback(
-    (objectId: number) => {
-      if (jobs.selectedObjectId === objectId) {
-        rotation.cancelRotation();
-      }
-      setShowOriginalIds((prev) => {
-        if (!prev.has(objectId)) {
-          return prev;
-        }
-        const next = new Set(prev);
-        next.delete(objectId);
-        return next;
-      });
-      void jobs.resetObjectChanges(objectId);
-    },
-    [jobs.resetObjectChanges, jobs.selectedObjectId, rotation.cancelRotation],
-  );
-
-  const pendingDeleteObject =
-    jobs.objects.find((o) => o.objectId === pendingDeleteObjectId) ?? null;
-
-  const handleConfirmDeleteObject = useCallback(async () => {
-    if (pendingDeleteObjectId === null) {
-      return;
-    }
-    await jobs.deleteObject(pendingDeleteObjectId);
-    setPendingDeleteObjectId(null);
-  }, [jobs.deleteObject, pendingDeleteObjectId]);
-
-  const handleCancelDeleteObject = useCallback(() => {
-    setPendingDeleteObjectId(null);
-  }, []);
 
   const handleRenameObject = useCallback(
     (objectId: number, uuid: string, name: string | null) => {
@@ -1297,9 +1143,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           isPreparing3D: rotation.isPreparing3D || Boolean(rotation.activeGenerate3DJobId),
           onRotate: rotation.handleRotate,
           isDuplicating: jobs.isDuplicating,
-          onCopy: handleCopy,
+          onCopy: objectActions.copySelected,
           isDeleting: jobs.isDeleting,
-          onDelete: handleDeleteObject,
+          onDelete: objectActions.deleteSelected,
         }}
         smartPaste={smartPaste}
         history={history}
@@ -1533,8 +1379,8 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
               }
             }}
             generate3DDisabled={jobs.isBatching || armedBatch.isApproving}
-            onToggleHidden={handleToggleHidden}
-            onToggleShowOriginal={handleToggleShowOriginal}
+            onToggleHidden={objectActions.toggleHidden}
+            onToggleShowOriginal={objectActions.toggleShowOriginal}
             onRenameObject={handleRenameObject}
             onDuplicateObject={(objectId) => {
               const target = jobs.objects.find((o) => o.objectId === objectId);
@@ -1544,9 +1390,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
               }
               void jobs.duplicateObject(objectId);
             }}
-            onDeleteObject={requestDeleteObject}
-            onClearObject3d={handleClearObject3d}
-            onResetObjectChanges={handleResetObjectChanges}
+            onDeleteObject={objectActions.requestDelete}
+            onClearObject3d={objectActions.clearObject3d}
+            onResetObjectChanges={objectActions.resetChanges}
             onImportObject={(file) => {
               void jobs.importObject(file);
             }}
@@ -1568,12 +1414,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
             : null
         }
         pendingDelete={
-          pendingDeleteObject
+          objectActions.pendingDeleteObject
             ? {
-                object: pendingDeleteObject,
+                object: objectActions.pendingDeleteObject,
                 busy: jobs.isDeleting,
-                onConfirm: () => void handleConfirmDeleteObject(),
-                onCancel: handleCancelDeleteObject,
+                onConfirm: () => void objectActions.confirmDelete(),
+                onCancel: objectActions.cancelDelete,
               }
             : null
         }

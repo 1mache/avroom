@@ -289,3 +289,51 @@ export function moveArmedJob(jobs: ArmedJob[], id: string, direction: "up" | "do
   next.splice(target, 0, row);
   return next;
 }
+
+/** One armed job's contribution to the stage overlay, tagged with selection. */
+interface ArmedOverlay<T> {
+  id: string;
+  selected: boolean;
+  value: T;
+}
+
+export interface ArmedOverlays {
+  boxes: ArmedOverlay<Extract<ArmedJobSource, { kind: "box" }>>[];
+  lassos: ArmedOverlay<ClickPosition[]>[];
+  seeds: ArmedOverlay<ClickPosition>[];
+}
+
+/**
+ * Flatten the armed batch queue into the three overlay lists the stage draws.
+ *
+ * One pass instead of three near-identical memos: a box contributes one
+ * entry, a lasso or a click job contributes one per region/point, and every
+ * entry carries whether its owning job is the selected one.
+ */
+export function collectArmedOverlays(
+  jobs: ArmedJob[],
+  selectedJobId: string | null,
+): ArmedOverlays {
+  const overlays: ArmedOverlays = { boxes: [], lassos: [], seeds: [] };
+
+  for (const job of jobs) {
+    const selected = job.id === selectedJobId;
+    switch (job.source.kind) {
+      case "box":
+        overlays.boxes.push({ id: job.id, selected, value: job.source });
+        break;
+      case "lasso":
+        job.source.regions.forEach((polygon, index) => {
+          overlays.lassos.push({ id: `${job.id}-${index}`, selected, value: polygon });
+        });
+        break;
+      case "clicks":
+        job.source.points.forEach((point, index) => {
+          overlays.seeds.push({ id: `${job.id}-${index}`, selected, value: point });
+        });
+        break;
+    }
+  }
+
+  return overlays;
+}

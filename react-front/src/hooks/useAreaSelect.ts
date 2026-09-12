@@ -32,7 +32,8 @@ export interface AreaDraft {
 interface UseAreaSelectOptions {
   areaDraft: AreaDraft | null;
   setAreaDraft: Dispatch<SetStateAction<AreaDraft | null>>;
-  setAreaMode: Dispatch<SetStateAction<boolean>>;
+  /** Called on pointer-up to return the toolbar to its resting state. */
+  disarm: () => void;
   /** Client → natural-image (must apply any active stage zoom). */
   clientToNatural: (clientX: number, clientY: number) => ClickPosition | null;
   /** Called once on pointer-up when the box is large enough — does not submit. */
@@ -46,7 +47,7 @@ interface UseAreaSelectOptions {
 export function useAreaSelect({
   areaDraft,
   setAreaDraft,
-  setAreaMode,
+  disarm,
   clientToNatural,
   onBoxReady,
 }: UseAreaSelectOptions) {
@@ -69,7 +70,7 @@ export function useAreaSelect({
     const handleUp = () => {
       const draft = areaDraftRef.current;
       setAreaDraft(null);
-      setAreaMode(false);
+      disarm();
       if (!draft) {
         return;
       }
@@ -84,5 +85,5 @@ export function useAreaSelect({
       window.removeEventListener("pointermove", handleMove);
       window.removeEventListener("pointerup", handleUp);
     };
-  }, [areaDraft, onBoxReady, setAreaDraft, setAreaMode]);
+  }, [areaDraft, onBoxReady, setAreaDraft, disarm]);
 }

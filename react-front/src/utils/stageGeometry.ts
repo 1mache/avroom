@@ -2,7 +2,16 @@
 // `object-fit: contain`, so almost every interaction (drag, hit-test, 3D frame
 // placement) has to convert between three spaces: natural-image pixels, the
 // rendered (letterboxed) rect, and stage-local CSS pixels.
-import type { ClickPosition, CutoutAlphaBounds } from "../types/session";
+import type { CSSProperties } from "react";
+
+import type { ClickPosition, CutoutAlphaBounds, CutoutObject } from "../types/session";
+import { effectiveCutoutBounds, effectiveDisplayBounds } from "../types/session";
+import {
+  cssPoseOf,
+  hasCss3dPose,
+  isVolumetricObject,
+  mapPointThroughInverseCss3d,
+} from "./css3dTransform";
 import { isDrawnOnStage } from "../types/session";
 
 export interface Size {
@@ -378,3 +387,91 @@ export const batchBoxStageStyle = (
   width: `${((box.x1 - box.x0) / naturalSize.width) * renderedRect.width}px`,
   height: `${((box.y1 - box.y0) / naturalSize.height) * renderedRect.height}px`,
 });
+
+/** Absolutely-positioned CSS box for an already-computed pixel rect. */
+export const rectStyle = (rect: {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}): CSSProperties => ({
+  position: "absolute",
+  left: `${rect.left}px`,
+  top: `${rect.top}px`,
+  width: `${rect.width}px`,
+  height: `${rect.height}px`,
+});
+
+export interface HitTestOptions {
+  /** Every object currently drawn on the stage, in any order. */
+  objects: CutoutObject[];
+  selectedObjectId: number | null;
+  /** Pointer position in natural-image pixels. */
+  point: ClickPosition;
+  /** Object to leave out, e.g. one whose 3D mesh owns its region right now. */
+  skipObjectId?: number | null;
+  isShowingOriginal: (obj: CutoutObject) => boolean;
+  /** Alpha (0-255) of one object's cutout at a point in its own local space. */
+  sampleAlpha: (objectId: number, x: number, y: number) => number;
+}
+
+/**
+ * Find the topmost object whose cutout is actually opaque under `point`.
+ *
+ * Cutout PNGs are full-frame with transparency outside the object, so DOM
+ * stacking cannot answer this -- a topmost overlay would swallow every click.
+ * Hence: walk the objects in hit order, reject on the cheap display-bounds
+ * box first, map the point back through whatever transform the object is
+ * drawn with (CSS-3D pose, or a plain scale), then sample alpha.
+ *
+ * Returns null when the pointer is over bare background.
+ */
+export function findObjectAtPoint({
+  objects,
+  selectedObjectId,
+  point,
+  skipObjectId = null,
+  isShowingOriginal,
+  sampleAlpha,
+}: HitTestOptions): CutoutObject | null {
+  for (const obj of buildHitTestOrder(objects, selectedObjectId)) {
+    if (obj.objectId === skipObjectId) {
+      continue;
+    }
+
+    const local = { x: point.x - obj.offset.x, y: point.y - obj.offset.y };
+    const showOriginal = isShowingOriginal(obj);
+    const baseBounds = effectiveCutoutBounds(obj, showOriginal);
+    const bounds = effectiveDisplayBounds(obj, showOriginal);
+
+    if (
+      bounds &&
+      (local.x < bounds.left ||
+        local.x > bounds.right ||
+        local.y < bounds.top ||
+        local.y > bounds.bottom)
+    ) {
+      continue;
+    }
+
+    let samplePoint = local;
+    if (baseBounds && !isVolumetricObject(obj.is3d) && hasCss3dPose(cssPoseOf(obj))) {
+      samplePoint = mapPointThroughInverseCss3d(
+        local,
+        {
+          x: (baseBounds.left + baseBounds.right) / 2,
+          y: (baseBounds.top + baseBounds.bottom) / 2,
+        },
+        cssPoseOf(obj),
+        obj.displayScale,
+      );
+    } else if (baseBounds && obj.displayScale !== 1) {
+      samplePoint = mapPointThroughInverseScale(local, baseBounds, obj.displayScale);
+    }
+
+    if (sampleAlpha(obj.objectId, samplePoint.x, samplePoint.y) > ALPHA_HIT_THRESHOLD) {
+      return obj;
+    }
+  }
+  return null;
+}

@@ -1,13 +1,15 @@
 // Builds composited room images: the inpainted background with every visible
 // cutout at its current position — the room exactly as the user left it.
 import { authedFetch } from "../api/authToken";
-import type { ClickPosition } from "../types/session";
+import { effectiveCutoutBounds, effectiveCutoutSrc } from "../types/session";
+import type { ClickPosition, CutoutObject } from "../types/session";
 import {
   css3dTransform,
+  cssPoseOf,
   hasCss3dPose,
   type Css3dPose,
 } from "./css3dTransform";
-import type { Size } from "./stageGeometry";
+import { compositePreviewOntoCanvas, inflateBounds, type Size } from "./stageGeometry";
 
 /** Long edge of the stored dashboard thumbnail. Cards never render larger than this. */
 export const PREVIEW_MAX_WIDTH = 640;
@@ -166,6 +168,72 @@ export async function composeSessionPreview(
 }
 
 /** Full-resolution PNG of the stage as the user sees it (background + cutouts). */
+/**
+ * Build the ordered layer list for a stage snapshot.
+ *
+ * Two things make this more than a `map`: the selected object has to be
+ * painted last so the snapshot matches what the user sees, and an object
+ * whose 3D angle picker is open contributes a canvas capture of the mesh
+ * rather than its (currently hidden) 2D cutout. A null entry means that
+ * capture was unavailable and the object is skipped.
+ */
+export async function buildSnapshotLayers({
+  objects,
+  selectedObjectId,
+  naturalSize,
+  isShowingOriginal,
+  meshCaptureObjectId,
+  captureMesh,
+  meshPadding,
+}: {
+  objects: CutoutObject[];
+  selectedObjectId: number | null;
+  naturalSize: Size;
+  isShowingOriginal: (obj: CutoutObject) => boolean;
+  /** Object currently shown as a mesh, or null when none is. */
+  meshCaptureObjectId: number | null;
+  /** Snapshot data URL of the live mesh, or null/undefined if unavailable. */
+  captureMesh: () => string | null | undefined;
+  meshPadding: number;
+}): Promise<PreviewLayer[]> {
+  const others = objects.filter((obj) => obj.objectId !== selectedObjectId);
+  const selected =
+    selectedObjectId !== null
+      ? objects.find((obj) => obj.objectId === selectedObjectId)
+      : undefined;
+  const paintOrder = selected ? [...others, selected] : others;
+
+  const layers = await Promise.all(
+    paintOrder.map(async (obj): Promise<PreviewLayer | null> => {
+      const showOriginal = isShowingOriginal(obj);
+      const bounds = effectiveCutoutBounds(obj, showOriginal);
+
+      if (obj.objectId === meshCaptureObjectId) {
+        const snapshotDataUrl = captureMesh();
+        if (!snapshotDataUrl) {
+          return null;
+        }
+        const src = await compositePreviewOntoCanvas(
+          snapshotDataUrl,
+          obj.cutoutAlphaBounds ? inflateBounds(obj.cutoutAlphaBounds, meshPadding) : null,
+          naturalSize,
+        );
+        return { src, offset: obj.offset, displayScale: obj.displayScale, bounds };
+      }
+
+      return {
+        src: effectiveCutoutSrc(obj, showOriginal),
+        offset: obj.offset,
+        displayScale: obj.displayScale,
+        bounds,
+        cssPose: !showOriginal && obj.is3d === false ? cssPoseOf(obj) : null,
+      };
+    }),
+  );
+
+  return layers.filter((layer): layer is PreviewLayer => layer !== null);
+}
+
 export async function composeStageSnapshot(
   backgroundSrc: string,
   layers: PreviewLayer[],

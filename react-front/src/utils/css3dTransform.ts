@@ -16,6 +16,21 @@ export const IDENTITY_CSS_POSE: Css3dPose = {
   perspectivePx: DEFAULT_CSS_PERSPECTIVE_PX,
 };
 
+/** Read one object's persisted CSS-3D pose off its metadata fields. */
+export function cssPoseOf(obj: {
+  cssRotateXDeg: number;
+  cssRotateYDeg: number;
+  cssRotateZDeg: number;
+  cssPerspectivePx: number;
+}): Css3dPose {
+  return {
+    rotateXDeg: obj.cssRotateXDeg,
+    rotateYDeg: obj.cssRotateYDeg,
+    rotateZDeg: obj.cssRotateZDeg,
+    perspectivePx: obj.cssPerspectivePx,
+  };
+}
+
 /** True when any angle is non-zero (perspective alone is not a "pose"). */
 export function hasCss3dPose(pose: Css3dPose): boolean {
   return pose.rotateXDeg !== 0 || pose.rotateYDeg !== 0 || pose.rotateZDeg !== 0;

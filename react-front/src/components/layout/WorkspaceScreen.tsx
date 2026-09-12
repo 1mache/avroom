@@ -26,26 +26,22 @@ import { useSessionJobs, type JobErrorContext } from "../../hooks/useSessionJobs
 import { useSessionSync } from "../../hooks/useSessionSync";
 import { useStageFocusZoom } from "../../hooks/useStageFocusZoom";
 import type { BatchSource, VerifyMode } from "../../types/api";
-import type { ArmedJobSource } from "../../types/armedBatch";
+import { collectArmedOverlays } from "../../utils/armedBatch";
+import type { JobInfo } from "../../types/api";
 import {
-  effectiveCutoutBounds,
   effectiveCutoutSrc,
   effectiveDisplayBounds,
   hasCloneSiblings,
   isDrawnOnStage,
   type ClickPosition,
-  type CutoutObject,
 } from "../../types/session";
 import {
-  ALPHA_HIT_THRESHOLD,
   batchBoxStageStyle,
-  buildHitTestOrder,
-  compositePreviewOntoCanvas,
+  findObjectAtPoint,
   getBoundsStageRect,
   getContainedImageRect,
   inflateAroundCenter,
-  inflateBounds,
-  mapPointThroughInverseScale,
+  rectStyle,
   toNaturalPoint,
   unzoomStagePoint,
   type Rect,
@@ -53,13 +49,7 @@ import {
   type Size,
 } from "../../utils/stageGeometry";
 import {
-  css3dTransform,
-  hasCss3dPose,
-  isVolumetricObject,
-  mapPointThroughInverseCss3d,
-  type Css3dPose,
-} from "../../utils/css3dTransform";
-import {
+  buildSnapshotLayers,
   composeStageSnapshot,
   snapshotDownloadFilename,
   triggerBlobDownload,
@@ -71,7 +61,50 @@ import { MODEL_3D_FRAME_PADDING, Model3DFrame } from "../widgets/Model3DFrame";
 import { BatchQueuePanel } from "../workspace/BatchQueuePanel";
 import { ObjectRail } from "../workspace/ObjectRail";
 import { RotationSliderBar } from "../workspace/RotationSliderBar";
+import { StageHint } from "../workspace/StageHint";
 import { Toolbar } from "../workspace/Toolbar";
+import type { ArmablePickTool, PickTool } from "../../types/tools";
+import { useCutoutStyles } from "../../hooks/useCutoutStyles";
+
+/**
+ * The toolbar's one-line "what is happening right now" readout.
+ *
+ * Ordered early returns, not a ternary chain: the order *is* the priority,
+ * and the previous nested-ternary version had drifted to inconsistent
+ * indentation that hid which arm belonged to which test.
+ */
+function workspaceStatus(state: {
+  approvingBatch: boolean;
+  batching: boolean;
+  smartPasting: boolean;
+  jobs: JobInfo[];
+  rotating: boolean;
+  duplicating: boolean;
+  deleting: boolean;
+  mapsWarming: boolean;
+}): string | null {
+  if (state.approvingBatch) return "approving batch";
+  if (state.batching) return "batch cutting";
+  if (state.smartPasting) return "smart pasting";
+
+  const active = state.jobs.filter(
+    (job) => job.status === "queued" || job.status === "running",
+  );
+  const segmenting = active.filter((job) => job.kind === "segment").length;
+  if (segmenting > 0) {
+    return `finding masks${segmenting > 1 ? ` (${segmenting})` : ""}`;
+  }
+  const canvasWork = active.filter(
+    (job) => job.kind === "inpaint" || job.kind === "erase",
+  ).length;
+  if (canvasWork > 0) return `removing ${canvasWork}`;
+
+  if (state.rotating) return "rotating";
+  if (state.duplicating) return "copying";
+  if (state.deleting) return "deleting";
+  if (state.mapsWarming) return "preparing maps";
+  return null;
+}
 
 const MAX_SEGMENT_SEEDS = 8;
 
@@ -132,12 +165,11 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const [naturalSize, setNaturalSize] = useState<Size | null>(null);
   const [stageSize, setStageSize] = useState<Size | null>(null);
 
-  // cutMode: scissors is armed and the next click on the photo starts a cutout.
   // pendingSeeds: foreground clicks in natural-image pixels — shown while
   // collecting multi-point seeds and kept on screen until the mask picker closes.
-  const [cutMode, setCutMode] = useState(false);
-  const [eraserMode, setEraserMode] = useState(false);
-  const [areaMode, setAreaMode] = useState(false);
+  const [tool, setTool] = useState<PickTool>("select");
+  /** Return to the resting tool. Stable, so effect deps that take it don't churn. */
+  const disarmTool = useCallback(() => setTool("select"), []);
   const [areaDraft, setAreaDraft] = useState<{
     start: ClickPosition;
     current: ClickPosition;
@@ -477,7 +509,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     setObjects: jobs.setObjects,
     setSelectedObjectId: jobs.setSelectedObjectId,
     clearShowOriginal,
-    disarmOtherTools: () => setCutMode(false),
+    disarmOtherTools: disarmTool,
     onError: (err) => setError(errorMessage(err, "Unexpected 3D generation error.")),
   });
 
@@ -543,7 +575,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       // Rotation is scoped to whichever object is selected — switching away
       // closes the angle picker.
       rotation.cancelRotation();
-      setCutMode(false);
+      setTool("select");
       setPendingSeeds([]);
     },
     [jobs.setSelectedObjectId, rotation.cancelRotation],
@@ -578,7 +610,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       if (armedBatch.batchModeRef.current) {
         armedBatch.appendClicks(seeds);
         setPendingSeeds([]);
-        setCutMode(false);
+        setTool("select");
         return;
       }
       const rounded = seeds.map((seed) => ({
@@ -590,51 +622,36 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       // same seeds as a second job, and left the numbered marker on screen
       // (visible even for a single-point click, which fires through here too).
       setPendingSeeds([]);
-      setCutMode(false);
+      setTool("select");
       jobs.runSegment(rounded[0].x, rounded[0].y, verifyMode, rounded);
     },
     [armedBatch.appendClicks, armedBatch.batchModeRef, jobs.runSegment, verifyMode],
   );
 
-  const handleCut = useCallback(() => {
-    rotation.cancelRotation();
-    setAreaMode(false);
-    setEraserMode(false);
-    setLassoDraft(null);
-    setPendingEraseRegions([]);
-    if (!armedBatch.batchMode) {
-      setPendingBatchSource(null);
-    }
-    setPendingSeeds([]);
-    setCutMode((armed) => !armed);
-  }, [armedBatch.batchMode, rotation.cancelRotation]);
-
-  const handleEraser = useCallback(() => {
-    rotation.cancelRotation();
-    setCutMode(false);
-    setAreaMode(false);
-    if (!armedBatch.batchMode) {
-      setPendingBatchSource(null);
-    }
-    setPendingSeeds([]);
-    setEraserMode((armed) => {
-      if (armed) {
-        setLassoDraft(null);
-        setPendingEraseRegions([]);
+  /** Arm a picking tool, or disarm it if it is already the armed one. */
+  const selectTool = useCallback(
+    (next: ArmablePickTool) => {
+      rotation.cancelRotation();
+      setTool((current) => (current === next ? "select" : next));
+      // Whatever half-finished input belonged to the previous tool is dropped:
+      // seeds, an in-progress lasso, a half-dragged box, staged erase regions.
+      setPendingSeeds([]);
+      setAreaDraft(null);
+      setLassoDraft(null);
+      setPendingEraseRegions([]);
+      // The pending box belongs to the area tool, so arming or re-arming area
+      // keeps it (you are about to redraw over it); switching to a different
+      // tool abandons it. In batch mode nothing pending is ever dropped.
+      if (next !== "area" && !armedBatch.batchMode) {
+        setPendingBatchSource(null);
       }
-      return !armed;
-    });
-  }, [armedBatch.batchMode, rotation.cancelRotation]);
+    },
+    [armedBatch.batchMode, rotation.cancelRotation],
+  );
 
-  const handleArea = useCallback(() => {
-    rotation.cancelRotation();
-    setCutMode(false);
-    setEraserMode(false);
-    setLassoDraft(null);
-    setPendingEraseRegions([]);
-    setPendingSeeds([]);
-    setAreaMode((armed) => !armed);
-  }, [rotation.cancelRotation]);
+  const handleCut = useCallback(() => selectTool("cut"), [selectTool]);
+  const handleEraser = useCallback(() => selectTool("erase"), [selectTool]);
+  const handleArea = useCallback(() => selectTool("area"), [selectTool]);
 
   const handleToggleBatchMode = useCallback(() => {
     armedBatch.setBatchMode((on) => !on);
@@ -667,7 +684,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       if (armedBatch.batchModeRef.current) {
         armedBatch.appendJob({ kind: "lasso", regions });
         setPendingEraseRegions([]);
-        setEraserMode(false);
+        setTool("select");
         return;
       }
       const maskB64 = rasterizeEraseMask(naturalSize.width, naturalSize.height, regions);
@@ -675,7 +692,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         return;
       }
       setPendingEraseRegions([]);
-      setEraserMode(false);
+      setTool("select");
       jobs.runErase(maskB64);
     },
     [armedBatch.appendJob, armedBatch.batchModeRef, jobs.runErase, naturalSize],
@@ -744,7 +761,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   useAreaSelect({
     areaDraft,
     setAreaDraft,
-    setAreaMode,
+    disarm: disarmTool,
     clientToNatural,
     onBoxReady: handleBoxReady,
   });
@@ -898,9 +915,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     if (
       !jobs.isChoosingMask &&
       !rotation.rotateMode &&
-      !cutMode &&
-      !areaMode &&
-      !eraserMode &&
+      tool === "select" &&
       pendingSeeds.length === 0 &&
       pendingEraseRegions.length === 0
     ) {
@@ -922,9 +937,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         if (rotation.rotateMode) {
           rotation.cancelRotation();
         }
-        setCutMode(false);
-        setAreaMode(false);
-        setEraserMode(false);
+        setTool("select");
         setAreaDraft(null);
         setLassoDraft(null);
         setPendingBatchSource(null);
@@ -953,9 +966,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     jobs.isChoosingMask,
     handleMaskPickerDeferred,
     rotation.rotateMode,
-    cutMode,
-    areaMode,
-    eraserMode,
+    tool,
     pendingSeeds,
     pendingEraseRegions,
     fireSegmentFromSeeds,
@@ -980,23 +991,24 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       }
 
       // Eraser armed: pointer-down starts a freehand lasso, not a selection.
-      if (eraserMode) {
+      if (tool === "erase") {
         event.preventDefault();
         setLassoDraft({ points: [natural] });
         return;
       }
 
       // Scissors armed: this click is the segmentation seed, not a selection.
-      if (areaMode) {
+      if (tool === "area") {
         event.preventDefault();
         setAreaDraft({ start: natural, current: natural });
         return;
       }
 
       // Shift+click arms scissors and drops a seed — no need to press scissors first.
-      if (event.shiftKey && !cutMode && !rotation.rotateMode && !eraserMode) {
+      // Reachable only with tool "select" or "cut" -- erase and area returned above.
+      if (event.shiftKey && tool === "select" && !rotation.rotateMode) {
         event.preventDefault();
-        setCutMode(true);
+        setTool("cut");
         if (pendingSeeds.length >= MAX_SEGMENT_SEEDS) {
           return;
         }
@@ -1004,7 +1016,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         return;
       }
 
-      if (cutMode) {
+      if (tool === "cut") {
         event.preventDefault();
         const collectMode = multiPoint || event.shiftKey;
 
@@ -1025,62 +1037,23 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
       // While the selected volumetric object's 3D model is shown, its 2D
       // cutout is hidden and that region belongs to the 3D frame instead.
-      const hitOrder = buildHitTestOrder(jobs.objects, jobs.selectedObjectId).filter(
-        (obj) =>
-          !(
-            rotation.rotateMode &&
-            rotation.volumetric &&
-            obj.objectId === jobs.selectedObjectId
-          ),
-      );
+      const hit = findObjectAtPoint({
+        objects: jobs.objects,
+        selectedObjectId: jobs.selectedObjectId,
+        point: natural,
+        skipObjectId:
+          rotation.rotateMode && rotation.volumetric ? jobs.selectedObjectId : null,
+        isShowingOriginal,
+        sampleAlpha: sampleObjectAlpha,
+      });
 
-      for (const obj of hitOrder) {
-        const localObjX = natural.x - obj.offset.x;
-        const localObjY = natural.y - obj.offset.y;
-        const showOriginal = isShowingOriginal(obj);
-        const baseBounds = effectiveCutoutBounds(obj, showOriginal);
-        const bounds = effectiveDisplayBounds(obj, showOriginal);
-
-        if (
-          bounds &&
-          (localObjX < bounds.left ||
-            localObjX > bounds.right ||
-            localObjY < bounds.top ||
-            localObjY > bounds.bottom)
-        ) {
-          continue;
-        }
-
-        const samplePoint =
-          baseBounds && !isVolumetricObject(obj.is3d) && hasCss3dPose(cssPoseOf(obj))
-            ? mapPointThroughInverseCss3d(
-                { x: localObjX, y: localObjY },
-                {
-                  x: (baseBounds.left + baseBounds.right) / 2,
-                  y: (baseBounds.top + baseBounds.bottom) / 2,
-                },
-                cssPoseOf(obj),
-                obj.displayScale,
-              )
-            : baseBounds && obj.displayScale !== 1
-              ? mapPointThroughInverseScale(
-                  { x: localObjX, y: localObjY },
-                  baseBounds,
-                  obj.displayScale,
-                )
-              : { x: localObjX, y: localObjY };
-
-        if (
-          sampleObjectAlpha(obj.objectId, samplePoint.x, samplePoint.y) <= ALPHA_HIT_THRESHOLD
-        ) {
-          continue;
-        }
-
+      if (hit) {
         event.preventDefault();
-        objectDrag.beginDrag(obj.objectId, event.pointerId, event.clientX, event.clientY, obj.offset);
-        selectObject(obj.objectId);
+        objectDrag.beginDrag(hit.objectId, event.pointerId, event.clientX, event.clientY, hit.offset);
+        selectObject(hit.objectId);
         return;
       }
+
       // No object under the pointer: clicking empty stage area clears selection.
       if (jobs.selectedObjectId !== null) {
         event.preventDefault();
@@ -1091,9 +1064,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       naturalSize,
       renderedRect,
       clientToNatural,
-      cutMode,
-      eraserMode,
-      areaMode,
+      tool,
       multiPoint,
       pendingSeeds.length,
       jobs.objects,
@@ -1122,113 +1093,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       ),
   );
 
-  const cssPoseOf = (obj: CutoutObject): Css3dPose => ({
-    rotateXDeg: obj.cssRotateXDeg,
-    rotateYDeg: obj.cssRotateYDeg,
-    rotateZDeg: obj.cssRotateZDeg,
-    perspectivePx: obj.cssPerspectivePx,
-  });
-
-  const usesPlanarCss3d = (obj: CutoutObject): boolean => {
-    if (isVolumetricObject(obj.is3d)) {
-      return false;
-    }
-    const showOriginal = isShowingOriginal(obj);
-    if (showOriginal) {
-      return false;
-    }
-    if (rotation.rotateMode && obj.objectId === jobs.selectedObjectId) {
-      return true;
-    }
-    return hasCss3dPose(cssPoseOf(obj));
-  };
-
-  const cutoutStyle = (
-    obj: CutoutObject,
-    showOriginal: boolean,
-    zIndex: number,
-  ): React.CSSProperties | undefined => {
-    if (!naturalSize || !renderedRect) {
-      return undefined;
-    }
-
-    const baseBounds = effectiveCutoutBounds(obj, showOriginal);
-    const scaleX = renderedRect.width / naturalSize.width;
-    const scaleY = renderedRect.height / naturalSize.height;
-    const planar = usesPlanarCss3d(obj) && baseBounds;
-
-    // Positions are relative to .stage-cutout-clip (rendered-rect origin),
-    // not the stage — do not add renderedRect.x/y.
-    if (planar && baseBounds) {
-      const pose = cssPoseOf(obj);
-      const left = (obj.offset.x + baseBounds.left) * scaleX;
-      const top = (obj.offset.y + baseBounds.top) * scaleY;
-      const width = (baseBounds.right - baseBounds.left) * scaleX;
-      const height = (baseBounds.bottom - baseBounds.top) * scaleY;
-      return {
-        left: `${left}px`,
-        top: `${top}px`,
-        width: `${width}px`,
-        height: `${height}px`,
-        zIndex,
-        transform: css3dTransform(pose, obj.displayScale),
-        transformOrigin: "50% 50%",
-        transformStyle: "preserve-3d",
-      };
-    }
-
-    const transformOrigin =
-      baseBounds && naturalSize.width > 0 && naturalSize.height > 0
-        ? `${(((baseBounds.left + baseBounds.right) / 2 / naturalSize.width) * 100).toFixed(4)}% ${(((baseBounds.top + baseBounds.bottom) / 2 / naturalSize.height) * 100).toFixed(4)}%`
-        : "50% 50%";
-
-    return {
-      left: `${obj.offset.x * scaleX}px`,
-      top: `${obj.offset.y * scaleY}px`,
-      width: `${renderedRect.width}px`,
-      height: `${renderedRect.height}px`,
-      zIndex,
-      transform: obj.displayScale !== 1 ? `scale(${obj.displayScale})` : undefined,
-      transformOrigin,
-    };
-  };
-
-  /** Inner img offset when the cutout sits in a tight CSS-3D wrapper. */
-  const planarCutoutImgStyle = (
-    obj: CutoutObject,
-    showOriginal: boolean,
-  ): React.CSSProperties | undefined => {
-    if (!naturalSize || !renderedRect) {
-      return undefined;
-    }
-    const baseBounds = effectiveCutoutBounds(obj, showOriginal);
-    if (!baseBounds || !usesPlanarCss3d(obj)) {
-      return undefined;
-    }
-    const scaleX = renderedRect.width / naturalSize.width;
-    const scaleY = renderedRect.height / naturalSize.height;
-    return {
-      position: "absolute",
-      left: `${-baseBounds.left * scaleX}px`,
-      top: `${-baseBounds.top * scaleY}px`,
-      width: `${renderedRect.width}px`,
-      height: `${renderedRect.height}px`,
-      objectFit: "contain",
-      pointerEvents: "none",
-    };
-  };
-
-  const rectStyle = (rect: {
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  }): React.CSSProperties => ({
-    position: "absolute",
-    left: `${rect.left}px`,
-    top: `${rect.top}px`,
-    width: `${rect.width}px`,
-    height: `${rect.height}px`,
+  const { usesPlanarCss3d, cutoutStyle, planarCutoutImgStyle } = useCutoutStyles({
+    naturalSize,
+    renderedRect,
+    isShowingOriginal,
+    rotateMode: rotation.rotateMode,
+    selectedObjectId: jobs.selectedObjectId,
   });
 
   // Stage-space rect (includes renderedRect origin) — used by the rotation
@@ -1304,7 +1174,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const canResize =
     Boolean(selectedObject?.uuid) &&
     !rotation.rotateMode &&
-    !cutMode &&
+    tool !== "cut" &&
     !objectDrag.isDragging &&
     !objectResize.isResizing;
 
@@ -1334,91 +1204,21 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       : null;
   const batchBoxIsPending = displayedBatchBox !== null && pendingBatchSource !== null && !areaDraft;
 
-  const armedBoxes = useMemo(() => {
-    const boxes: {
-      id: string;
-      box: Extract<ArmedJobSource, { kind: "box" }>;
-      selected: boolean;
-    }[] = [];
-    for (const job of armedBatch.jobs) {
-      if (job.source.kind === "box") {
-        boxes.push({
-          id: job.id,
-          box: job.source,
-          selected: job.id === armedBatch.selectedJobId,
-        });
-      }
-    }
-    return boxes;
-  }, [armedBatch.jobs, armedBatch.selectedJobId]);
+  const armed = useMemo(
+    () => collectArmedOverlays(armedBatch.jobs, armedBatch.selectedJobId),
+    [armedBatch.jobs, armedBatch.selectedJobId],
+  );
 
-  const armedLassos = useMemo(() => {
-    const lassos: {
-      id: string;
-      polygon: ClickPosition[];
-      selected: boolean;
-    }[] = [];
-    for (const job of armedBatch.jobs) {
-      if (job.source.kind !== "lasso") {
-        continue;
-      }
-      job.source.regions.forEach((polygon, index) => {
-        lassos.push({
-          id: `${job.id}-${index}`,
-          polygon,
-          selected: job.id === armedBatch.selectedJobId,
-        });
-      });
-    }
-    return lassos;
-  }, [armedBatch.jobs, armedBatch.selectedJobId]);
-
-  const armedSeeds = useMemo(() => {
-    const seeds: {
-      id: string;
-      point: ClickPosition;
-      selected: boolean;
-    }[] = [];
-    for (const job of armedBatch.jobs) {
-      if (job.source.kind !== "clicks") {
-        continue;
-      }
-      job.source.points.forEach((point, index) => {
-        seeds.push({
-          id: `${job.id}-${index}`,
-          point,
-          selected: job.id === armedBatch.selectedJobId,
-        });
-      });
-    }
-    return seeds;
-  }, [armedBatch.jobs, armedBatch.selectedJobId]);
-
-  const activeJobs = jobs.jobs.filter((job) => job.status === "queued" || job.status === "running");
-  const segmentingCount = activeJobs.filter((job) => job.kind === "segment").length;
-  const removingCount = activeJobs.filter((job) => job.kind === "inpaint").length;
-  const erasingCount = activeJobs.filter((job) => job.kind === "erase").length;
-  const canvasWorkCount = removingCount + erasingCount;
-
-  const status = armedBatch.isApproving
-    ? "approving batch"
-    : jobs.isBatching
-    ? "batch cutting"
-    : objectDrag.isSmartPasting
-      ? "smart pasting"
-      : segmentingCount > 0
-        ? `finding masks${segmentingCount > 1 ? ` (${segmentingCount})` : ""}`
-        : canvasWorkCount > 0
-          ? `removing ${canvasWorkCount}`
-      : jobs.objects.some((o) => o.rotation?.status === "pending")
-        ? "rotating"
-        : jobs.isDuplicating
-          ? "copying"
-          : jobs.isDeleting
-            ? "deleting"
-            : mapsWarming
-              ? "preparing maps"
-              : null;
+  const status = workspaceStatus({
+    approvingBatch: armedBatch.isApproving,
+    batching: jobs.isBatching,
+    smartPasting: objectDrag.isSmartPasting,
+    jobs: jobs.jobs,
+    rotating: jobs.objects.some((o) => o.rotation?.status === "pending"),
+    duplicating: jobs.isDuplicating,
+    deleting: jobs.isDeleting,
+    mapsWarming,
+  });
 
   const handleDismissJob = useCallback((jobId: string) => {
     jobs.setJobs((prev) => prev.filter((job) => job.job_id !== jobId));
@@ -1465,64 +1265,18 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
     setIsSavingSnapshot(true);
     try {
-      const selectedId = jobs.selectedObjectId;
-      const withoutSelected =
-        selectedId !== null
-          ? visibleObjects.filter((obj) => obj.objectId !== selectedId)
-          : visibleObjects;
-      const selected =
-        selectedId !== null ? visibleObjects.find((obj) => obj.objectId === selectedId) : undefined;
-      const paintOrder = selected ? [...withoutSelected, selected] : withoutSelected;
-
-      const layers = await Promise.all(
-        paintOrder.map(async (obj) => {
-          const showOriginal = isShowingOriginal(obj);
-          const isRotatePickerTarget =
-            rotation.rotateMode &&
-            rotation.volumetric &&
-            obj.objectId === selectedId;
-
-          if (isRotatePickerTarget) {
-            const capture = rotation.model3DFrameRef.current?.capture();
-            if (!capture) {
-              return null;
-            }
-            const bounds = obj.cutoutAlphaBounds
-              ? inflateBounds(obj.cutoutAlphaBounds, MODEL_3D_FRAME_PADDING)
-              : null;
-            const src = await compositePreviewOntoCanvas(
-              capture.snapshotDataUrl,
-              bounds,
-              naturalSize,
-            );
-            return {
-              src,
-              offset: obj.offset,
-              displayScale: obj.displayScale,
-              bounds: effectiveCutoutBounds(obj, showOriginal),
-            };
-          }
-
-          const cssPose =
-            !showOriginal && obj.is3d === false
-              ? cssPoseOf(obj)
-              : null;
-
-          return {
-            src: effectiveCutoutSrc(obj, showOriginal),
-            offset: obj.offset,
-            displayScale: obj.displayScale,
-            bounds: effectiveCutoutBounds(obj, showOriginal),
-            cssPose,
-          };
-        }),
-      );
-
-      const blob = await composeStageSnapshot(
-        backgroundSrc,
-        layers.filter((layer): layer is NonNullable<typeof layer> => layer !== null),
+      const layers = await buildSnapshotLayers({
+        objects: visibleObjects,
+        selectedObjectId: jobs.selectedObjectId,
         naturalSize,
-      );
+        isShowingOriginal,
+        meshCaptureObjectId:
+          rotation.rotateMode && rotation.volumetric ? jobs.selectedObjectId : null,
+        captureMesh: () => rotation.model3DFrameRef.current?.capture()?.snapshotDataUrl,
+        meshPadding: MODEL_3D_FRAME_PADDING,
+      });
+
+      const blob = await composeStageSnapshot(backgroundSrc, layers, naturalSize);
       if (!blob) {
         setError("Could not build a snapshot of the room.");
         return;
@@ -1543,6 +1297,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     originalSrc,
     rotation.model3DFrameRef,
     rotation.rotateMode,
+    rotation.volumetric,
     sessionName,
     uid,
     visibleObjects,
@@ -1586,15 +1341,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         onSessionNameKeyDown={handleSessionNameKeyDown}
         onBack={onExit}
         hasSelection={jobs.selectedObjectId !== null}
-        cutMode={cutMode}
+        cutMode={tool === "cut"}
         onCut={handleCut}
         multiPoint={multiPoint}
         onToggleMultiPoint={handleToggleMultiPoint}
         hasPendingSegmentSeeds={pendingSeeds.length > 0}
         onUndoLastSeed={handleUndoLastSeed}
-        areaMode={areaMode}
+        areaMode={tool === "area"}
         onArea={handleArea}
-        eraserMode={eraserMode}
+        eraserMode={tool === "erase"}
         onEraser={handleEraser}
         hasPendingEraseRegions={pendingEraseRegions.length > 0}
         batchMode={armedBatch.batchMode}
@@ -1643,7 +1398,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
 
       <main
         ref={stageRef}
-        className={`stage${cutMode || areaMode || eraserMode ? " is-picking" : ""}${objectDrag.isDragging ? " is-dragging" : ""}`}
+        className={`stage${tool !== "select" ? " is-picking" : ""}${objectDrag.isDragging ? " is-dragging" : ""}`}
       >
         {photoSrc ? (
           <>
@@ -1794,11 +1549,11 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
               ) : null}
 
               {renderedRect && naturalSize
-                ? armedBoxes.map(({ id, box, selected }) => (
+                ? armed.boxes.map(({ id, value, selected }) => (
                     <div
                       key={id}
                       className={`stage-area-box is-pending${selected ? " is-selected" : ""}`}
-                      style={batchBoxStageStyle(box, renderedRect, naturalSize)}
+                      style={batchBoxStageStyle(value, renderedRect, naturalSize)}
                     />
                   ))
                 : null}
@@ -1808,7 +1563,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                   {pendingSeeds.map((seed, index) => (
                     <span
                       key={`${seed.x}-${seed.y}-${index}`}
-                      className={`stage-pick-marker${cutMode ? " is-armed" : ""}`}
+                      className={`stage-pick-marker${tool === "cut" ? " is-armed" : ""}`}
                       style={{
                         left: `${renderedRect.x + (seed.x / naturalSize.width) * renderedRect.width}px`,
                         top: `${renderedRect.y + (seed.y / naturalSize.height) * renderedRect.height}px`,
@@ -1823,15 +1578,15 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                 </div>
               ) : null}
 
-              {renderedRect && naturalSize && armedSeeds.length > 0 ? (
+              {renderedRect && naturalSize && armed.seeds.length > 0 ? (
                 <div className="stage-seed-markers" aria-hidden="true">
-                  {armedSeeds.map((seed) => (
+                  {armed.seeds.map((seed) => (
                     <span
                       key={seed.id}
                       className={`stage-pick-marker is-pending${seed.selected ? " is-selected" : ""}`}
                       style={{
-                        left: `${renderedRect.x + (seed.point.x / naturalSize.width) * renderedRect.width}px`,
-                        top: `${renderedRect.y + (seed.point.y / naturalSize.height) * renderedRect.height}px`,
+                        left: `${renderedRect.x + (seed.value.x / naturalSize.width) * renderedRect.width}px`,
+                        top: `${renderedRect.y + (seed.value.y / naturalSize.height) * renderedRect.height}px`,
                       }}
                     >
                       <span className="stage-pick-marker-ring" />
@@ -1840,13 +1595,13 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                 </div>
               ) : null}
 
-              {renderedRect && naturalSize && (lassoDraft || pendingEraseRegions.length > 0 || armedLassos.length > 0) ? (
+              {renderedRect && naturalSize && (lassoDraft || pendingEraseRegions.length > 0 || armed.lassos.length > 0) ? (
                 <svg className="stage-lasso-layer" aria-hidden="true">
-                  {armedLassos.map((lasso) => (
+                  {armed.lassos.map((lasso) => (
                     <polygon
                       key={lasso.id}
                       className={`stage-lasso-path is-pending${lasso.selected ? " is-selected" : ""}`}
-                      points={lassoPolygonStagePoints(lasso.polygon, renderedRect, naturalSize)}
+                      points={lassoPolygonStagePoints(lasso.value, renderedRect, naturalSize)}
                     />
                   ))}
                   {pendingEraseRegions.map((polygon, index) => (
@@ -1910,49 +1665,17 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           </div>
         ) : null}
 
-        {rotation.rotateMode ? (
-          <p className="stage-hint">
-            {rotation.volumetric
-              ? "Drag mesh or use sliders · Enter applies · Esc cancels"
-              : "Sliders tilt · Enter applies · Esc cancels"}
-          </p>
-        ) : eraserMode ? (
-          <p className="stage-hint">
-            {armedBatch.batchMode
-              ? "Drag a loop to arm erase · Esc cancels"
-              : pendingEraseRegions.length > 0
-                ? `${pendingEraseRegions.length} region${pendingEraseRegions.length === 1 ? "" : "s"} · Shift-drag adds · Enter or checkmark runs · Esc cancels`
-                : "Drag a loop to erase · Shift-drag stages · Esc cancels"}
-          </p>
-        ) : areaMode ? (
-          <p className="stage-hint">
-            {armedBatch.batchMode
-              ? "Drag a box to arm cut · Esc cancels"
-              : "Drag a box around the furniture · Esc cancels"}
-          </p>
-        ) : pendingBatchSource ? (
-          <p className="stage-hint">Submit batch cut (checkmark) · Esc clears box</p>
-        ) : pendingSeeds.length > 0 ? (
-          <p className="stage-hint">
-            {armedBatch.batchMode
-              ? `${pendingSeeds.length} seed${pendingSeeds.length === 1 ? "" : "s"} · Enter or checkmark arms · Esc clears · hold Ctrl to zoom · scroll to adjust`
-              : `${pendingSeeds.length} seed${pendingSeeds.length === 1 ? "" : "s"} placed · Shift+click adds · Enter or checkmark runs · Esc clears · hold Ctrl to zoom · scroll to adjust`}
-          </p>
-        ) : cutMode ? (
-          <p className="stage-hint">
-            {armedBatch.batchMode
-              ? multiPoint
-                ? "Click to add seeds · Enter or checkmark arms · Esc cancels · hold Ctrl to zoom · scroll to adjust"
-                : "Click to arm cutout · Shift+click adds seeds · Esc cancels · hold Ctrl to zoom · scroll to adjust"
-              : multiPoint
-                ? "Click to add seeds · Enter or checkmark runs · Esc cancels · hold Ctrl to zoom · scroll to adjust"
-                : "Click the object · Shift+click adds seeds · Esc cancels · hold Ctrl to zoom · scroll to adjust"}
-          </p>
-        ) : armedBatch.batchMode && armedBatch.jobs.length > 0 ? (
-          <p className="stage-hint">
-            {armedBatch.jobs.length} armed · checkmark approves · queue button to edit
-          </p>
-        ) : null}
+        <StageHint
+          rotateMode={rotation.rotateMode}
+          volumetric={rotation.volumetric}
+          tool={tool}
+          batchMode={armedBatch.batchMode}
+          armedJobCount={armedBatch.jobs.length}
+          pendingEraseRegionCount={pendingEraseRegions.length}
+          pendingSeedCount={pendingSeeds.length}
+          hasPendingBatchSource={pendingBatchSource !== null}
+          multiPoint={multiPoint}
+        />
 
         {armedBatch.panelOpen ? (
           <BatchQueuePanel

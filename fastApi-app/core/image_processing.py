@@ -19,7 +19,27 @@ from core.avroom_package import load_avroom_attr
 from core.image_codec import encode_png
 from core.mask_cache import delete_candidates, load_cutout_bytes, load_refined_mask, save_candidate
 from core.inference_pool.session_runtime import mask_id_for_candidate_slot
-from core.object_storage import current_background_path, object_cutout_path, resolve_object_cutout_path
+from core.object_storage import object_cutout_path, resolve_object_cutout_path
+# Re-exported under their historical names: several modules and tests import
+# these from here, and `patch("core.image_processing.<name>")` only works while
+# the name is bound in this module's namespace.
+# Same re-export rationale as core.image_files below.
+from core.erase_mask import (  # noqa: F401
+    ERASE_MIN_COMPONENT_PIXELS,
+    canvas_shape_from_bytes,
+    decode_erase_mask_png,
+    split_mask_components,
+)
+from core.image_files import (  # noqa: F401
+    DEBUG_DIR_SUBPATH,
+    debug_click_image_path,
+    decode_cutout_alpha as _decode_cutout_alpha,
+    decode_original_bgr as _decode_original_bgr,
+    get_image_path,
+    load_canvas_bytes,
+    load_image_bytes,
+    validate_click_coordinates as _validate_click_coordinates,
+)
 from core.depth_cache import (
     compute_average_depth_over_mask,
     content_hash_for_bytes,
@@ -37,19 +57,6 @@ from settings import get_normal_map_enabled
 
 
 logger = logging.getLogger(__name__)
-
-# Debug click overlays live in their own subdirectory so they are never picked
-# up by the session artifact globs that scan the storage dir itself.
-DEBUG_DIR_SUBPATH = "point"
-_DEBUG_MARKER_RADIUS_PX = 6
-_DEBUG_MARKER_OUTLINE_PX = 2
-
-
-def debug_click_image_path(base_dir: Path, image_id: str) -> Path:
-    """Return the canonical path of a session's debug click overlay."""
-
-    return base_dir / DEBUG_DIR_SUBPATH / f"{image_id}_debug.png"
-
 
 @functools.lru_cache(maxsize=1)
 def _get_cutout_clip_scorer():
@@ -86,151 +93,6 @@ def _get_cutout_tiebreaker():
     if not has_real_api_key(key):
         return None
     return GeminiCutoutAllCandidatesTiebreakStrategy()
-
-
-def _create_debug_click_image(
-    source_image: Image.Image,
-    x: int,
-    y: int,
-    base_dir: Path,
-    image_id: str,
-) -> None:
-    """Create RGB debug image with a marker drawn at click coordinates."""
-
-    debug_image: Image.Image = source_image.convert("RGB")
-    draw = ImageDraw.Draw(debug_image)
-    draw.ellipse(
-        (
-            x - _DEBUG_MARKER_RADIUS_PX,
-            y - _DEBUG_MARKER_RADIUS_PX,
-            x + _DEBUG_MARKER_RADIUS_PX,
-            y + _DEBUG_MARKER_RADIUS_PX,
-        ),
-        fill="red",
-        outline="white",
-        width=_DEBUG_MARKER_OUTLINE_PX,
-    )
-
-    debug_image_path = debug_click_image_path(base_dir, image_id)
-    debug_image_path.parent.mkdir(parents=True, exist_ok=True)
-    debug_image.save(debug_image_path)
-
-
-def get_image_path(image_id: str, base_dir: Path) -> Path:
-    """Resolve filesystem path for a stored image regardless of extension."""
-
-    candidates = sorted(base_dir.glob(f"{image_id}.*"))
-    if not candidates:
-        raise FileNotFoundError(f"No stored image found for image_id='{image_id}' in {base_dir}")
-    return candidates[0]
-
-
-def load_image_bytes(image_id: str, base_dir: Path) -> bytes:
-    """Load raw image bytes for a given `image_id` from disk.
-
-    The caller is responsible for handling any filesystem-related exceptions
-    that may occur if the image does not exist.
-    """
-
-    image_path = get_image_path(image_id=image_id, base_dir=base_dir)
-    return image_path.read_bytes()
-
-
-def load_canvas_bytes(image_id: str, base_dir: Path) -> bytes:
-    """Load the cumulative background canvas bytes for progressive removal.
-
-    For progressive removal, each subsequent segmentation/inpainting operation
-    should work on the latest state of the room — i.e., the canvas that already
-    has previously removed objects replaced by inpainted background. If such a
-    canvas exists (``{image_id}_background.png``), it is returned; otherwise the
-    original upload is used as the starting point.
-
-    Args:
-        image_id: Session image identifier.
-        base_dir: Directory that contains session artifacts.
-
-    Returns:
-        Raw PNG/image bytes of the canvas (background if available, original otherwise).
-    """
-
-    canvas_path = current_background_path(base_dir, image_id)
-    if canvas_path.exists():
-        canvas_bytes = canvas_path.read_bytes()
-        logger.debug(
-            "Loaded canvas bytes: image_id=%s source=background bytes=%d",
-            image_id,
-            len(canvas_bytes),
-        )
-        return canvas_bytes
-
-    original_bytes = load_image_bytes(image_id=image_id, base_dir=base_dir)
-    logger.debug(
-        "Loaded canvas bytes: image_id=%s source=original bytes=%d",
-        image_id,
-        len(original_bytes),
-    )
-    return original_bytes
-
-
-def _validate_click_coordinates(image_bytes: bytes, x: int, y: int, base_dir: Path, image_id: str) -> None:
-    """Validate natural-image click coordinates and write debug click overlay."""
-
-    try:
-        with Image.open(io.BytesIO(image_bytes)) as source_image:
-            width, height = source_image.size
-
-            if not (0 <= x < width and 0 <= y < height):
-                logger.error(
-                    "Click out of bounds for image_id='%s': x=%d y=%d image_width=%d image_height=%d",
-                    image_id,
-                    x,
-                    y,
-                    width,
-                    height,
-                )
-                raise ValueError(f"Click coordinates (x={x}, y={y}) are out of bounds for image size {width}x{height}.")
-            logger.debug(
-                "Click within bounds: image_id=%s click=(%d,%d) size=%dx%d",
-                image_id,
-                x,
-                y,
-                width,
-                height,
-            )
-
-            _create_debug_click_image(source_image, x, y, base_dir, image_id)
-            logger.debug("Saved debug click overlay: image_id=%s", image_id)
-
-    except UnidentifiedImageError as exc:
-        logger.exception("Unable to open image bytes for image_id='%s'", image_id)
-        raise ValueError(f"Stored file for image_id='{image_id}' is not a valid image.") from exc
-
-
-def _decode_original_bgr(image_bytes: bytes, image_id: str) -> np.ndarray:
-    """Decode stored image bytes into OpenCV BGR array for inpainting."""
-
-    decoded = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
-    if decoded is None:
-        logger.error("Could not decode original image bytes: image_id=%s", image_id)
-        raise ValueError(f"Stored file for image_id='{image_id}' is not a valid image.")
-    return decoded
-
-
-def _decode_cutout_alpha(cutout_bytes: bytes, image_id: str, mask_id: str) -> np.ndarray:
-    """Decode cached cutout PNG alpha channel as a compose mask."""
-
-    decoded = cv2.imdecode(np.frombuffer(cutout_bytes, dtype=np.uint8), cv2.IMREAD_UNCHANGED)
-    if decoded is None or decoded.ndim < 3 or decoded.shape[2] < 4:
-        logger.error(
-            "Could not decode cutout alpha: image_id=%s mask_id=%s shape=%s",
-            image_id,
-            mask_id,
-            None if decoded is None else decoded.shape,
-        )
-        raise ValueError(
-            f"Cached cutout for image_id='{image_id}', mask_id='{mask_id}' is not a valid BGRA PNG."
-        )
-    return decoded[:, :, 3]
 
 
 def segment_at_click(
@@ -432,71 +294,6 @@ def segment_candidates_on_image(
             return [results[selection.winner_index]]
 
     return results
-
-
-ERASE_MIN_COMPONENT_PIXELS = 64
-
-
-def canvas_shape_from_bytes(image_bytes: bytes) -> tuple[int, int]:
-    """Return (height, width) for stored canvas/upload bytes."""
-
-    with Image.open(io.BytesIO(image_bytes)) as source_image:
-        width, height = source_image.size
-    return height, width
-
-
-def decode_erase_mask_png(mask_b64: str, expected_shape: tuple[int, int]) -> np.ndarray:
-    """Decode a client-drawn erase mask PNG into uint8 HxW with values 0/255.
-
-    Args:
-        mask_b64: Base64-encoded PNG (grayscale or RGB — luminance is used).
-        expected_shape: ``(height, width)`` of the session canvas.
-
-    Raises:
-        ValueError: When decoding fails, shapes mismatch, or the mask is empty.
-    """
-
-    try:
-        raw = base64.b64decode(mask_b64, validate=True)
-    except Exception as exc:
-        raise ValueError("Erase mask is not valid base64.") from exc
-
-    try:
-        with Image.open(io.BytesIO(raw)) as img:
-            gray = img.convert("L")
-            if gray.size != (expected_shape[1], expected_shape[0]):
-                raise ValueError(
-                    f"Erase mask shape {gray.size[::-1]} does not match canvas {expected_shape}."
-                )
-            arr = np.array(gray, dtype=np.uint8)
-    except UnidentifiedImageError as exc:
-        raise ValueError("Erase mask is not a valid PNG image.") from exc
-
-    mask = np.where(arr >= 128, 255, 0).astype(np.uint8)
-    if not np.any(mask):
-        raise ValueError("Erase mask has no foreground pixels.")
-    return mask
-
-
-def split_mask_components(
-    mask: np.ndarray,
-    min_pixels: int = ERASE_MIN_COMPONENT_PIXELS,
-) -> list[np.ndarray]:
-    """Split a binary mask into disconnected 8-connected foreground blobs.
-
-    Drops blobs smaller than ``min_pixels`` (lasso speckle). Raises when
-    nothing usable remains.
-    """
-
-    _, labels = cv2.connectedComponents((mask > 0).astype(np.uint8), connectivity=8)
-    components: list[np.ndarray] = []
-    for label in range(1, int(labels.max()) + 1):
-        component = np.where(labels == label, 255, 0).astype(np.uint8)
-        if int(np.count_nonzero(component)) >= min_pixels:
-            components.append(component)
-    if not components:
-        raise ValueError("Erase mask has no foreground blobs large enough to erase.")
-    return components
 
 
 def erase_mask_on_image(

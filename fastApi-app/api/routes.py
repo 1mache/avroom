@@ -14,7 +14,7 @@ mounted together in ``main.py``.
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 import uuid
 import logging
@@ -22,16 +22,12 @@ import logging
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pathlib import Path
 
+from api.deps import canvas_writer, require_object
 from core.auth.admin import is_admin
 from core.auth.identity import current_user_id
 from core.auth.ownership import require_session_owner
 from core.image_validation import ImageValidator
 from core.inference_pool.client import get_inference_client
-from core.inference_pool.session_runtime import (
-    SessionConflictError,
-    acquire_canvas_writer,
-    release_canvas_writer,
-)
 from core.camera_calib_cache import save_camera_calib
 from core.session_preview import write_upload_preview
 from core.normal_cache import warm_normals_for_session
@@ -39,18 +35,13 @@ from core.object_import import ImportValidationError, import_object_cutout
 from core.object_metadata import (
     ObjectMetadata,
     build_clone_metadata,
-    get_object_by_uuid,
     next_object_id,
     remove_object_index_entry,
     reset_object_transform,
     save_object_metadata,
-    set_object_css_transform,
-    set_object_name,
-    set_object_offset,
-    set_object_rescale_state,
-    set_object_rotation_pose,
-    clear_object_rotation_pose,
     to_object_metadata_response,
+    update_object as update_object_metadata,
+    ROTATION_POSE_CLEARED,
 )
 from schemas.objects import (
     DuplicateObjectResponse,
@@ -279,6 +270,18 @@ def warm_session_maps_endpoint(uid: str) -> WarmSessionMapsResponse:
     )
 
 
+#: Non-nullable object columns `PATCH /images/objects/{uuid}` may write.
+_PATCHABLE_NUMERIC_FIELDS = (
+    "offset_x",
+    "offset_y",
+    "display_scale",
+    "css_rotate_x_deg",
+    "css_rotate_y_deg",
+    "css_rotate_z_deg",
+    "css_perspective_px",
+)
+
+
 @router.patch("/objects/{object_uuid}", response_model=ObjectMetadataResponse)
 async def update_object(object_uuid: str, request: UpdateObjectRequest) -> ObjectMetadataResponse:
     """Partially update one object identified by UUID: name, offset, and/or scale.
@@ -296,37 +299,22 @@ async def update_object(object_uuid: str, request: UpdateObjectRequest) -> Objec
     )
     storage_dir = get_image_storage_dir()
 
-    metadata = get_object_by_uuid(object_uuid)
-    if metadata is None:
-        logger.warning("Object update failed — not found: uuid=%s", object_uuid)
-        raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
+    metadata = require_object(object_uuid)
 
     fields = request.model_fields_set
+    updates: dict[str, Any] = {}
     if "name" in fields:
-        metadata = set_object_name(object_uuid, request.name)
-    if "offset_x" in fields or "offset_y" in fields:
-        next_offset_x = request.offset_x if request.offset_x is not None else metadata.offset_x
-        next_offset_y = request.offset_y if request.offset_y is not None else metadata.offset_y
-        metadata = set_object_offset(object_uuid, next_offset_x, next_offset_y)
-    if "display_scale" in fields:
-        assert request.display_scale is not None
-        metadata = set_object_rescale_state(object_uuid, display_scale=request.display_scale)
-    css_keys = {
-        "css_rotate_x_deg",
-        "css_rotate_y_deg",
-        "css_rotate_z_deg",
-        "css_perspective_px",
-    }
-    if fields & css_keys:
-        metadata = set_object_css_transform(
-            object_uuid,
-            css_rotate_x_deg=request.css_rotate_x_deg if "css_rotate_x_deg" in fields else None,
-            css_rotate_y_deg=request.css_rotate_y_deg if "css_rotate_y_deg" in fields else None,
-            css_rotate_z_deg=request.css_rotate_z_deg if "css_rotate_z_deg" in fields else None,
-            css_perspective_px=(
-                request.css_perspective_px if "css_perspective_px" in fields else None
-            ),
-        )
+        # The one nullable column: an explicit null clears the name.
+        updates["name"] = request.name
+    # Every other column is non-nullable, so an explicit null there means
+    # "leave it alone" -- only a real value is written.
+    for key in _PATCHABLE_NUMERIC_FIELDS:
+        value = getattr(request, key)
+        if key in fields and value is not None:
+            updates[key] = value
+
+    if updates:
+        metadata = update_object_metadata(object_uuid, **updates)
 
     touch_session(metadata.session_id)
     response = to_object_metadata_response(metadata, storage_dir, get_3d_storage_dir())
@@ -340,10 +328,7 @@ def reset_object_transform_route(object_uuid: str) -> ObjectMetadataResponse:
     logger.info("Object transform reset requested: uuid=%s", object_uuid)
     storage_dir = get_image_storage_dir()
 
-    metadata = get_object_by_uuid(object_uuid)
-    if metadata is None:
-        logger.warning("Object transform reset failed — not found: uuid=%s", object_uuid)
-        raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
+    metadata = require_object(object_uuid)
 
     remove_file(object_rotated_path(storage_dir, metadata.session_id, metadata.object_id))
     metadata = reset_object_transform(object_uuid)
@@ -379,10 +364,7 @@ def persist_object_rotation(
         request.roll_deg,
     )
     storage_dir = get_image_storage_dir()
-    metadata = get_object_by_uuid(object_uuid)
-    if metadata is None:
-        logger.warning("Object rotation persist failed — not found: uuid=%s", object_uuid)
-        raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
+    metadata = require_object(object_uuid)
 
     try:
         png_bytes = base64.b64decode(request.image_b64, validate=True)
@@ -395,11 +377,11 @@ def persist_object_rotation(
 
     out_path = object_rotated_path(storage_dir, metadata.session_id, metadata.object_id)
     out_path.write_bytes(png_bytes)
-    metadata = set_object_rotation_pose(
+    metadata = update_object_metadata(
         object_uuid,
-        azimuth_deg=request.azimuth_deg,
-        relative_elevation_deg=request.relative_elevation_deg,
-        roll_deg=request.roll_deg,
+        rotation_azimuth_deg=request.azimuth_deg,
+        rotation_relative_elevation_deg=request.relative_elevation_deg,
+        rotation_roll_deg=request.roll_deg,
     )
     touch_session(metadata.session_id)
     response = to_object_metadata_response(metadata, storage_dir, get_3d_storage_dir())
@@ -417,13 +399,10 @@ def clear_object_rotation(object_uuid: str) -> Response:
     """Remove the baked novel-view PNG and pose so the Source Cutout shows again."""
     logger.info("Object rotation clear requested: uuid=%s", object_uuid)
     storage_dir = get_image_storage_dir()
-    metadata = get_object_by_uuid(object_uuid)
-    if metadata is None:
-        logger.warning("Object rotation clear failed — not found: uuid=%s", object_uuid)
-        raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
+    metadata = require_object(object_uuid)
 
     remove_file(object_rotated_path(storage_dir, metadata.session_id, metadata.object_id))
-    clear_object_rotation_pose(object_uuid)
+    update_object_metadata(object_uuid, **ROTATION_POSE_CLEARED)
     touch_session(metadata.session_id)
     logger.info("Object rotation cleared: uuid=%s", object_uuid)
     return Response(status_code=204)
@@ -473,16 +452,7 @@ async def import_object(
             remove_object_index_entry(imported.uuid)
 
     try:
-        try:
-            acquire_canvas_writer(uid)
-        except SessionConflictError as exc:
-            logger.warning(
-                "Object import rejected due to canvas writer timeout: session_id=%s",
-                uid,
-            )
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-        try:
+        with canvas_writer(uid, action="Object import"):
             imported = import_object_cutout(
                 session_id=uid,
                 base_dir=storage_dir,
@@ -491,8 +461,6 @@ async def import_object(
                 content_type=file.content_type,
             )
             allocated_object_id = imported.object_id
-        finally:
-            release_canvas_writer(uid)
     except ImportValidationError as exc:
         logger.warning("Object import rejected: session_id=%s reason=%s", uid, exc)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -529,13 +497,7 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
     storage_dir = get_image_storage_dir()
     three_d_dir = get_3d_storage_dir()
 
-    source = get_object_by_uuid(object_uuid)
-    if source is None:
-        logger.warning("Object duplicate failed — not found: uuid=%s", object_uuid)
-        raise HTTPException(
-            status_code=404,
-            detail=f"Object not found for uuid='{object_uuid}'",
-        )
+    source = require_object(object_uuid)
 
     source_cutout = resolve_object_cutout_path(
         storage_dir, source.session_id, source.object_id
@@ -578,16 +540,7 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
             remove_object_index_entry(clone_metadata.uuid)
 
     try:
-        try:
-            acquire_canvas_writer(source.session_id)
-        except SessionConflictError as exc:
-            logger.warning(
-                "Object duplicate rejected due to canvas writer timeout: uuid=%s",
-                object_uuid,
-            )
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-        try:
+        with canvas_writer(source.session_id, action="Object duplicate"):
             new_object_id = next_object_id(source.session_id)
             clone_metadata = build_clone_metadata(source, new_object_id, source_bounds)
             copy_object_artifacts(
@@ -599,8 +552,6 @@ def duplicate_object(object_uuid: str) -> DuplicateObjectResponse:
             )
             save_object_metadata(clone_metadata)
             touch_session(source.session_id)
-        finally:
-            release_canvas_writer(source.session_id)
     except HTTPException:
         raise
     except FileNotFoundError as exc:
@@ -645,25 +596,10 @@ def delete_object(object_uuid: str) -> Response:
     storage_dir = get_image_storage_dir()
     three_d_dir = get_3d_storage_dir()
 
-    target = get_object_by_uuid(object_uuid)
-    if target is None:
-        logger.warning("Object delete failed — not found: uuid=%s", object_uuid)
-        raise HTTPException(
-            status_code=404,
-            detail=f"Object not found for uuid='{object_uuid}'",
-        )
+    target = require_object(object_uuid)
 
     try:
-        try:
-            acquire_canvas_writer(target.session_id)
-        except SessionConflictError as exc:
-            logger.warning(
-                "Object delete rejected due to canvas writer timeout: uuid=%s",
-                object_uuid,
-            )
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-        try:
+        with canvas_writer(target.session_id, action="Object delete"):
             removed = delete_object_artifact_files(
                 base_dir=storage_dir,
                 glb_dir=three_d_dir,
@@ -678,8 +614,6 @@ def delete_object(object_uuid: str) -> Response:
                 )
             remove_object_index_entry(object_uuid)
             touch_session(target.session_id)
-        finally:
-            release_canvas_writer(target.session_id)
     except HTTPException:
         raise
     except Exception as exc:
@@ -702,13 +636,7 @@ def delete_object_3d(object_uuid: str) -> Response:
     logger.info("Object 3D delete requested: uuid=%s", object_uuid)
     three_d_dir = get_3d_storage_dir()
 
-    target = get_object_by_uuid(object_uuid)
-    if target is None:
-        logger.warning("Object 3D delete failed — not found: uuid=%s", object_uuid)
-        raise HTTPException(
-            status_code=404,
-            detail=f"Object not found for uuid='{object_uuid}'",
-        )
+    target = require_object(object_uuid)
 
     removed = delete_object_glb_files(
         glb_dir=three_d_dir,

@@ -21,9 +21,10 @@ from PIL import Image, UnidentifiedImageError
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 
+from api.deps import require_object
 from core.image_codec import to_base64_ascii
 from core.image_processing import get_image_path
-from core.object_metadata import get_object_by_uuid, list_object_ids, load_object_metadata, to_object_metadata_response
+from core.object_metadata import list_object_ids, load_object_metadata, to_object_metadata_response
 from schemas.objects import (
     ObjectInfo,
     ObjectListResponse,
@@ -53,10 +54,7 @@ async def get_object_by_uuid_endpoint(object_uuid: str) -> ObjectMetadataRespons
     """Return metadata for one object searchable by its UUID."""
     logger.debug("Object metadata requested: uuid=%s", object_uuid)
     storage_dir = get_image_storage_dir()
-    metadata = get_object_by_uuid(object_uuid)
-    if metadata is None:
-        logger.warning("Object metadata not found: uuid=%s", object_uuid)
-        raise HTTPException(status_code=404, detail=f"Object not found for uuid='{object_uuid}'")
+    metadata = require_object(object_uuid)
     response = to_object_metadata_response(metadata, storage_dir, get_3d_storage_dir())
     logger.debug(
         "Object metadata returned: uuid=%s session_id=%s object_id=%d",

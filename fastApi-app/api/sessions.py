@@ -19,6 +19,7 @@ from fastapi.responses import FileResponse
 from pathlib import Path
 from starlette.background import BackgroundTask
 
+from api.deps import canvas_writer
 from core.project_archive import KIND_ROOM, archive_filename, build_room_archive
 from core.session_teardown import delete_session_and_files
 from core.session_clone import clone_session
@@ -33,7 +34,7 @@ from core.image_processing import (
 from core.auth.identity import current_user_id
 from core.auth.ownership import require_session_owner
 from core.inference_pool.client import get_inference_client
-from core.inference_pool.session_runtime import SessionConflictError, acquire_canvas_writer, release_canvas_writer
+from core.inference_pool.session_runtime import SessionConflictError
 from core.mask_cache import save_refined_mask_only
 from core.repositories.job_repo import create_job, delete_job, get_job, list_session_jobs
 from schemas.batch import BatchRequest, BatchResponse
@@ -394,20 +395,12 @@ def _run_history_step(uid: str, *, undo: bool) -> Response:
     action = "undo" if undo else "redo"
     logger.info("Background %s requested: uid=%s", action, uid)
     try:
-        try:
-            acquire_canvas_writer(uid)
-        except SessionConflictError as exc:
-            logger.warning("Background %s rejected — canvas writer timeout: uid=%s", action, uid)
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-        try:
+        with canvas_writer(uid, action=f"Background {action}"):
             if undo:
                 undo_background(uid, storage_dir)
             else:
                 redo_background(uid, storage_dir)
             touch_session(uid)
-        finally:
-            release_canvas_writer(uid)
     except SessionNotFoundError:
         logger.warning("Background %s failed — unknown uid: %s", action, uid)
         raise HTTPException(status_code=404, detail=f"Session not found for uid='{uid}'") from None

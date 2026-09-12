@@ -31,7 +31,7 @@ from core.normal_cache import get_or_compute_normals, load_normal_map
 from core.cutout_bounds import extract_cutout_bounds_from_png_bytes
 from core.camera_calib_cache import load_camera_calib
 from core.camera_calibration import cache_dict_to_calibration_result
-from core.object_metadata import ObjectMetadata, create_object_metadata, get_object_by_uuid, set_object_rescale_state
+from core.object_metadata import ObjectMetadata, create_object_metadata, get_object_by_uuid, update_object
 from core.inference_lock import inference_session
 from settings import get_normal_map_enabled
 
@@ -770,7 +770,7 @@ def _persist_rescale_metadata(
     *,
     display_scale: float,
 ) -> None:
-    set_object_rescale_state(object_uuid, display_scale=display_scale)
+    update_object(object_uuid, display_scale=display_scale)
 
 
 def rescale_cutout_by_depth(

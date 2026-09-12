@@ -20,9 +20,7 @@ from core.object_metadata import (  # noqa: E402
     create_object_metadata,
     get_object_by_uuid,
     save_object_metadata,
-    set_object_css_transform,
-    set_object_offset,
-    set_object_rescale_state,
+    update_object,
 )
 from core.object_storage import object_cutout_path  # noqa: E402
 
@@ -75,10 +73,11 @@ def _build_client() -> Any:
 
 def test_reset_transform_restores_defaults(storage_sandbox: Path) -> None:
     object_uuid = _seed_object(storage_sandbox)
-    set_object_offset(object_uuid, 40.0, -20.0)
-    set_object_rescale_state(object_uuid, display_scale=1.75)
-    set_object_css_transform(
+    update_object(
         object_uuid,
+        offset_x=40.0,
+        offset_y=-20.0,
+        display_scale=1.75,
         css_rotate_x_deg=12.0,
         css_rotate_y_deg=-30.0,
         css_rotate_z_deg=5.0,

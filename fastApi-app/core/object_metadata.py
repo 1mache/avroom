@@ -253,8 +253,20 @@ def next_object_id(session_id: str) -> int:
         return 0 if highest is None else highest + 1
 
 
-def _update_object_fields(object_uuid: str, updates: dict[str, Any]) -> ObjectMetadata:
-    """Apply *updates* to one object's row and return the resulting metadata.
+ROTATION_POSE_CLEARED: dict[str, float | None] = {
+    "rotation_azimuth_deg": None,
+    "rotation_relative_elevation_deg": None,
+    "rotation_roll_deg": None,
+}
+"""Column values that mean "this object has no persisted novel-view pose"."""
+
+
+def update_object(object_uuid: str, **fields: Any) -> ObjectMetadata:
+    """Apply *fields* to one object's row and return the resulting metadata.
+
+    One short DB session per call, so a caller touching several columns at
+    once (the PATCH route) does it in a single atomic write rather than one
+    round-trip per field group.
 
     Raises:
         FileNotFoundError: When no metadata record exists for *object_uuid*
@@ -265,152 +277,31 @@ def _update_object_fields(object_uuid: str, updates: dict[str, Any]) -> ObjectMe
         row = db.get(ObjectRow, object_uuid)
         if row is None:
             raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
-        for key, value in updates.items():
+        for key, value in fields.items():
             setattr(row, key, value)
         db.flush()
-        return _row_to_metadata(row)
-
-
-def set_object_name(object_uuid: str, name: str | None) -> ObjectMetadata:
-    """Update the optional name on an existing object metadata record."""
-    updated = _update_object_fields(object_uuid, {"name": name})
-    logger.info("Updated object name: uuid=%s name=%r", object_uuid, name)
-    return updated
-
-
-def set_object_offset(object_uuid: str, offset_x: float, offset_y: float) -> ObjectMetadata:
-    """Update the persisted drag offset on an existing object metadata record."""
-    updated = _update_object_fields(object_uuid, {"offset_x": offset_x, "offset_y": offset_y})
-    logger.info(
-        "Updated object offset: uuid=%s offset_x=%.2f offset_y=%.2f",
-        object_uuid,
-        offset_x,
-        offset_y,
-    )
-    return updated
-
-
-def set_object_average_depth(object_uuid: str, average_depth: float) -> ObjectMetadata:
-    """Update ``average_depth`` after a depth-based rescale placement."""
-    updated = _update_object_fields(object_uuid, {"average_depth": average_depth})
-    logger.info(
-        "Updated object average_depth: uuid=%s average_depth=%.2f",
-        object_uuid,
-        average_depth,
-    )
-    return updated
-
-
-def set_object_rescale_state(
-    object_uuid: str,
-    *,
-    display_scale: float,
-) -> ObjectMetadata:
-    """Persist UI display scale after a smart-paste / rescale call.
-
-    ``average_depth`` stays at the creation value so every rescale is relative
-    to the original object size, not the previous placement.
-    """
-    updated = _update_object_fields(object_uuid, {"display_scale": display_scale})
-    logger.info(
-        "Updated object display_scale: uuid=%s display_scale=%.4f",
-        object_uuid,
-        display_scale,
-    )
-    return updated
+        metadata = _row_to_metadata(row)
+    logger.info("Updated object: uuid=%s fields=%s", object_uuid, sorted(fields))
+    return metadata
 
 
 def reset_object_transform(object_uuid: str) -> ObjectMetadata:
     """Restore creation-default placement: origin offset, unit scale, identity CSS tilt.
 
-    Also clears any persisted volumetric novel-view pose (angles → null). Callers
+    Also clears any persisted volumetric novel-view pose (angles -> null). Callers
     must delete the on-disk ``_rotated.png`` separately.
     """
-    updated = _update_object_fields(
+    return update_object(
         object_uuid,
-        {
-            "offset_x": 0.0,
-            "offset_y": 0.0,
-            "display_scale": 1.0,
-            "css_rotate_x_deg": 0.0,
-            "css_rotate_y_deg": 0.0,
-            "css_rotate_z_deg": 0.0,
-            "css_perspective_px": DEFAULT_CSS_PERSPECTIVE_PX,
-            "rotation_azimuth_deg": None,
-            "rotation_relative_elevation_deg": None,
-            "rotation_roll_deg": None,
-        },
+        offset_x=0.0,
+        offset_y=0.0,
+        display_scale=1.0,
+        css_rotate_x_deg=0.0,
+        css_rotate_y_deg=0.0,
+        css_rotate_z_deg=0.0,
+        css_perspective_px=DEFAULT_CSS_PERSPECTIVE_PX,
+        **ROTATION_POSE_CLEARED,
     )
-    logger.info("Reset object transform: uuid=%s", object_uuid)
-    return updated
-
-
-def clear_object_rotation_pose(object_uuid: str) -> ObjectMetadata:
-    """Clear persisted novel-view pose columns. Caller deletes the PNG."""
-    updated = _update_object_fields(
-        object_uuid,
-        {
-            "rotation_azimuth_deg": None,
-            "rotation_relative_elevation_deg": None,
-            "rotation_roll_deg": None,
-        },
-    )
-    logger.info("Cleared object rotation pose: uuid=%s", object_uuid)
-    return updated
-
-
-def set_object_rotation_pose(
-    object_uuid: str,
-    *,
-    azimuth_deg: float,
-    relative_elevation_deg: float,
-    roll_deg: float = 0.0,
-) -> ObjectMetadata:
-    """Persist the last committed volumetric novel-view pose angles."""
-    updated = _update_object_fields(
-        object_uuid,
-        {
-            "rotation_azimuth_deg": azimuth_deg,
-            "rotation_relative_elevation_deg": relative_elevation_deg,
-            "rotation_roll_deg": roll_deg,
-        },
-    )
-    logger.info(
-        "Updated object rotation pose: uuid=%s azimuth=%.1f rel_elev=%.1f roll=%.1f",
-        object_uuid,
-        azimuth_deg,
-        relative_elevation_deg,
-        roll_deg,
-    )
-    return updated
-
-
-def set_object_css_transform(
-    object_uuid: str,
-    *,
-    css_rotate_x_deg: float | None = None,
-    css_rotate_y_deg: float | None = None,
-    css_rotate_z_deg: float | None = None,
-    css_perspective_px: float | None = None,
-) -> ObjectMetadata:
-    """Persist planar CSS 3D tilt angles. Only non-None kwargs are written."""
-    updates: dict[str, float] = {}
-    if css_rotate_x_deg is not None:
-        updates["css_rotate_x_deg"] = css_rotate_x_deg
-    if css_rotate_y_deg is not None:
-        updates["css_rotate_y_deg"] = css_rotate_y_deg
-    if css_rotate_z_deg is not None:
-        updates["css_rotate_z_deg"] = css_rotate_z_deg
-    if css_perspective_px is not None:
-        updates["css_perspective_px"] = css_perspective_px
-    if not updates:
-        metadata = get_object_by_uuid(object_uuid)
-        if metadata is None:
-            raise FileNotFoundError(f"Object metadata not found for uuid='{object_uuid}'")
-        return metadata
-    updated = _update_object_fields(object_uuid, updates)
-    logger.info("Updated object CSS transform: uuid=%s fields=%s", object_uuid, sorted(updates))
-    return updated
 
 
 def delete_session_metadata(session_id: str, object_ids: list[int]) -> int:

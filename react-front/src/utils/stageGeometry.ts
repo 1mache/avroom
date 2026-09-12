@@ -475,3 +475,26 @@ export function findObjectAtPoint({
   }
   return null;
 }
+
+/** Stage-local pixel position of one natural-image point. */
+export const naturalPointToStage = (
+  point: ClickPosition,
+  renderedRect: Rect,
+  naturalSize: Size,
+): { x: number; y: number } => ({
+  x: renderedRect.x + (point.x / naturalSize.width) * renderedRect.width,
+  y: renderedRect.y + (point.y / naturalSize.height) * renderedRect.height,
+});
+
+/** The same conversion for a whole polygon, as an SVG `points` string. */
+export const polygonToStagePoints = (
+  polygon: ClickPosition[],
+  renderedRect: Rect,
+  naturalSize: Size,
+): string =>
+  polygon
+    .map((point) => {
+      const { x, y } = naturalPointToStage(point, renderedRect, naturalSize);
+      return `${x},${y}`;
+    })
+    .join(" ");

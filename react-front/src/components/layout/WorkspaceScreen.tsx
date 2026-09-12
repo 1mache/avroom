@@ -27,7 +27,6 @@ import type { BatchSource, VerifyMode } from "../../types/api";
 import { collectArmedOverlays } from "../../utils/armedBatch";
 import type { JobInfo } from "../../types/api";
 import {
-  effectiveCutoutSrc,
   effectiveDisplayBounds,
   hasCloneSiblings,
   isDrawnOnStage,
@@ -53,12 +52,15 @@ import {
   triggerBlobDownload,
 } from "../../utils/preview";
 import { rasterizeEraseMask } from "../../utils/lassoMask";
-import { ConfirmDialog } from "../widgets/ConfirmDialog";
-import { MaskPickerModal } from "../widgets/MaskPickerModal";
 import { MODEL_3D_FRAME_PADDING, Model3DFrame } from "../widgets/Model3DFrame";
 import { BatchQueuePanel } from "../workspace/BatchQueuePanel";
 import { ObjectRail } from "../workspace/ObjectRail";
 import { RotationSliderBar } from "../workspace/RotationSliderBar";
+import { NoticeStack } from "../workspace/NoticeStack";
+import { SelectionFrame } from "../workspace/SelectionFrame";
+import { WorkspaceModals } from "../workspace/WorkspaceModals";
+import { StageCutouts } from "../workspace/StageCutouts";
+import { StageLassoLayer, StageMarkers } from "../workspace/StageOverlays";
 import { StageHint } from "../workspace/StageHint";
 import { Toolbar } from "../workspace/Toolbar";
 import type { ArmablePickTool, PickTool } from "../../types/tools";
@@ -108,19 +110,6 @@ function workspaceStatus(state: {
 
 const MAX_SEGMENT_SEEDS = 8;
 
-function lassoPolygonStagePoints(
-  polygon: ClickPosition[],
-  renderedRect: Rect,
-  naturalSize: Size,
-): string {
-  return polygon
-    .map((point) => {
-      const x = renderedRect.x + (point.x / naturalSize.width) * renderedRect.width;
-      const y = renderedRect.y + (point.y / naturalSize.height) * renderedRect.height;
-      return `${x},${y}`;
-    })
-    .join(" ");
-}
 
 const errorMessage = (error: unknown, fallback: string): string =>
   error instanceof Error ? error.message : fallback;
@@ -1355,39 +1344,14 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                     height: renderedRect.height,
                   })}
                 >
-                  {stageObjects.map((obj, index) => {
-                    const showOriginal = isShowingOriginal(obj);
-                    const zIndex =
-                      obj.objectId === jobs.selectedObjectId ? stageObjects.length + 2 : index + 2;
-                    const planar = usesPlanarCss3d(obj);
-                    if (planar) {
-                      const imgStyle = planarCutoutImgStyle(obj, showOriginal);
-                      return (
-                        <div
-                          key={obj.objectId}
-                          className="stage-cutout-css3d"
-                          style={cutoutStyle(obj, showOriginal, zIndex)}
-                        >
-                          <img
-                            src={effectiveCutoutSrc(obj, showOriginal)}
-                            alt=""
-                            style={imgStyle}
-                            draggable={false}
-                          />
-                        </div>
-                      );
-                    }
-                    return (
-                      <img
-                        key={obj.objectId}
-                        src={effectiveCutoutSrc(obj, showOriginal)}
-                        alt=""
-                        className="stage-cutout"
-                        style={cutoutStyle(obj, showOriginal, zIndex)}
-                        draggable={false}
-                      />
-                    );
-                  })}
+                  <StageCutouts
+                    objects={stageObjects}
+                    selectedObjectId={jobs.selectedObjectId}
+                    isShowingOriginal={isShowingOriginal}
+                    usesPlanarCss3d={usesPlanarCss3d}
+                    cutoutStyle={cutoutStyle}
+                    planarCutoutImgStyle={planarCutoutImgStyle}
+                  />
 
                   {rotation.rotateMode && rotation.volumetric && rotation.glbData ? (
                     <Model3DFrame
@@ -1403,60 +1367,11 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                   ) : null}
 
                   {selectedRectInClip && !rotation.rotateMode ? (
-                    <div className="selection-frame" style={{ ...rectStyle(selectedRectInClip), zIndex: 210 }}>
-                      {canResize ? (
-                        <>
-                          <button
-                            type="button"
-                            className="selection-handle selection-corner tl"
-                            aria-label="Resize top left"
-                            onPointerDown={handleResizePointerDown("tl")}
-                          />
-                          <button
-                            type="button"
-                            className="selection-handle selection-corner tr"
-                            aria-label="Resize top right"
-                            onPointerDown={handleResizePointerDown("tr")}
-                          />
-                          <button
-                            type="button"
-                            className="selection-handle selection-corner bl"
-                            aria-label="Resize bottom left"
-                            onPointerDown={handleResizePointerDown("bl")}
-                          />
-                          <button
-                            type="button"
-                            className="selection-handle selection-corner br"
-                            aria-label="Resize bottom right"
-                            onPointerDown={handleResizePointerDown("br")}
-                          />
-                          <button
-                            type="button"
-                            className="selection-handle selection-edge t"
-                            aria-label="Resize top"
-                            onPointerDown={handleResizePointerDown("t")}
-                          />
-                          <button
-                            type="button"
-                            className="selection-handle selection-edge r"
-                            aria-label="Resize right"
-                            onPointerDown={handleResizePointerDown("r")}
-                          />
-                          <button
-                            type="button"
-                            className="selection-handle selection-edge b"
-                            aria-label="Resize bottom"
-                            onPointerDown={handleResizePointerDown("b")}
-                          />
-                          <button
-                            type="button"
-                            className="selection-handle selection-edge l"
-                            aria-label="Resize left"
-                            onPointerDown={handleResizePointerDown("l")}
-                          />
-                        </>
-                      ) : null}
-                    </div>
+                    <SelectionFrame
+                      rect={selectedRectInClip}
+                      canResize={canResize}
+                      onResizePointerDown={handleResizePointerDown}
+                    />
                   ) : null}
                 </div>
               ) : null}
@@ -1478,66 +1393,23 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
                   ))
                 : null}
 
-              {pendingSeeds.length > 0 && renderedRect && naturalSize ? (
-                <div className="stage-seed-markers" aria-hidden="true">
-                  {pendingSeeds.map((seed, index) => (
-                    <span
-                      key={`${seed.x}-${seed.y}-${index}`}
-                      className={`stage-pick-marker${tool === "cut" ? " is-armed" : ""}`}
-                      style={{
-                        left: `${renderedRect.x + (seed.x / naturalSize.width) * renderedRect.width}px`,
-                        top: `${renderedRect.y + (seed.y / naturalSize.height) * renderedRect.height}px`,
-                      }}
-                    >
-                      <span className="stage-pick-marker-ring" />
-                      {pendingSeeds.length > 1 ? (
-                        <span className="stage-pick-marker-label">{index + 1}</span>
-                      ) : null}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-
-              {renderedRect && naturalSize && armed.seeds.length > 0 ? (
-                <div className="stage-seed-markers" aria-hidden="true">
-                  {armed.seeds.map((seed) => (
-                    <span
-                      key={seed.id}
-                      className={`stage-pick-marker is-pending${seed.selected ? " is-selected" : ""}`}
-                      style={{
-                        left: `${renderedRect.x + (seed.value.x / naturalSize.width) * renderedRect.width}px`,
-                        top: `${renderedRect.y + (seed.value.y / naturalSize.height) * renderedRect.height}px`,
-                      }}
-                    >
-                      <span className="stage-pick-marker-ring" />
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-
-              {renderedRect && naturalSize && (lassoDraft || pendingEraseRegions.length > 0 || armed.lassos.length > 0) ? (
-                <svg className="stage-lasso-layer" aria-hidden="true">
-                  {armed.lassos.map((lasso) => (
-                    <polygon
-                      key={lasso.id}
-                      className={`stage-lasso-path is-pending${lasso.selected ? " is-selected" : ""}`}
-                      points={lassoPolygonStagePoints(lasso.value, renderedRect, naturalSize)}
-                    />
-                  ))}
-                  {pendingEraseRegions.map((polygon, index) => (
-                    <polygon
-                      key={`pending-erase-${index}`}
-                      className="stage-lasso-path is-pending"
-                      points={lassoPolygonStagePoints(polygon, renderedRect, naturalSize)}
-                    />
-                  ))}
-                  {lassoDraft ? (
-                    <polyline
-                      className="stage-lasso-path"
-                      points={lassoPolygonStagePoints(lassoDraft.points, renderedRect, naturalSize)}
-                    />
-                  ) : null}
-                </svg>
+              {renderedRect && naturalSize ? (
+                <>
+                  <StageMarkers
+                    renderedRect={renderedRect}
+                    naturalSize={naturalSize}
+                    pendingSeeds={pendingSeeds}
+                    armedSeeds={armed.seeds}
+                    cutArmed={tool === "cut"}
+                  />
+                  <StageLassoLayer
+                    renderedRect={renderedRect}
+                    naturalSize={naturalSize}
+                    armedLassos={armed.lassos}
+                    pendingEraseRegions={pendingEraseRegions}
+                    draft={lassoDraft}
+                  />
+                </>
               ) : null}
 
               {rotation.rotateMode && rotationSliderPanelStyle ? (
@@ -1619,23 +1491,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           />
         ) : null}
 
-        {conflictNotices.notices.length > 0 ? (
-          <div className="notice-stack">
-            {conflictNotices.notices.map((notice) => (
-              <div key={notice.id} className="notice">
-                <span>{notice.message}</span>
-                <button
-                  type="button"
-                  className="notice-dismiss"
-                  onClick={() => conflictNotices.dismiss(notice.id)}
-                  aria-label="Dismiss"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        ) : null}
+        <NoticeStack notices={conflictNotices.notices} onDismiss={conflictNotices.dismiss} />
 
         {imageId ? (
           <ObjectRail
@@ -1700,52 +1556,30 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         ) : null}
       </main>
 
-      {jobs.isChoosingMask ? (
-        <MaskPickerModal
-          masks={jobs.maskOptions}
-          onSelect={handleMaskSelected}
-          onDefer={handleMaskPickerDeferred}
-          onDiscard={handleMaskPickerDiscarded}
-        />
-      ) : null}
-
-      {pendingDeleteObject ? (
-        <ConfirmDialog
-          title="Delete this object?"
-          body={
-            <>
-              <strong>{pendingDeleteObject.name ?? `Object ${pendingDeleteObject.objectId}`}</strong>{" "}
-              will be removed for good. The background keeps its spot filled in — this can&rsquo;t
-              be undone.
-            </>
-          }
-          confirmLabel="Delete"
-          destructive
-          busy={jobs.isDeleting}
-          onConfirm={() => void handleConfirmDeleteObject()}
-          onCancel={handleCancelDeleteObject}
-        />
-      ) : null}
-
-      {error ? (
-        <div className="modal-backdrop" role="presentation" onClick={() => setError(null)}>
-          <div
-            className="modal is-error"
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="error-title"
-            onClick={(event) => event.stopPropagation()}
-          >
-            <div className="modal-head">
-              <h2 id="error-title">Request failed</h2>
-              <button type="button" className="modal-close" onClick={() => setError(null)}>
-                Close
-              </button>
-            </div>
-            <pre className="modal-body">{error}</pre>
-          </div>
-        </div>
-      ) : null}
+      <WorkspaceModals
+        maskPicker={
+          jobs.isChoosingMask
+            ? {
+                masks: jobs.maskOptions,
+                onSelect: handleMaskSelected,
+                onDefer: handleMaskPickerDeferred,
+                onDiscard: handleMaskPickerDiscarded,
+              }
+            : null
+        }
+        pendingDelete={
+          pendingDeleteObject
+            ? {
+                object: pendingDeleteObject,
+                busy: jobs.isDeleting,
+                onConfirm: () => void handleConfirmDeleteObject(),
+                onCancel: handleCancelDeleteObject,
+              }
+            : null
+        }
+        error={error}
+        onDismissError={() => setError(null)}
+      />
     </div>
   );
 };

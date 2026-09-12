@@ -1012,7 +1012,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       event.currentTarget.setPointerCapture(event.pointerId);
       objectResize.beginResize(jobs.selectedObjectId, handle, event.pointerId, natural);
     },
-    [canResize, clientToNatural, jobs.selectedObjectId, objectResize],
+    [canResize, clientToNatural, jobs.selectedObjectId, objectResize.beginResize],
   );
 
   const photoSrc = jobs.backgroundSrc ?? originalSrc;

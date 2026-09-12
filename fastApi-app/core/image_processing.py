@@ -59,6 +59,22 @@ from settings import get_normal_map_enabled
 logger = logging.getLogger(__name__)
 
 @functools.lru_cache(maxsize=1)
+def _get_object_segmentor_class():
+    """Resolve `ObjectSegmentor` once, instead of at each segmentation call.
+
+    Every segmentation path in this module went through
+    `load_avroom_attr("ObjectSegmentor")()` directly, which re-resolved the
+    class on each call and left no seam to substitute a fake. Routing them
+    through one accessor gives both, matching the two lazy loaders below.
+
+    Returns the class, not an instance -- callers still construct their own
+    (`ObjectSegmentor()` is cheap; the expensive SAM/depth weights behind it
+    are already process-wide singletons).
+    """
+    return load_avroom_attr("ObjectSegmentor")
+
+
+@functools.lru_cache(maxsize=1)
 def _get_cutout_clip_scorer():
     """Lazy singleton CLIP scorer for auto mask pick (same model as upload validation)."""
     try:
@@ -213,7 +229,7 @@ def segment_candidates_on_image(
         # New segmentation invalidates older unchosen candidates except pinned masks.
         delete_candidates(base_dir, image_id, exclude_mask_ids=pinned)
 
-        segmentor = load_avroom_attr("ObjectSegmentor")()
+        segmentor = _get_object_segmentor_class()()
         depth_map, _ = get_or_compute_depth(
             base_dir,
             image_id,
@@ -382,7 +398,7 @@ def build_object_metadata_for_inpaint(
     """
     image_bytes = load_canvas_bytes(image_id=image_id, base_dir=base_dir)
     with inference_session():
-        segmentor = load_avroom_attr("ObjectSegmentor")()
+        segmentor = _get_object_segmentor_class()()
         depth_map, content_hash = get_or_compute_depth(
             base_dir,
             image_id,
@@ -552,7 +568,7 @@ def _compute_session_depth_map(
         )
     image_bytes = load_canvas_bytes(image_id=session_id, base_dir=base_dir)
     with inference_session():
-        segmentor = load_avroom_attr("ObjectSegmentor")()
+        segmentor = _get_object_segmentor_class()()
         depth_map, _ = get_or_compute_depth(
             base_dir,
             session_id,

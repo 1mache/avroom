@@ -139,6 +139,40 @@ export function rotationFromInfo(info: ObjectInfo): CutoutObject["rotation"] {
   };
 }
 
+/**
+ * Build the local view of one object from the server's `ObjectInfo`.
+ *
+ * Every path that learns about an object -- session restore, duplicate,
+ * import -- funnels through here, so a new `CutoutObject` field is added in
+ * one place instead of three. `overrides` carries the per-path differences
+ * (a duplicate reuses its source's in-memory GLB bytes, for instance).
+ */
+function cutoutFromInfo(
+  info: ObjectInfo,
+  overrides: Partial<CutoutObject> = {},
+): CutoutObject {
+  return {
+    objectId: info.object_id,
+    uuid: info.uuid ?? null,
+    name: info.name ?? null,
+    cutoutSrc: `data:image/${info.format};base64,${info.cutout_b64}`,
+    cutoutAlphaBounds: toCutoutAlphaBounds(info.cutout_bounds),
+    normalizedClickPos: null,
+    glbData: null,
+    rotation: rotationFromInfo(info),
+    hidden: false,
+    beyondStage: info.beyond_stage ?? false,
+    revealed: false,
+    offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
+    sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
+    displayScale: info.display_scale ?? 1,
+    has3d: info.has_3d ?? false,
+    cloneRootUuid: info.clone_root_uuid ?? null,
+    ...cssFieldsFromInfo(info),
+    ...overrides,
+  };
+}
+
 // Zoom/radius delta is not exposed in the rotate UI -- always request the
 // model's default camera distance.
 const NO_RADIUS_DELTA = 0;
@@ -438,25 +472,7 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
   );
 
   const loadRestoredObjects = useCallback((restored: ObjectInfo[]) => {
-    const loaded: CutoutObject[] = restored.map((info) => ({
-      objectId: info.object_id,
-      uuid: info.uuid ?? null,
-      name: info.name ?? null,
-      cutoutSrc: `data:image/${info.format};base64,${info.cutout_b64}`,
-      cutoutAlphaBounds: toCutoutAlphaBounds(info.cutout_bounds),
-      normalizedClickPos: null,
-      glbData: null,
-      rotation: rotationFromInfo(info),
-      hidden: false,
-      beyondStage: info.beyond_stage ?? false,
-      revealed: false,
-      offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
-      sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
-      displayScale: info.display_scale ?? 1,
-      has3d: info.has_3d ?? false,
-      cloneRootUuid: info.clone_root_uuid ?? null,
-      ...cssFieldsFromInfo(info),
-    }));
+    const loaded: CutoutObject[] = restored.map((info) => cutoutFromInfo(info));
     setObjects(loaded);
     highestCommittedObjectIdRef.current = loaded.reduce(
       (max, o) => Math.max(max, o.objectId),
@@ -912,17 +928,30 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
     [onError, onMutated],
   );
 
-  const duplicateObject = useCallback(
-    async (objectId: number) => {
+  /**
+   * Shared body for "server just created an object; adopt it locally".
+   *
+   * Duplicate and import differ only in which request mints the uuid and
+   * which local fields carry over, so the surrounding orchestration --
+   * submit, re-fetch the object list, find the new row, upsert, select,
+   * advance the high-water id, report -- lives here once. Every step
+   * re-checks `imageIdRef` so a result landing after the user switched
+   * rooms is dropped instead of applied to the wrong session.
+   */
+  const adoptNewObject = useCallback(
+    async (
+      submit: (sessionId: string) => Promise<string>,
+      setBusy: (busy: boolean) => void,
+      overrides?: (info: ObjectInfo) => Partial<CutoutObject>,
+    ): Promise<void> => {
       const currentImageId = imageIdRef.current;
-      const source = objectsRef.current.find((o) => o.objectId === objectId);
-      if (!currentImageId || !source?.uuid || isDuplicating) {
+      if (!currentImageId) {
         return;
       }
 
-      setIsDuplicating(true);
+      setBusy(true);
       try {
-        const { object_uuid: cloneUuid } = await duplicateObjectRequest(source.uuid);
+        const newUuid = await submit(currentImageId);
         if (imageIdRef.current !== currentImageId) {
           return;
         }
@@ -932,37 +961,17 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
           return;
         }
 
-        const info = list.objects.find((o) => o.uuid === cloneUuid);
+        const info = list.objects.find((o) => o.uuid === newUuid);
         if (!info) {
           onMutated?.();
           return;
         }
 
-        const newObject: CutoutObject = {
-          objectId: info.object_id,
-          uuid: info.uuid ?? cloneUuid,
-          name: info.name ?? null,
-          cutoutSrc: `data:image/${info.format};base64,${info.cutout_b64}`,
-          cutoutAlphaBounds: toCutoutAlphaBounds(info.cutout_bounds),
-          normalizedClickPos: source.normalizedClickPos,
-          // Server copied the GLB; reuse in-memory bytes so Rotate works immediately.
-          glbData: source.glbData,
-          rotation: null,
-          hidden: false,
-          beyondStage: info.beyond_stage ?? false,
-          revealed: false,
-          // Server-computed nudge (build_clone_metadata), not a raw copy of
-          // source.offset -- the clone lands beside its source, not on it.
-          offset: { x: info.offset_x ?? source.offset.x, y: info.offset_y ?? source.offset.y },
-          displayScale: info.display_scale ?? source.displayScale ?? 1,
-          sourceElevationDeg:
-            info.source_elevation_deg ?? source.sourceElevationDeg ?? FALLBACK_SOURCE_ELEVATION_DEG,
-          has3d: info.has_3d ?? source.has3d,
-          cloneRootUuid: info.clone_root_uuid ?? source.uuid,
-          ...cssFieldsFromInfo(info),
-        };
-
-        setObjects((prev) => upsertObject(prev, newObject));
+        const created = cutoutFromInfo(info, {
+          uuid: info.uuid ?? newUuid,
+          ...overrides?.(info),
+        });
+        setObjects((prev) => upsertObject(prev, created));
         setSelectedObjectId(info.object_id);
         if (info.object_id > highestCommittedObjectIdRef.current) {
           highestCommittedObjectIdRef.current = info.object_id;
@@ -974,17 +983,46 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         }
       } finally {
         if (imageIdRef.current === currentImageId) {
-          setIsDuplicating(false);
+          setBusy(false);
         }
       }
     },
-    [isDuplicating, onError, onMutated],
+    [onError, onMutated],
+  );
+
+  const duplicateObject = useCallback(
+    async (objectId: number) => {
+      const source = objectsRef.current.find((o) => o.objectId === objectId);
+      const sourceUuid = source?.uuid;
+      if (!imageIdRef.current || !source || !sourceUuid || isDuplicating) {
+        return;
+      }
+
+      await adoptNewObject(
+        async () => (await duplicateObjectRequest(sourceUuid)).object_uuid,
+        setIsDuplicating,
+        (info) => ({
+          normalizedClickPos: source.normalizedClickPos,
+          // Server copied the GLB; reuse in-memory bytes so Rotate works immediately.
+          glbData: source.glbData,
+          rotation: null,
+          // Server-computed nudge (build_clone_metadata), not a raw copy of
+          // source.offset -- the clone lands beside its source, not on it.
+          offset: { x: info.offset_x ?? source.offset.x, y: info.offset_y ?? source.offset.y },
+          displayScale: info.display_scale ?? source.displayScale ?? 1,
+          sourceElevationDeg:
+            info.source_elevation_deg ?? source.sourceElevationDeg ?? FALLBACK_SOURCE_ELEVATION_DEG,
+          has3d: info.has_3d ?? source.has3d,
+          cloneRootUuid: info.clone_root_uuid ?? sourceUuid,
+        }),
+      );
+    },
+    [adoptNewObject, isDuplicating],
   );
 
   const importObject = useCallback(
     async (file: File) => {
-      const currentImageId = imageIdRef.current;
-      if (!currentImageId || isImporting) {
+      if (!imageIdRef.current || isImporting) {
         return;
       }
 
@@ -1000,61 +1038,13 @@ export function useSessionJobs(imageId: string | null, options: UseSessionJobsOp
         return;
       }
 
-      setIsImporting(true);
-      try {
-        const { object_uuid: importedUuid } = await importObjectCutout(currentImageId, file);
-        if (imageIdRef.current !== currentImageId) {
-          return;
-        }
-
-        const list = await getSessionObjects(currentImageId);
-        if (imageIdRef.current !== currentImageId) {
-          return;
-        }
-
-        const info = list.objects.find((o) => o.uuid === importedUuid);
-        if (!info) {
-          onMutated?.();
-          return;
-        }
-
-        const newObject: CutoutObject = {
-          objectId: info.object_id,
-          uuid: info.uuid ?? importedUuid,
-          name: info.name ?? null,
-          cutoutSrc: `data:image/${info.format};base64,${info.cutout_b64}`,
-          cutoutAlphaBounds: toCutoutAlphaBounds(info.cutout_bounds),
-          normalizedClickPos: null,
-          glbData: null,
-          rotation: null,
-          hidden: false,
-          beyondStage: info.beyond_stage ?? false,
-          revealed: false,
-          offset: { x: info.offset_x ?? 0, y: info.offset_y ?? 0 },
-          displayScale: info.display_scale ?? 1,
-          sourceElevationDeg: info.source_elevation_deg ?? FALLBACK_SOURCE_ELEVATION_DEG,
-          has3d: info.has_3d ?? false,
-          cloneRootUuid: info.clone_root_uuid ?? null,
-          ...cssFieldsFromInfo(info),
-        };
-
-        setObjects((prev) => upsertObject(prev, newObject));
-        setSelectedObjectId(info.object_id);
-        if (info.object_id > highestCommittedObjectIdRef.current) {
-          highestCommittedObjectIdRef.current = info.object_id;
-        }
-        onMutated?.();
-      } catch (err) {
-        if (imageIdRef.current === currentImageId) {
-          onError(err, "generic");
-        }
-      } finally {
-        if (imageIdRef.current === currentImageId) {
-          setIsImporting(false);
-        }
-      }
+      await adoptNewObject(
+        async (sessionId) => (await importObjectCutout(sessionId, file)).object_uuid,
+        setIsImporting,
+        () => ({ rotation: null }),
+      );
     },
-    [isImporting, onError, onMutated],
+    [adoptNewObject, isImporting, onError],
   );
 
   const runSmartPasteAfterDrag = useCallback(

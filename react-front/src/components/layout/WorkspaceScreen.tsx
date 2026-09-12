@@ -8,9 +8,7 @@ import {
   deleteJob,
   getSessionObjects,
   getUidCacheStatus,
-  redoSessionBackground,
   setSessionName as saveSessionName,
-  undoSessionBackground,
   warmSessionMaps,
 } from "../../api/images";
 import { boxBoundsFromDraft, useAreaSelect } from "../../hooks/useAreaSelect";
@@ -65,6 +63,7 @@ import { StageHint } from "../workspace/StageHint";
 import { Toolbar } from "../workspace/Toolbar";
 import type { ArmablePickTool, PickTool } from "../../types/tools";
 import { useCutoutStyles } from "../../hooks/useCutoutStyles";
+import { useSessionHistory } from "../../hooks/useSessionHistory";
 
 /**
  * The toolbar's one-line "what is happening right now" readout.
@@ -189,9 +188,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const [scaleByPov, setScaleByPov] = useState(true);
   const [smartRotate, setSmartRotate] = useState(true);
   const [autoGenerate3d, setAutoGenerate3d] = useState(false);
-  const [canUndo, setCanUndo] = useState(false);
-  const [canRedo, setCanRedo] = useState(false);
-  const [historyBusy, setHistoryBusy] = useState(false);
   const [isSavingSnapshot, setIsSavingSnapshot] = useState(false);
   const [isCopyingRoom, setIsCopyingRoom] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -226,18 +222,21 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   // Same trick for the dashboard thumbnail: capturing it needs state declared
   // further down, but onMutated has to be passed into useSessionJobs up here.
   const capturePreviewRef = useRef<() => void>(() => {});
-  const applyHistoryFlags = useCallback((flags: { canUndo: boolean; canRedo: boolean }) => {
-    setCanUndo(flags.canUndo);
-    setCanRedo(flags.canRedo);
-  }, []);
-  const refreshHistoryFlags = useCallback(async () => {
-    try {
-      const status = await getUidCacheStatus(uid);
-      applyHistoryFlags({ canUndo: status.can_undo, canRedo: status.can_redo });
-    } catch {
-      // Non-fatal — toolbar buttons stay at their last known state.
-    }
-  }, [uid, applyHistoryFlags]);
+  // handleMutated and history.refresh call each other, so one of them has to
+  // be reached through a ref. Same trick as the two refs above.
+  const handleMutatedRef = useRef<() => void>(() => {});
+  const historyBlockedRef = useRef(false);
+  const history = useSessionHistory({
+    uid,
+    blockedRef: historyBlockedRef,
+    onStepComplete: () => handleMutatedRef.current(),
+    onError: setError,
+  });
+  // Destructured because the hook returns a fresh object literal each render:
+  // depending on `history` itself would re-create handleMutated every render,
+  // which in turn churns every useSessionJobs/useSessionSync callback below.
+  const { refresh: refreshHistory, applyFlags: applyHistoryFlags } = history;
+
   const handleMutated = useCallback(() => {
     // A mutation (inpaint, most commonly) can change the canvas the depth/
     // normal maps were warmed for — forget the "already warm" mark and
@@ -256,8 +255,9 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
       });
     recordLocalMutationRef.current();
     capturePreviewRef.current();
-    void refreshHistoryFlags();
-  }, [uid, refreshHistoryFlags]);
+    void refreshHistory();
+  }, [uid, refreshHistory]);
+  handleMutatedRef.current = handleMutated;
 
   // A queued segment/inpaint job resolving to "conflict" (its mask/click
   // overlapped an in-flight removal) reuses the same inline notice a
@@ -313,11 +313,12 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
   const hadPendingWorkRef = useRef(jobs.hasPendingWork);
   useEffect(() => {
     if (hadPendingWorkRef.current && !jobs.hasPendingWork) {
-      void refreshHistoryFlags();
+      void refreshHistory();
       recordLocalMutationRef.current();
     }
     hadPendingWorkRef.current = jobs.hasPendingWork;
-  }, [jobs.hasPendingWork, refreshHistoryFlags]);
+  }, [jobs.hasPendingWork, refreshHistory]);
+  historyBlockedRef.current = jobs.hasPendingWork;
 
   const selectedObject = jobs.objects.find((o) => o.objectId === jobs.selectedObjectId) ?? null;
 
@@ -398,8 +399,7 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
           return;
         }
         setSessionName(status.name ?? uid);
-        setCanUndo(status.can_undo);
-        setCanRedo(status.can_redo);
+        applyHistoryFlags({ canUndo: status.can_undo, canRedo: status.can_redo });
 
         if (status.has_background) {
           jobs.setBackgroundSrc(withAuthParam(`${API_BASE_URL}/images/${uid}/background`));
@@ -1227,36 +1227,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     });
   }, [jobs.setJobs]);
 
-  const runHistoryStep = useCallback(
-    async (direction: "undo" | "redo") => {
-      if (historyBusy || jobs.hasPendingWork) {
-        return;
-      }
-      setHistoryBusy(true);
-      try {
-        if (direction === "undo") {
-          await undoSessionBackground(uid);
-        } else {
-          await redoSessionBackground(uid);
-        }
-        handleMutated();
-      } catch (stepError) {
-        setError(errorMessage(stepError, `Failed to ${direction} room history.`));
-      } finally {
-        setHistoryBusy(false);
-      }
-    },
-    [historyBusy, jobs.hasPendingWork, uid, handleMutated],
-  );
-
-  const handleBacktrack = useCallback(() => {
-    void runHistoryStep("undo");
-  }, [runHistoryStep]);
-
-  const handleForward = useCallback(() => {
-    void runHistoryStep("redo");
-  }, [runHistoryStep]);
-
   const handleDownloadSnapshot = useCallback(async () => {
     const backgroundSrc = jobs.backgroundSrc ?? originalSrc;
     if (!naturalSize || !backgroundSrc || isSavingSnapshot) {
@@ -1302,36 +1272,6 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
     uid,
     visibleObjects,
   ]);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
-        return;
-      }
-      const mod = event.ctrlKey || event.metaKey;
-      if (!mod) {
-        return;
-      }
-      if (event.key === "z" || event.key === "Z") {
-        if (event.shiftKey) {
-          if (canRedo && !historyBusy && !jobs.hasPendingWork) {
-            event.preventDefault();
-            void runHistoryStep("redo");
-          }
-        } else if (canUndo && !historyBusy && !jobs.hasPendingWork) {
-          event.preventDefault();
-          void runHistoryStep("undo");
-        }
-      } else if ((event.key === "y" || event.key === "Y") && canRedo && !historyBusy && !jobs.hasPendingWork) {
-        event.preventDefault();
-        void runHistoryStep("redo");
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [canRedo, canUndo, historyBusy, jobs.hasPendingWork, runHistoryStep]);
 
   return (
     <div className="workspace">
@@ -1385,11 +1325,11 @@ export const WorkspaceScreen: React.FC<WorkspaceScreenProps> = ({ uid, onExit })
         onDeleteObject={handleDeleteObject}
         isCopyingRoom={isCopyingRoom}
         onCopyRoom={() => void handleCopyRoom()}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        historyBusy={historyBusy}
-        onBacktrack={handleBacktrack}
-        onForward={handleForward}
+        canUndo={history.canUndo}
+        canRedo={history.canRedo}
+        historyBusy={history.busy}
+        onBacktrack={history.backtrack}
+        onForward={history.forward}
         hasSnapshot={Boolean(naturalSize && (jobs.backgroundSrc ?? originalSrc))}
         isSavingSnapshot={isSavingSnapshot}
         onDownloadSnapshot={() => void handleDownloadSnapshot()}

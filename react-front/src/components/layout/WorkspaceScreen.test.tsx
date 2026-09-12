@@ -26,6 +26,8 @@ const cacheStatus = {
 };
 
 const getUidCacheStatus = vi.fn(async () => ({ ...cacheStatus }));
+const undoSessionBackground = vi.fn(async () => undefined);
+const redoSessionBackground = vi.fn(async () => undefined);
 const getSessionObjects = vi.fn(async () => ({ objects: [] }));
 const warmSessionMaps = vi.fn(async () => ({}));
 const syncCheck = vi.fn(async () => ({ needs_refresh: false, last_changed: "0", jobs: [] }));
@@ -42,6 +44,8 @@ vi.mock("../../api/images", async (importOriginal) => {
     saveSessionPreview: vi.fn(async () => ({})),
     segmentImage: vi.fn(async () => ({ job_id: "job-1" })),
     deleteJob: vi.fn(async () => undefined),
+    undoSessionBackground: (...args: unknown[]) => undoSessionBackground(...(args as [])),
+    redoSessionBackground: (...args: unknown[]) => redoSessionBackground(...(args as [])),
   };
 });
 
@@ -58,6 +62,8 @@ async function mountWorkspace() {
 const CUT = "Cut out object";
 const AREA = "Cut objects in area";
 const ERASE = "Erase area";
+const UNDO = "Backtrack room";
+const REDO = "Forward room";
 
 function tool(label: string) {
   return screen.getByRole("button", { name: label });
@@ -69,6 +75,9 @@ beforeEach(() => {
   getUidCacheStatus.mockClear();
   getSessionObjects.mockClear();
   warmSessionMaps.mockClear();
+  undoSessionBackground.mockClear();
+  redoSessionBackground.mockClear();
+  getUidCacheStatus.mockImplementation(async () => ({ ...cacheStatus }));
 });
 
 describe("WorkspaceScreen tool arming", () => {
@@ -148,5 +157,96 @@ describe("WorkspaceScreen tool arming", () => {
 
     await user.keyboard("{Escape}");
     expect(stage).not.toHaveClass("is-picking");
+  });
+});
+
+describe("WorkspaceScreen room history", () => {
+  /** The cache status is what tells the workspace whether history has anywhere to go. */
+  function withHistory(flags: { can_undo: boolean; can_redo: boolean }) {
+    getUidCacheStatus.mockImplementation(async () => ({ ...cacheStatus, ...flags }));
+  }
+
+  it("disables both history buttons when the room has no history", async () => {
+    await mountWorkspace();
+
+    await waitFor(() => expect(tool(UNDO)).toBeDisabled());
+    expect(tool(REDO)).toBeDisabled();
+  });
+
+  it("enables undo once the server reports it is available", async () => {
+    withHistory({ can_undo: true, can_redo: false });
+    await mountWorkspace();
+
+    await waitFor(() => expect(tool(UNDO)).toBeEnabled());
+    expect(tool(REDO)).toBeDisabled();
+  });
+
+  it("steps back when the undo button is pressed", async () => {
+    const user = userEvent.setup();
+    withHistory({ can_undo: true, can_redo: false });
+    await mountWorkspace();
+    await waitFor(() => expect(tool(UNDO)).toBeEnabled());
+
+    await user.click(tool(UNDO));
+
+    await waitFor(() => expect(undoSessionBackground).toHaveBeenCalledWith("sess-1"));
+    expect(redoSessionBackground).not.toHaveBeenCalled();
+  });
+
+  it("steps forward when the redo button is pressed", async () => {
+    const user = userEvent.setup();
+    withHistory({ can_undo: false, can_redo: true });
+    await mountWorkspace();
+    await waitFor(() => expect(tool(REDO)).toBeEnabled());
+
+    await user.click(tool(REDO));
+
+    await waitFor(() => expect(redoSessionBackground).toHaveBeenCalledWith("sess-1"));
+  });
+
+  it("Ctrl+Z steps back", async () => {
+    const user = userEvent.setup();
+    withHistory({ can_undo: true, can_redo: false });
+    await mountWorkspace();
+    await waitFor(() => expect(tool(UNDO)).toBeEnabled());
+
+    await user.keyboard("{Control>}z{/Control}");
+
+    await waitFor(() => expect(undoSessionBackground).toHaveBeenCalledWith("sess-1"));
+  });
+
+  it("Ctrl+Shift+Z and Ctrl+Y both step forward", async () => {
+    const user = userEvent.setup();
+    withHistory({ can_undo: false, can_redo: true });
+    await mountWorkspace();
+    await waitFor(() => expect(tool(REDO)).toBeEnabled());
+
+    await user.keyboard("{Control>}{Shift>}Z{/Shift}{/Control}");
+    await waitFor(() => expect(redoSessionBackground).toHaveBeenCalledTimes(1));
+
+    await user.keyboard("{Control>}y{/Control}");
+    await waitFor(() => expect(redoSessionBackground).toHaveBeenCalledTimes(2));
+  });
+
+  it("ignores Ctrl+Z when the room has nothing to undo", async () => {
+    const user = userEvent.setup();
+    withHistory({ can_undo: false, can_redo: false });
+    await mountWorkspace();
+
+    await user.keyboard("{Control>}z{/Control}");
+
+    expect(undoSessionBackground).not.toHaveBeenCalled();
+  });
+
+  it("ignores history shortcuts while a text field has focus", async () => {
+    const user = userEvent.setup();
+    withHistory({ can_undo: true, can_redo: false });
+    await mountWorkspace();
+    await waitFor(() => expect(tool(UNDO)).toBeEnabled());
+
+    await user.click(screen.getByRole("textbox", { name: "Room name" }));
+    await user.keyboard("{Control>}z{/Control}");
+
+    expect(undoSessionBackground).not.toHaveBeenCalled();
   });
 });

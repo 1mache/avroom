@@ -1,0 +1,580 @@
+/* ── Stage ───────────────────────────────────────────────────────────────── */
+
+.stage {
+  position: relative;
+  overflow: hidden;
+  background: var(--chrome-void);
+  isolation: isolate;
+}
+
+.stage.is-picking {
+  cursor: crosshair;
+}
+
+.stage.is-dragging {
+  cursor: grabbing;
+}
+
+/* Hold-Control focus zoom: visuals scale; pointer-events stay on .stage-input
+   (sibling, unscaled). Interactive children re-enable hits above the input. */
+.stage-zoom {
+  position: absolute;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+  transform: scale(1);
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform;
+}
+
+.stage-zoom .selection-handle,
+.stage-zoom .model-3d-frame {
+  pointer-events: auto;
+}
+
+.stage-photo {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  user-select: none;
+}
+
+/* A hairline and a cast shadow along the photo's real edge, so the image reads
+   as a physical sheet lying on the letterbox rather than a hole in it. */
+.stage-canvas-edge {
+  pointer-events: none;
+  z-index: 1;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.75),
+    0 0 0 2px rgba(255, 255, 255, 0.05),
+    0 18px 48px rgba(0, 0, 0, 0.55);
+}
+
+/* Clips cutouts / selection / 3D to the Origin Photo so hang-off-edge
+   pixels disappear instead of painting the letterbox. */
+.stage-cutout-clip {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.stage-cutout {
+  position: absolute;
+  object-fit: contain;
+  user-select: none;
+  touch-action: none;
+  /* Full-image-sized transparent PNGs would swallow every click, so pointer
+     input is owned by .stage-input and hit-tested against real alpha. */
+  pointer-events: none;
+}
+
+.stage-cutout-css3d {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+  user-select: none;
+  touch-action: none;
+}
+
+.stage-input {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  background: transparent;
+  touch-action: none;
+}
+
+.stage-area-box {
+  position: absolute;
+  border: 1px dashed var(--cyan);
+  background: color-mix(in srgb, var(--cyan) 12%, transparent);
+  pointer-events: none;
+  z-index: 180;
+}
+
+.stage-area-box.is-pending {
+  border-style: solid;
+  background: color-mix(in srgb, var(--cyan) 18%, transparent);
+}
+
+.stage-area-box.is-selected,
+.stage-lasso-path.is-selected,
+.stage-pick-marker.is-selected .stage-pick-marker-ring {
+  filter: drop-shadow(0 0 4px var(--cyan-bright));
+}
+
+.stage-lasso-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 180;
+}
+
+.stage-lasso-path {
+  fill: color-mix(in srgb, var(--cyan) 14%, transparent);
+  stroke: var(--cyan);
+  stroke-width: 1.5;
+}
+
+.stage-lasso-path.is-pending {
+  fill: color-mix(in srgb, var(--cyan) 8%, transparent);
+  stroke: var(--ink-dim);
+}
+
+.stage-seed-markers {
+  position: absolute;
+  inset: 0;
+  z-index: 220;
+  pointer-events: none;
+}
+
+.stage-pick-marker {
+  position: absolute;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.stage-pick-marker-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 2px solid var(--cyan-bright);
+  background: color-mix(in srgb, var(--cyan) 35%, transparent);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.65),
+    0 0 10px color-mix(in srgb, var(--cyan-bright) 45%, transparent);
+}
+
+.stage-pick-marker.is-armed .stage-pick-marker-ring {
+  animation: seed-marker-pulse 1.6s ease-in-out infinite;
+}
+
+.stage-pick-marker-label {
+  position: relative;
+  z-index: 1;
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  color: #fff;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+  user-select: none;
+}
+
+@keyframes seed-marker-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 0.88;
+  }
+}
+
+.selection-frame {
+  pointer-events: none;
+  border: 1px solid rgba(69, 224, 229, 0.55);
+}
+
+.selection-handle {
+  position: absolute;
+  pointer-events: auto;
+  padding: 0;
+  border: none;
+  background: transparent;
+  touch-action: none;
+}
+
+.selection-handle::after {
+  content: "";
+  position: absolute;
+  background: var(--cyan-bright);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.7);
+}
+
+.selection-corner {
+  width: 14px;
+  height: 14px;
+}
+
+.selection-corner::after {
+  width: 6px;
+  height: 6px;
+}
+
+.selection-corner.tl {
+  top: -7px;
+  left: -7px;
+  cursor: nwse-resize;
+}
+
+.selection-corner.tl::after {
+  top: 4px;
+  left: 4px;
+}
+
+.selection-corner.tr {
+  top: -7px;
+  right: -7px;
+  cursor: nesw-resize;
+}
+
+.selection-corner.tr::after {
+  top: 4px;
+  right: 4px;
+}
+
+.selection-corner.bl {
+  bottom: -7px;
+  left: -7px;
+  cursor: nesw-resize;
+}
+
+.selection-corner.bl::after {
+  bottom: 4px;
+  left: 4px;
+}
+
+.selection-corner.br {
+  bottom: -7px;
+  right: -7px;
+  cursor: nwse-resize;
+}
+
+.selection-corner.br::after {
+  bottom: 4px;
+  right: 4px;
+}
+
+.selection-edge {
+  background: transparent;
+}
+
+.selection-edge.t,
+.selection-edge.b {
+  left: 50%;
+  width: 20px;
+  height: 10px;
+  margin-left: -10px;
+  cursor: ns-resize;
+}
+
+.selection-edge.t {
+  top: -5px;
+}
+
+.selection-edge.t::after {
+  top: 2px;
+  left: 7px;
+  width: 6px;
+  height: 6px;
+}
+
+.selection-edge.b {
+  bottom: -5px;
+}
+
+.selection-edge.b::after {
+  bottom: 2px;
+  left: 7px;
+  width: 6px;
+  height: 6px;
+}
+
+.selection-edge.l,
+.selection-edge.r {
+  top: 50%;
+  width: 10px;
+  height: 20px;
+  margin-top: -10px;
+  cursor: ew-resize;
+}
+
+.selection-edge.l {
+  left: -5px;
+}
+
+.selection-edge.l::after {
+  top: 7px;
+  left: 2px;
+  width: 6px;
+  height: 6px;
+}
+
+.selection-edge.r {
+  right: -5px;
+}
+
+.selection-edge.r::after {
+  top: 7px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+}
+
+body.is-resizing-object {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.batch-queue-panel {
+  position: absolute;
+  z-index: 340;
+  top: 12px;
+  left: 12px;
+  width: min(360px, calc(100% - 24px));
+  max-height: min(420px, calc(100% - 24px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  background: rgba(16, 16, 16, 0.96);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.batch-queue-head,
+.batch-queue-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--chrome-line);
+}
+
+.batch-queue-foot {
+  border-bottom: none;
+  border-top: 1px solid var(--chrome-line);
+}
+
+.batch-queue-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.batch-queue-sub {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.batch-queue-close {
+  border: none;
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.batch-queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.batch-queue-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 6px;
+  align-items: center;
+  padding: 6px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: var(--chrome-sunk);
+}
+
+.batch-queue-row.is-selected {
+  border-color: rgba(22, 179, 184, 0.45);
+  background: var(--cyan-wash);
+}
+
+.batch-queue-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.batch-queue-index {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-dim);
+}
+
+.batch-queue-label {
+  font-size: 12px;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.batch-queue-action {
+  height: 26px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  background: var(--chrome-raise);
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.batch-queue-row-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.batch-queue-icon-btn {
+  width: 24px;
+  height: 24px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  background: var(--chrome-raise);
+  color: var(--ink-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.batch-queue-icon-btn.is-danger {
+  color: var(--danger);
+}
+
+.batch-queue-icon-btn:disabled,
+.batch-queue-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.batch-queue-approve,
+.batch-queue-clear {
+  height: 30px;
+  padding: 0 12px;
+  border-radius: 3px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.batch-queue-approve {
+  border: 1px solid rgba(22, 179, 184, 0.5);
+  background: var(--cyan-wash);
+  color: var(--cyan-bright);
+}
+
+.batch-queue-clear {
+  border: 1px solid var(--chrome-line);
+  background: transparent;
+  color: var(--ink-dim);
+}
+
+.batch-queue-approve:disabled,
+.batch-queue-clear:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tool-btn-badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: var(--cyan-bright);
+  color: #0d0d0d;
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+}
+
+.tool-btn.has-badge {
+  position: relative;
+}
+
+.stage-hint {
+  position: absolute;
+  z-index: 320;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 6px 13px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  background: rgba(16, 16, 16, 0.9);
+  color: var(--ink-dim);
+  font-size: 11.5px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.stage-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 24px;
+  text-align: center;
+}
+
+.stage-message-line {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.stage-warm-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 330;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  text-align: center;
+  pointer-events: none;
+  background: rgba(8, 8, 8, 0.42);
+}
+
+.stage-warm-spinner {
+  width: 28px;
+  height: 28px;
+  border-width: 2px;
+}
+

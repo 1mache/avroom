@@ -1,0 +1,508 @@
+/* ── Object rail ─────────────────────────────────────────────────────────── */
+
+.rail {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 400;
+  width: var(--rail-edge);
+  /* Widening on open leaves a slack gutter to the left of the panel, so the
+     rail only retracts once the pointer has genuinely left for the canvas. */
+  transition: width 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.rail[data-open="true"] {
+  width: calc(var(--rail-w) + var(--rail-edge));
+}
+
+/* Faint seam marking where the rail lives, even in an empty session. */
+.rail::after {
+  content: "";
+  position: absolute;
+  top: 8%;
+  bottom: 8%;
+  right: 0;
+  width: 1px;
+  background: linear-gradient(transparent, var(--chrome-line) 22%, var(--chrome-line) 78%, transparent);
+  pointer-events: none;
+}
+
+/* Retracted, the rail still counts itself: one notch per object. */
+.rail-spine {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 5px;
+  padding-right: 3px;
+  pointer-events: none;
+  transition: opacity 0.14s ease;
+}
+
+.rail[data-open="true"] .rail-spine {
+  opacity: 0;
+}
+
+.rail-notch {
+  width: 3px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--cyan);
+  opacity: 0.55;
+  transition: width 0.16s ease, opacity 0.16s ease;
+}
+
+.rail-notch.is-selected {
+  width: 7px;
+  opacity: 1;
+  box-shadow: 0 0 9px rgba(69, 224, 229, 0.55);
+}
+
+.rail-notch.is-hidden {
+  background: var(--ink-faint);
+  opacity: 0.5;
+}
+
+.rail-notch.is-working {
+  animation: notch-pulse 1.1s ease-in-out infinite;
+}
+
+.rail-notch.is-failed {
+  background: var(--danger);
+  opacity: 0.85;
+}
+
+@keyframes notch-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.rail-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: var(--rail-w);
+  display: flex;
+  flex-direction: column;
+  background: var(--chrome-panel);
+  border-left: 1px solid #111;
+  box-shadow: -14px 0 34px rgba(0, 0, 0, 0.4);
+  transform: translateX(100%);
+  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  overflow: visible;
+}
+
+.rail[data-open="true"] .rail-panel {
+  transform: translateX(0);
+}
+
+.rail-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 11px 12px 9px;
+  border-bottom: 1px solid var(--chrome-line);
+}
+
+.rail-title,
+.rail-count {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.rail-title {
+  color: var(--ink-dim);
+}
+
+.rail-head-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.rail-import-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.rail-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid var(--chrome-line);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.rail-add:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.rail-add:not(:disabled):hover {
+  border-color: var(--cyan);
+  color: var(--cyan-bright);
+}
+
+.rail-3d {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--cyan);
+  background: transparent;
+  border: 1px solid var(--chrome-line);
+  border-radius: 2px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+
+.rail-3d:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.rail-count {
+  color: var(--cyan);
+}
+
+.rail-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: visible;
+  padding: 6px 0;
+}
+
+.rail-row {
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 6px 10px;
+  border-left: 2px solid transparent;
+  position: relative;
+  overflow: visible;
+  z-index: 0;
+}
+
+.rail-row.is-menu-open {
+  z-index: 20;
+}
+
+.rail-row.is-selected {
+  background: rgba(255, 255, 255, 0.045);
+  border-left-color: var(--cyan);
+}
+
+.rail-row.is-batch {
+  outline: 1px dashed color-mix(in srgb, var(--cyan) 50%, transparent);
+}
+
+.rail-row.is-hidden {
+  opacity: 0.45;
+}
+
+.rail-row.is-pending {
+  opacity: 0.8;
+}
+
+.rail-row.is-failed {
+  border-left-color: var(--danger);
+}
+
+.rail-row.is-failed .rail-name {
+  color: var(--danger);
+}
+
+.rail-thumb-wrap {
+  position: relative;
+  flex: 0 0 var(--rail-thumb);
+  width: var(--rail-thumb);
+  height: var(--rail-thumb);
+  overflow: visible;
+  z-index: 1;
+}
+
+.rail-thumb {
+  position: relative;
+  flex: 0 0 var(--rail-thumb);
+  width: var(--rail-thumb);
+  height: var(--rail-thumb);
+  padding: 2px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 2px;
+  cursor: pointer;
+  overflow: visible;
+  background-color: var(--chrome-sunk);
+  background-image: var(--checker);
+  background-position: 0 0, 0 6px, 6px -6px, -6px 0;
+  background-size: 12px 12px;
+  transition: border-color 0.13s ease;
+}
+
+.rail-thumb-overlay {
+  position: absolute;
+  inset: -4px -4px auto auto;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.rail-thumb-overlay-actions {
+  display: flex;
+  gap: 3px;
+  padding: 2px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  background: rgba(12, 12, 12, 0.94);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+
+.rail-thumb-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  color: var(--ink-bright);
+  background: rgba(255, 255, 255, 0.06);
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.rail-thumb-action:hover:not(:disabled) {
+  background: var(--chrome-raised);
+  color: var(--ink-bright);
+}
+
+.rail-thumb-action.is-danger {
+  color: var(--danger);
+}
+
+.rail-thumb-action.is-danger:hover:not(:disabled) {
+  background: rgba(180, 40, 40, 0.92);
+  color: #fff;
+}
+
+.rail-thumb-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rail-menu {
+  flex: 1 1 100%;
+  position: relative;
+  min-width: 0;
+  width: 100%;
+  margin: -2px 0 2px;
+  padding: 4px 0;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  background: var(--chrome-raise);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  z-index: 30;
+}
+
+.rail-menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  color: var(--ink-bright);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.rail-menu-item:hover:not(:disabled) {
+  background: var(--chrome-sunk);
+}
+
+.rail-menu-item.is-danger {
+  color: var(--danger);
+}
+
+.rail-menu-item:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.rail-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.rail-rename-submit {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--chrome-line);
+  border-radius: 2px;
+  cursor: pointer;
+  color: var(--cyan-bright);
+  background: var(--chrome-sunk);
+}
+
+.rail-rename-submit:hover {
+  border-color: var(--cyan);
+  background: var(--chrome-raised);
+}
+
+.rail-thumb:hover:not(:disabled) {
+  border-color: var(--ink-faint);
+}
+
+.rail-row.is-selected .rail-thumb {
+  border-color: var(--cyan);
+}
+
+.rail-thumb:disabled {
+  cursor: default;
+}
+
+.rail-thumb-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.rail-thumb-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+}
+
+.rail-thumb-badge {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  display: flex;
+  padding: 2px;
+  border-radius: 50%;
+  background: rgba(16, 16, 16, 0.85);
+}
+
+.rail-thumb-badge .tool-spinner {
+  width: 11px;
+  height: 11px;
+  border-width: 1.2px;
+}
+
+.rail-row-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+.rail-name {
+  font-size: 12px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-name.is-editable {
+  cursor: text;
+}
+
+.rail-name-input {
+  width: 100%;
+  padding: 2px 5px;
+  border: 1px solid var(--cyan);
+  border-radius: 2px;
+  background: var(--chrome-sunk);
+  font-size: 12px;
+  outline: none;
+}
+
+.rail-row-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.rail-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition: background 0.13s ease, color 0.13s ease;
+}
+
+.rail-action:hover:not(:disabled) {
+  background: var(--chrome-raise);
+  color: var(--ink);
+}
+
+.rail-action.is-on {
+  background: var(--cyan-wash);
+  border-color: rgba(22, 179, 184, 0.45);
+  color: var(--cyan-bright);
+}
+
+.rail-action:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.rail-empty {
+  margin: 10px 12px;
+  color: var(--ink-faint);
+  font-size: 12px;
+  line-height: 1.5;
+}
+

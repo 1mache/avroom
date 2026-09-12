@@ -1,0 +1,116 @@
+/* AVRoom workspace — a darkroom for a photo.
+   Everything that isn't the photograph is graphite; the only colour in the
+   interface is the cyan that marks what you have hold of. */
+
+:root {
+  --chrome-void: #161616;
+  --chrome-bar: #242424;
+  --chrome-panel: #2b2b2b;
+  --chrome-raise: #383838;
+  --chrome-line: #3f3f3f;
+  --chrome-sunk: #1c1c1c;
+
+  --ink: #d9d9d9;
+  --ink-dim: #8b8b8b;
+  --ink-faint: #616161;
+
+  --cyan: #16b3b8;
+  --cyan-bright: #45e0e5;
+  --cyan-wash: rgba(22, 179, 184, 0.14);
+  --danger: #e2564f;
+
+  --toolbar-h: 44px;
+  --rail-w: 232px;
+  --rail-edge: 26px;
+  --rail-thumb: 58px;
+
+  --sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", "Cascadia Code", ui-monospace, monospace;
+
+  /* Transparency checkerboard, tuned for a dark surface. */
+  --checker:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.055) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.055) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.055) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.055) 75%);
+
+  color-scheme: dark;
+  font: 400 13px/1.45 var(--sans);
+  color: var(--ink);
+  background: var(--chrome-void);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+/* One scrollbar for the whole app: a thin thumb on an invisible track, no
+   stepper buttons. The platform default is a light slab with arrows that
+   reads as a foreign object against this chrome. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3d3d3d transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 5px;
+  /* Padding-box keeps the transparent border as breathing room, so the thumb
+     paints ~4px wide instead of filling the full track. */
+  background-clip: padding-box;
+  background-color: #3d3d3d;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: #565656;
+}
+
+*::-webkit-scrollbar-button {
+  display: none;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+body.is-dragging-object {
+  cursor: grabbing;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 1px solid var(--cyan-bright);
+  outline-offset: 1px;
+}
+
+.workspace {
+  height: 100%;
+  display: grid;
+  grid-template-rows: var(--toolbar-h) 1fr;
+  background: var(--chrome-void);
+}
+

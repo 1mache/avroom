@@ -1,0 +1,128 @@
+/* ── Upload ──────────────────────────────────────────────────────────────── */
+
+.file-input {
+  display: none;
+}
+
+.dropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 300px;
+  padding: 16px;
+  border: 1px dashed var(--chrome-line);
+  border-radius: 4px;
+  background: var(--chrome-panel);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.dropzone.is-over {
+  border-color: var(--cyan);
+  background: #2f3434;
+}
+
+.dropzone.has-file {
+  border-style: solid;
+}
+
+.dropzone-preview {
+  max-width: 100%;
+  max-height: 300px;
+  object-fit: contain;
+  border-radius: 2px;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.75),
+    0 10px 26px rgba(0, 0, 0, 0.45);
+}
+
+.dropzone-file {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  max-width: 100%;
+}
+
+.dropzone-filename {
+  font-size: 12.5px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dropzone-filesize {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+
+.dropzone-invite {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 40px 24px;
+  border: none;
+  background: none;
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.dropzone-invite:hover:not(:disabled) {
+  color: var(--cyan-bright);
+}
+
+.dropzone-invite-line {
+  font-size: 13px;
+}
+
+.dropzone-invite-hint {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.upload-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 0 0;
+  color: var(--ink-dim);
+  font-size: 12.5px;
+}
+
+.upload-rejection {
+  margin: 16px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(226, 86, 79, 0.35);
+  border-left-width: 2px;
+  border-radius: 3px;
+  background: rgba(226, 86, 79, 0.08);
+  color: #f0a49f;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.upload-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.upload-rules {
+  margin: 16px 0 0;
+  text-align: center;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+

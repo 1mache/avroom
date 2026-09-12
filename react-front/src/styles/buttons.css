@@ -1,0 +1,80 @@
+/* ── Buttons & confirm dialog ────────────────────────────────────────────── */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 7px 14px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  background: var(--chrome-raise);
+  color: var(--ink);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--ink-faint);
+}
+
+.btn.is-primary {
+  background: var(--cyan);
+  border-color: var(--cyan);
+  color: #06282a;
+  font-weight: 500;
+}
+
+.btn.is-primary:hover:not(:disabled) {
+  background: var(--cyan-bright);
+  border-color: var(--cyan-bright);
+}
+
+.btn.is-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #2c0b09;
+  font-weight: 500;
+}
+
+.btn.is-danger:hover:not(:disabled) {
+  background: #ef6a63;
+  border-color: #ef6a63;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.modal.is-confirm {
+  width: min(430px, 100%);
+  gap: 12px;
+}
+
+.confirm-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.confirm-body {
+  margin: 0;
+  color: var(--ink-dim);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.confirm-body strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+

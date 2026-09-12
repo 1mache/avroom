@@ -1,0 +1,55 @@
+/* ── Narrow screens ──────────────────────────────────────────────────────── */
+
+@media (max-width: 720px) {
+  :root {
+    --rail-w: 188px;
+    --rail-thumb: 52px;
+  }
+
+  .dash-main {
+    padding: 18px 16px 48px;
+  }
+
+  .new-session {
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .new-session-hint {
+    display: none;
+  }
+
+  .session-grid {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 18px 14px;
+  }
+
+  /* Touch has no hover, so card affordances must stay visible. */
+  .session-card-delete,
+  .session-card-more {
+    opacity: 1;
+    transform: none;
+  }
+
+  .project-row-frame {
+    width: 80px;
+    height: 50px;
+  }
+
+  .project-row-actions {
+    opacity: 1;
+  }
+
+  .session-name {
+    width: clamp(90px, 30vw, 180px);
+  }
+
+  .toolbar-rule {
+    margin: 0 3px;
+  }
+
+  .toolbar-status {
+    display: none;
+  }
+}
+

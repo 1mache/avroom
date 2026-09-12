@@ -1,0 +1,356 @@
+/* ── Toolbar ─────────────────────────────────────────────────────────────── */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 8px;
+  background: var(--chrome-bar);
+  border-bottom: 1px solid #101010;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  position: relative;
+  z-index: 500;
+}
+
+.toolbar-rule {
+  width: 1px;
+  height: 20px;
+  margin: 0 7px;
+  background: var(--chrome-line);
+  flex: 0 0 auto;
+}
+
+.toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+.toolbar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--cyan-bright);
+  margin-right: 12px;
+  white-space: nowrap;
+}
+
+/* Compact rotate knobs parked beside the selected object while Rotate is armed */
+.rotation-slider-panel {
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.rotation-slider-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  background: var(--chrome-panel);
+  border: 1px solid #101010;
+  border-radius: 3px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+.rotation-slider {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) 36px 28px;
+  align-items: center;
+  column-gap: 6px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.rotation-slider-label {
+  color: var(--cyan-bright);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rotation-slider input[type="range"] {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+  box-sizing: border-box;
+  /* Keep the thumb inside the track box at 0%/100% */
+  padding: 0 7px;
+  accent-color: var(--cyan);
+}
+
+.rotation-slider-value {
+  text-align: right;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.rotation-slider-reset {
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid #101010;
+  border-radius: 2px;
+  background: var(--chrome-bar, #222);
+  color: var(--cyan-bright);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+
+.rotation-slider-reset:hover:not(:disabled) {
+  border-color: var(--cyan);
+  color: var(--ink);
+}
+
+.rotation-slider-reset:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.session-name {
+  width: clamp(140px, 22vw, 280px);
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  font-weight: 500;
+  letter-spacing: 0.005em;
+  text-overflow: ellipsis;
+}
+
+.session-name::placeholder {
+  color: var(--ink-faint);
+}
+
+.session-name:hover:not(:disabled) {
+  border-color: var(--chrome-line);
+}
+
+.session-name:focus {
+  outline: none;
+  border-color: var(--cyan);
+  background: var(--chrome-sunk);
+}
+
+.session-name:disabled {
+  color: var(--ink-faint);
+}
+
+.tool-btn,
+.tool-switch {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: #bcbcbc;
+  cursor: pointer;
+  transition: background 0.13s ease, color 0.13s ease, border-color 0.13s ease;
+}
+
+.tool-btn:hover:not(:disabled),
+.tool-switch:hover:not(:disabled) {
+  background: var(--chrome-raise);
+  color: var(--ink);
+}
+
+.tool-btn.is-armed {
+  background: var(--cyan-wash);
+  border-color: rgba(22, 179, 184, 0.5);
+  color: var(--cyan-bright);
+}
+
+.tool-radios {
+  display: inline-flex;
+  align-items: stretch;
+  height: 30px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--chrome-sunk);
+}
+
+.tool-radio {
+  height: 100%;
+  padding: 0 8px;
+  border: none;
+  background: transparent;
+  color: var(--ink-faint);
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.tool-radio[aria-checked="true"] {
+  background: var(--cyan-wash);
+  color: var(--cyan-bright);
+}
+
+.tool-btn.is-danger:not(:disabled) {
+  color: var(--danger);
+}
+
+.tool-btn.is-danger:hover:not(:disabled) {
+  background: rgba(226, 86, 79, 0.16);
+  color: #ff7b74;
+}
+
+/* Object-scoped tools stay in place and grey out rather than disappearing, so
+   the row never reflows — the gap to the enabled state has to carry the whole
+   message on its own. */
+.tool-btn:disabled,
+.tool-switch:disabled {
+  color: #4d4d4d;
+  cursor: default;
+}
+
+/* Smart paste keeps a nub so its state reads without hovering for the label. */
+.tool-switch {
+  gap: 7px;
+  padding: 0 8px 0 7px;
+}
+
+.tool-switch-track {
+  width: 22px;
+  height: 12px;
+  border-radius: 7px;
+  background: var(--chrome-sunk);
+  border: 1px solid var(--chrome-line);
+  display: inline-flex;
+  align-items: center;
+  padding: 1px;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.tool-switch-nub {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.tool-switch.is-on .tool-switch-track {
+  background: var(--cyan-wash);
+  border-color: rgba(22, 179, 184, 0.55);
+}
+
+.tool-switch.is-on .tool-switch-nub {
+  transform: translateX(10px);
+  background: var(--cyan-bright);
+}
+
+.toolbar-settings-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.toolbar-settings-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 196px;
+  padding: 12px;
+  border: 1px solid var(--chrome-line);
+  border-radius: 4px;
+  background: var(--chrome-panel);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.toolbar-settings-section + .toolbar-settings-section {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--chrome-line);
+}
+
+.toolbar-settings-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.toolbar-settings-row {
+  justify-content: space-between;
+  width: 100%;
+  padding: 4px 0;
+}
+
+.toolbar-settings-label {
+  font-size: 12.5px;
+  color: var(--ink);
+}
+
+.toolbar-settings-radios {
+  width: 100%;
+  margin-top: 4px;
+}
+
+.toolbar-settings-radios .tool-radio {
+  flex: 1;
+}
+
+.toolbar-settings-hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.toolbar-settings-action {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  border-radius: 3px;
+  padding: 6px 4px;
+}
+
+.toolbar-settings-action:hover:not(:disabled) {
+  background: var(--chrome-sunk);
+}
+
+.toolbar-settings-action:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.tool-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.16);
+  border-top-color: var(--cyan-bright);
+  animation: spin 0.75s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+

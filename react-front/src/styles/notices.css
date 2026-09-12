@@ -1,0 +1,43 @@
+/* ── Conflict notices ────────────────────────────────────────────────────── */
+
+.notice-stack {
+  position: absolute;
+  z-index: 340;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: center;
+  pointer-events: none;
+}
+
+.notice {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px 7px 13px;
+  border: 1px solid var(--chrome-line);
+  border-left: 2px solid var(--cyan);
+  border-radius: 3px;
+  background: rgba(24, 24, 24, 0.96);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.notice-dismiss {
+  border: none;
+  background: none;
+  color: var(--ink-faint);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 3px;
+}
+
+.notice-dismiss:hover {
+  color: var(--ink);
+}
+

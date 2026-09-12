@@ -41,7 +41,11 @@ avroom/
 └── react-front/          # React/TypeScript frontend (MVP state)
     └── src/
         ├── api/images.ts  # uploadImage(), segmentImage(), inpaintMask() fetch calls
-        ├── components/layout/MainPage.tsx  # All UI state lives here
+        ├── components/layout/WorkspaceScreen.tsx  # The editor; state split across hooks/
+        ├── components/workspace/  # Toolbar, ObjectRail, and the stage's own pieces
+        ├── hooks/         # One concern each — see "Workspace hooks" below
+        ├── styles/        # One stylesheet per screen; style.css is the @import index
+        ├── test/setup.ts  # Vitest setup (jest-dom, jsdom stubs)
         └── types/         # Shared TypeScript types
 ```
 
@@ -73,6 +77,7 @@ cd react-front
 npm install
 npm run dev      # Dev server at http://localhost:5173
 npm run build    # Production build (tsc + vite)
+npm test         # Vitest (jsdom); npm run test:watch to iterate
 ```
 
 ### Tests (ai-pipeline)
@@ -301,6 +306,26 @@ Segment, inpaint, and 3D generation are **queued, not blocking**. `POST /images/
 - **The pinning fix**: `reserved_mask_ids(session_id)` (in `job_repo.py`) protects mask ids belonging to an unconsumed `done` segment job **and** to any `queued`/`running` inpaint job, unioned with the existing in-memory `pinned_mask_ids` at the segment call site. This exists because queuing widened a real race — a submitted inpaint can now sit `queued` for an arbitrary time before a dispatcher thread actually takes its in-memory lease, so a concurrent segment's candidate wipe needs to know about that not-yet-running inpaint too, not just live leases.
 - **Novel-view rotation is deliberately NOT queued** — it stays exactly as it was (a detached blocking request with a local `rotation` marker on the object; see "Rotation flow" below).
 
+## Frontend Tests
+
+`cd react-front && npm test` (vitest + jsdom + @testing-library/react). There
+is no CI wiring yet; run it before touching `WorkspaceScreen.tsx` or the hooks
+under it.
+
+- `WorkspaceScreen.test.tsx` drives the screen the way a user does — click the
+  toolbar, read `.stage-hint`, press keys — rather than reaching into
+  internals, so the tests survive restructuring of the render tree. That is
+  the point of them: they are what makes splitting that component a checkable
+  change instead of a hopeful one. Network calls are stubbed at `api/images`,
+  the one seam every hook in the screen goes through.
+- Note `warmedSessionIds` in `WorkspaceScreen.tsx` is module-level and
+  survives unmount by design, so it leaks across tests in one file. A test
+  that needs to observe the "Preparing depth maps" overlay must mount with a
+  session id no earlier test has warmed (`mountWorkspace("sess-never-warmed")`).
+- When adding a test, check it actually fails if the behaviour breaks —
+  temporarily invert the code under test. Several of the existing ones were
+  written that way and the commit messages say which mutations they caught.
+
 ## Python Code Style
 
 - **Python 3.11**, type-checked with **mypy**.
@@ -412,6 +437,9 @@ The product has five screens: **Project Selector** (`ProjectsScreen`), **Room Se
 
 - API base URL defaults to `http://127.0.0.1:8000`; override with `VITE_API_BASE_URL` env var. `DashboardScreen`'s session-list fetch shows an offline state with a retry action on failure; `WorkspaceScreen`'s own session boot shows a plain "Opening the session" placeholder on the stage while loading and falls back to `sessionName = uid` if the cache-status fetch fails (no dedicated offline UI there).
 - Click coordinates are translated from display-space to natural image-space before sending to the API. All the contain-fit ↔ natural-pixel conversions live in `src/utils/stageGeometry.ts` (`getContainedImageRect`, `toNaturalPoint`, `clampCutoutOffset`, `getBoundsStageRect`, `buildHitTestOrder`, `findObjectAtPoint`, `rectStyle`, `compositePreviewOntoCanvas`) — reuse them rather than re-deriving the math. `findObjectAtPoint` is the whole alpha-precise hit test (bounds reject → inverse-transform the point → sample alpha); `src/hooks/useCutoutStyles.ts` is the matching write side, the only place that turns an object's offset/bounds/scale/CSS-3D pose into inline styles. The two must agree about `usesPlanarCss3d`, so change them together.
+- **Workspace state lives in hooks, not in the screen.** `WorkspaceScreen.tsx` orchestrates; each concern owns its own file under `src/hooks/`: `useStageGeometry` (where the contain-fit photo actually is), `useCutoutStyles` (the matching write side — see above), `useObjectActions` (select/hide/copy/delete/reset — everything you can do to one object, including the delete confirmation state), `useSessionHistory` (undo/redo flags, the step calls, and the Ctrl+Z/Y shortcuts), `useSmartPasteSettings` (the four smart-paste switches), plus the pre-existing `useSessionJobs`/`useSessionSync`/`useRotationController`/`useObjectDrag`/`useObjectResize`/`useArmedBatch`. Add a concern as a new hook rather than as more state in the screen.
+- **The stage's render tree is components, not one function.** `StageCutouts` (the object layer), `SelectionFrame` (outline + resize grips), `StageMarkers`/`StageLassoLayer` (`StageOverlays.tsx`), `StageHint`, `NoticeStack`, `WorkspaceModals`. Each takes a narrow prop set; there is deliberately **no** workspace context — a context holding thirty values would be the same prop-drilling with extra indirection.
+- **`Toolbar` takes six grouped props, not 53 flat ones**: `session`, `picking`, `batch`, `object`, `smartPaste`, `history`. Two of them are exactly what `useSmartPasteSettings` and `useSessionHistory` return, so they pass straight through. Toolbar unpacks all six back into locals at the top of its body, so its markup reads unchanged — the grouping is for the call site.
 - **One armed tool at a time, as one value.** `PickTool` (`src/types/tools.ts`) is `"select" | "cut" | "area" | "erase"` — these used to be three independent booleans that every handler cleared by hand and every reader re-excluded as `!cutMode && !areaMode && !eraserMode`. Arm one via `selectTool`; `disarmTool` returns to `"select"` and is a stable `useCallback` because `useAreaSelect` takes it as an effect dependency. Rotate is deliberately **not** a member: it lives in `useRotationController` with its own async 3D-prep lifecycle, and several call sites (notably `handleStagePointerDown`) depend on a picking tool taking precedence over it, so it stays `rotation.rotateMode`.
 
 ### Workspace layout (Photoshop-inspired)
